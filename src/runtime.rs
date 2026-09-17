@@ -164,6 +164,38 @@ impl Runtime {
         Ok(())
     }
 
+    /// Registers a **native module** by calling its `luaopen_*` entry point.
+    ///
+    /// This is how a module written in C — `luaposix`, `lpeg`, `lua-cjson` — reaches Lua. The
+    /// host calls the entry point and registers what it returns, exactly as `luaL_requiref`
+    /// would, and the module name is passed to it as its one argument. Lua is never involved in
+    /// the decision, and `Lua::unsafe_new` is not needed: that exists to let *Lua* load C
+    /// modules.
+    ///
+    /// Compile the module's C sources into your own binary rather than opening a prebuilt
+    /// `.so`; see the README's native-module section for why, and for the `build.rs` that does
+    /// it.
+    ///
+    /// # Safety
+    ///
+    /// `open` must be a Lua C entry point compiled against the same Lua that this crate
+    /// vendors. Nothing here can check that, and a mismatch corrupts the VM rather than failing
+    /// cleanly. A native module also runs with the host's privileges: registering one into a
+    /// [`Profile::Sandbox`] runtime puts it inside the sandbox but does not put it *under* the
+    /// sandbox, so only register code you would be willing to call from Rust directly.
+    pub unsafe fn register_native_module(
+        &self,
+        name: &str,
+        open: mlua::lua_CFunction,
+    ) -> Result<()> {
+        let name = ModuleName::new(name)?;
+        // Safety: forwarded to the caller by this function's own contract.
+        let open = unsafe { self.lua.create_c_function(open)? };
+        let value: Value = open.call(name.as_str())?;
+        self.lua.register_module(name.as_str(), value)?;
+        Ok(())
+    }
+
     /// Whether a module of this name is registered or already loaded.
     ///
     /// Says nothing about whether the module store could supply it; that is only known by

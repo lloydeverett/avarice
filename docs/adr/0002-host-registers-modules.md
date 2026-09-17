@@ -19,13 +19,15 @@ installing a custom searcher into the stock one, which would have worked.
 `mlua`'s safe constructor is sufficient; `Lua::unsafe_new` is never needed,
 because that only exists to let *Lua* load C modules. Native modules are reached
 by the host calling `luaopen_*` through `Lua::create_c_function`, which carries
-no safety-mode check.
+no safety-mode check; `Runtime::register_native_module` wraps that.
 
-Statically linking a native module — compiling it against the vendored Lua
-headers rather than `dlopen`ing a distro `.so` — avoids needing `-rdynamic` to
-export Lua symbols, and is the only way native modules can work on Windows. It
-requires a direct `mlua-sys` dependency, since `DEP_LUA_INCLUDE` reaches direct
-dependents only.
+**Static linking is the only supported way to get a native module in.** The
+embedder compiles the module's C sources against the vendored Lua headers, which
+needs a direct `mlua-sys` dependency, since `DEP_LUA_INCLUDE` reaches direct
+dependents only. `dlopen`ing a distro `.so` is documented in the README as a
+failure to recognise rather than a path to follow: it needs `-rdynamic` on the
+embedder's own binary, which no dependency can supply for them, has no Windows
+equivalent, and leaves the module's build-time Lua unchecked against ours.
 
 `Lua::preload_module` must not be used: without `package` open it looks up a
 nil `_PRELOAD` and silently does nothing. `Lua::register_module` is correct — it

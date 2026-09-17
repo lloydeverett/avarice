@@ -70,8 +70,8 @@ A **host module** implemented in C against Lua's C API (`luaposix`, `lpeg`),
 rather than in Rust or Lua.
 
 Lua code never loads native code itself: `package` is never opened, so there is
-no `package.loadlib` and no searcher that reaches a `.so`. The host compiles or
-opens the module and registers it, for one profile and not another.
+no `package.loadlib` and no searcher that reaches a `.so`. The host compiles the
+module into its own binary and registers it, for one profile and not another.
 
 ## Program
 

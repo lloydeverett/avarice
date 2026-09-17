@@ -34,7 +34,7 @@ The vocabulary used throughout — profile, host module, module store, embedder 
 - [Profiles](#profiles)
 - [Modules](#modules)
 - [Limits](#limits)
-- [Native (C) modules and `-rdynamic`](#native-c-modules-and--rdynamic)
+- [Native (C) modules](#native-c-modules)
 - [Building](#building)
 
 ## The `avrt` command
@@ -201,76 +201,41 @@ A time limit is per top-level execution, not per runtime, and is armed by `Runti
 `Runtime::eval` or `Runtime::enter`. If you drive Lua through `Runtime::lua` directly, hold an
 `Execution` guard from `Runtime::enter` for the limit to apply.
 
-## Native (C) modules and `-rdynamic`
+## Native (C) modules
 
 Lua's C ecosystem — `luaposix`, `lpeg`, `lua-cjson` — is reachable, but the host reaches it, not
 Lua. `package` is closed, so there is no `package.loadlib` and no searcher that opens a `.so`:
-the host calls the module's `luaopen_*` entry point and registers the result, for one profile and
-not another.
-
-**If you read one thing in this section, read this:** linking a Rust binary against a *vendored*
-Lua and then `dlopen`ing a prebuilt Lua C module does not work by default, and the failure is a
-runtime `undefined symbol: lua_gettop`, not a build error. The fix is a linker flag on **your
-own binary**, which no dependency can set for you. Details below.
-
-### Why it breaks
-
-A distro-built Lua C module does not link against a Lua library. It is compiled with Lua's
-symbols left *undefined*, to be bound from the host process at `dlopen` time — which is why
-Debian's `lua-cjson` and `lua-lpeg` depend only on `libc6`. Under the stock `lua` binary those
-symbols come from `liblua5.4.so`, which is in the process image.
-
-avarice-rt vendors Lua and links it **statically**. A static library's symbols do not land in the
-executable's dynamic symbol table unless the linker is told to put them there, so at `dlopen`
-time there is nothing to bind `lua_gettop` to. On this repository's own binary:
-
-```console
-$ nm -D --defined-only target/debug/avrt | grep -c 'lua_'
-0
-$ RUSTFLAGS='-C link-arg=-rdynamic' cargo build
-$ nm -D --defined-only target/debug/avrt | grep -c 'lua_'
-207
-```
-
-### The fix, and why it cannot be ours
-
-On Linux, link the **executable** with `-rdynamic` (the compiler-driver spelling of
-`-Wl,--export-dynamic`), which puts the executable's global symbols into the dynamic table:
+the host calls the module's `luaopen_*` entry point and registers the result, for one profile
+and not another.
 
 ```rust
-// build.rs — in the crate that produces the binary, not in a library it depends on
-fn main() {
-    #[cfg(unix)]
-    println!("cargo::rustc-link-arg-bins=-rdynamic");
+use avarice_rt::mlua::lua_State;
+use avarice_rt::{Profile, Runtime};
+use std::ffi::c_int;
+
+unsafe extern "C-unwind" {
+    fn luaopen_cjson(state: *mut lua_State) -> c_int;
 }
+
+let rt = Runtime::new(Profile::Trusted)?;
+// Safety: luaopen_cjson is a Lua C entry point built against the Lua this crate vendors.
+unsafe { rt.register_native_module("cjson", luaopen_cjson) }?;
+# Ok::<_, avarice_rt::Error>(())
 ```
 
-This has to live in your own package. Cargo's link-arg directives apply to the crate being
-linked: `rustc-link-arg-bins` affects the binaries of the package whose build script emitted it,
-and nothing downstream. **A `build.rs` in avarice-rt could not do this for you**, which is why
-this crate does not ship one — it would export 207 symbols from `avrt`, help nobody who depends
-on the library, and quietly suggest that the problem was handled. It is a property of the final
-link, so it is the final binary's business.
+Note what is *not* needed: `Lua::unsafe_new`. That exists to let Lua load C modules, and Lua
+never does.
 
-The same applies to a `cdylib`: if your Rust code is itself loaded as a shared library, the Lua
-symbols need to be visible from whatever ends up as the process image.
+### Compile the module into your binary
 
-On macOS, `clang` accepts `-rdynamic` and maps it to `-Wl,-export_dynamic`; the same build.rs
-line applies. This has not been tested here — only the Linux path above has.
-
-On **Windows there is no equivalent**. A Lua C module `.dll` is linked against `lua54.dll` by
-name at build time, so it cannot bind to a Lua that is statically inside your `.exe`. Static
-linking, below, is the only path.
-
-### The better answer: link the module statically
-
-Compiling the C module's own sources against the vendored Lua headers avoids `-rdynamic`
-entirely, works on Windows, and removes any chance of version skew between the Lua you vendored
-and the Lua a distro built the module against.
+Build the module's C sources as part of your own crate. This is the supported way, and the only
+one that works on Windows. It also removes any chance of version skew between the Lua this crate
+vendors and the Lua a distribution built a module against — a mismatch in `LUAI_MAXSTACK` or
+`LUA_32BITS` corrupts the VM rather than failing cleanly.
 
 The headers' location comes from `mlua-sys`, which declares `links = "lua"`. Cargo passes that
-metadata to **direct dependents only**, so the embedder needs its own `mlua-sys` dependency —
-reaching it through avarice-rt is not enough:
+metadata to **direct dependents only**, so your crate needs its own `mlua-sys` dependency:
+reaching it through avarice-rt is not enough.
 
 ```toml
 [dependencies]
@@ -292,30 +257,32 @@ fn main() {
 }
 ```
 
-```rust
-use avarice_rt::mlua::{lua_State, Value};
-use avarice_rt::{Profile, Runtime};
-use std::ffi::c_int;
+### If you tried to `dlopen` a prebuilt `.so`
 
-unsafe extern "C-unwind" {
-    fn luaopen_cjson(state: *mut lua_State) -> c_int;
-}
+You will have seen `undefined symbol: lua_gettop` at runtime, not a build error. A prebuilt Lua
+C module contains no Lua; it expects the host process to supply those symbols when it is loaded.
+Under the stock `lua` binary they come from `liblua5.4.so`. This crate links Lua statically, and
+a static library's symbols stay out of the executable's dynamic symbol table:
 
-let rt = Runtime::new(Profile::Trusted)?;
-// Safety: luaopen_cjson is a well-behaved Lua C entry point for this Lua version.
-let open = unsafe { rt.lua().create_c_function(luaopen_cjson)? };
-let cjson: Value = open.call(())?;
-rt.register_module("cjson", cjson)?;
-# Ok::<_, avarice_rt::Error>(())
+```console
+$ nm -D --defined-only target/debug/avrt | grep -c 'lua_'
+0
+$ RUSTFLAGS='-C link-arg=-rdynamic' cargo build
+$ nm -D --defined-only target/debug/avrt | grep -c 'lua_'
+207
 ```
 
-Note what is *not* needed here: `Lua::unsafe_new`. That exists to let Lua load C modules, and
-Lua never does. `Lua::create_c_function` is `unsafe` — you are vouching for the C — but it
-carries no safety-mode check and works on the safe state a `Runtime` is built on.
+`-rdynamic` exports them, and `println!("cargo::rustc-link-arg-bins=-rdynamic")` in a `build.rs`
+sets it — but only for binaries in the package that emitted it, never for a downstream crate, so
+no `build.rs` in avarice-rt could do it for you. That is not a route this crate supports: it has
+no Windows equivalent, and it leaves the version skew above unchecked. Compile the module in
+instead.
 
-A last word on trust: a native module runs in your process with your privileges, and nothing
-about the sandbox profile contains it. Register one into a sandboxed runtime only if you would
-be happy calling it directly from Rust.
+### Trust
+
+A native module runs in your process with your privileges, and nothing about the sandbox profile
+contains it. Register one into a sandboxed runtime only if you would be happy calling it
+directly from Rust.
 
 ## Building
 
