@@ -1,0 +1,204 @@
+//! What the sandbox profile does and does not hand to Lua.
+
+use avarice_rt::{was_out_of_memory, Profile, Runtime, DEFAULT_SANDBOX_MEMORY_LIMIT};
+
+fn sandbox() -> Runtime {
+    Runtime::new(Profile::Sandbox).expect("sandbox runtime")
+}
+
+fn is_nil(rt: &Runtime, expr: &str) -> bool {
+    rt.eval::<bool>(&format!("return ({expr}) == nil"), "=test")
+        .unwrap()
+}
+
+#[test]
+fn withholds_the_libraries_that_reach_outside() {
+    let rt = sandbox();
+    for global in ["io", "os", "package", "require('package')"] {
+        // `package` is absent as a global and unreachable through require.
+        let absent = rt
+            .eval::<bool>(
+                &format!(
+                    "local ok, v = pcall(function() return {global} end) return not ok or v == nil"
+                ),
+                "=test",
+            )
+            .unwrap();
+        assert!(absent, "{global} should not be reachable");
+    }
+}
+
+#[test]
+fn withholds_the_file_functions_hiding_in_the_base_library() {
+    let rt = sandbox();
+    assert!(is_nil(&rt, "dofile"), "dofile should be gone");
+    assert!(is_nil(&rt, "loadfile"), "loadfile should be gone");
+}
+
+#[test]
+fn keeps_the_libraries_a_script_needs() {
+    let rt = sandbox();
+    assert!(!is_nil(&rt, "string.format"));
+    assert!(!is_nil(&rt, "table.concat"));
+    assert!(!is_nil(&rt, "math.floor"));
+    assert!(!is_nil(&rt, "utf8.char"));
+    assert!(!is_nil(&rt, "coroutine.create"));
+    assert!(!is_nil(&rt, "pcall"));
+}
+
+#[test]
+fn offers_traceback_but_not_the_rest_of_debug() {
+    let rt = sandbox();
+    let traceback: String = rt
+        .eval(
+            r#"
+            local ok, tb = xpcall(function() error("boom") end, debug.traceback)
+            return tb
+            "#,
+            "=test",
+        )
+        .unwrap();
+    assert!(traceback.contains("boom"), "{traceback}");
+    assert!(traceback.contains("stack traceback"), "{traceback}");
+    assert!(is_nil(&rt, "debug.getinfo"), "debug.getinfo should be gone");
+    assert!(
+        is_nil(&rt, "debug.setmetatable"),
+        "debug.setmetatable should be gone"
+    );
+}
+
+#[test]
+fn refuses_binary_chunks() {
+    let rt = sandbox();
+    // `load` with an explicit binary mode fails rather than being quietly honoured.
+    let err: String = rt
+        .eval(
+            r#"
+            local chunk = string.dump(function() return 1 end)
+            local f, err = load(chunk, "=payload", "b")
+            assert(f == nil, "binary chunk was accepted")
+            return err
+            "#,
+            "=test",
+        )
+        .unwrap();
+    assert!(err.contains("binary"), "{err}");
+
+    // And the default mode, which Lua would otherwise let through, is forced to text too.
+    let rejected: bool = rt
+        .eval(
+            r#"
+            local chunk = string.dump(function() return 1 end)
+            return load(chunk) == nil
+            "#,
+            "=test",
+        )
+        .unwrap();
+    assert!(rejected, "binary chunk accepted through the default mode");
+}
+
+#[test]
+fn refuses_binary_chunks_handed_straight_to_the_runtime() {
+    // `Runtime::eval` tries the entry as an expression first; neither that path nor the
+    // statement path may accept bytecode in the sandbox.
+    let trusted = Runtime::new(Profile::Trusted).unwrap();
+    let bytecode = trusted
+        .eval::<avarice_rt::mlua::LuaString>("return string.dump(function() return 7 end)", "=test")
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+    assert_eq!(bytecode[0], 0x1b, "expected a precompiled chunk");
+
+    let rt = sandbox();
+    assert!(rt.eval::<i64>(bytecode.clone(), "=payload").is_err());
+    assert!(rt.exec(bytecode, "=payload").is_err());
+}
+
+#[test]
+fn trusted_allows_binary_chunks() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let result: i64 = rt
+        .eval(
+            r#"
+            local chunk = string.dump(function() return 7 end)
+            return load(chunk, "=payload", "b")()
+            "#,
+            "=test",
+        )
+        .unwrap();
+    assert_eq!(result, 7);
+}
+
+#[test]
+fn trusted_keeps_io_and_os() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    assert!(!is_nil(&rt, "io.open"));
+    assert!(!is_nil(&rt, "os.time"));
+    assert!(!is_nil(&rt, "loadfile"));
+    // But module loading is still the host's business, not Lua's.
+    assert!(is_nil(&rt, "package"));
+}
+
+#[test]
+fn caps_memory_by_default() {
+    let rt = sandbox();
+    assert_eq!(rt.memory_limit(), Some(DEFAULT_SANDBOX_MEMORY_LIMIT));
+    assert_eq!(Runtime::new(Profile::Trusted).unwrap().memory_limit(), None);
+}
+
+#[test]
+fn memory_limit_stops_a_runaway_allocation() {
+    let rt = Runtime::builder(Profile::Sandbox)
+        .memory_limit(4 * 1024 * 1024)
+        .build()
+        .unwrap();
+    let err = rt
+        .exec(
+            r#"
+            local t = {}
+            while true do
+                t[#t + 1] = string.rep("x", 4096)
+            end
+            "#,
+            "=test",
+        )
+        .unwrap_err();
+    let avarice_rt::Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_out_of_memory(&err), "expected OOM, got {err}");
+    assert!(rt.used_memory() <= 4 * 1024 * 1024);
+}
+
+#[test]
+fn the_sandbox_profile_is_not_mutated_by_reconfiguring_a_runtime() {
+    let loosened = Runtime::builder(Profile::Sandbox)
+        .with_std_libs(avarice_rt::mlua::StdLib::OS)
+        .unlimited_memory()
+        .allow_binary_chunks(true)
+        .build()
+        .unwrap();
+    assert!(!is_nil(&loosened, "os.time"));
+    assert_eq!(loosened.memory_limit(), None);
+
+    // A runtime built afterwards from the same profile is untouched.
+    let fresh = sandbox();
+    assert!(is_nil(&fresh, "os"));
+    assert_eq!(fresh.memory_limit(), Some(DEFAULT_SANDBOX_MEMORY_LIMIT));
+    assert_eq!(
+        Profile::Sandbox.memory_limit(),
+        Some(DEFAULT_SANDBOX_MEMORY_LIMIT)
+    );
+}
+
+#[test]
+fn opening_the_debug_library_is_refused_rather_than_ignored() {
+    let err = Runtime::builder(Profile::Trusted)
+        .with_std_libs(avarice_rt::mlua::StdLib::DEBUG)
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(err, avarice_rt::Error::Config(ref msg) if msg.contains("debug")),
+        "{err:?}"
+    );
+}

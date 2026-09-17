@@ -1,0 +1,35 @@
+[package]
+name = "avarice-rt"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "An embeddable Lua 5.4 runtime with a sandbox, and the avrt interpreter"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lloydeverett/avarice-rt"
+publish = false
+
+[lib]
+name = "avarice_rt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "avrt"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# The `avrt` command-line program. Embedders should depend on avarice-rt with
+# `default-features = false` to avoid pulling in clap and reedline.
+cli = ["dep:clap", "dep:reedline"]
+# Expose the async entry points. Runtime-agnostic; pulls in no executor.
+async = ["mlua/async"]
+
+[dependencies]
+mlua = { version = "0.12.1", features = ["lua54", "vendored"] }
+thiserror = "2.0"
+clap = { version = "4.6", features = ["derive"], optional = true }
+reedline = { version = "0.51", optional = true }
+
+[profile.release]
+strip = "debuginfo"

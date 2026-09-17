@@ -1,0 +1,268 @@
+//! `avrt`: the command-line interpreter.
+
+mod repl;
+
+use std::io::{IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use avarice_rt::mlua::{Table, Variadic};
+use avarice_rt::{Error, FsStore, Profile, Runtime};
+use clap::Parser;
+
+/// Exit code for a Lua error, matching stock `lua`.
+const EXIT_LUA_ERROR: u8 = 1;
+
+/// Exit code for a usage error. clap uses the same code for a parse failure.
+const EXIT_USAGE: u8 = 2;
+
+/// A Lua 5.4 interpreter.
+///
+/// With no script and no `-e`, `avrt` starts a REPL — or reads a program from standard input,
+/// if standard input is not a terminal.
+#[derive(Debug, Parser)]
+#[command(
+    name = "avrt",
+    version,
+    about,
+    disable_version_flag = true,
+    trailing_var_arg = true
+)]
+struct Cli {
+    /// Execute a statement. May be repeated; statements run in order, before the script.
+    #[arg(short = 'e', value_name = "stat")]
+    execute: Vec<String>,
+
+    /// Enter interactive mode after running the script and any -e statements.
+    #[arg(short = 'i')]
+    interactive: bool,
+
+    /// Show version information.
+    #[arg(short = 'v', long = "version")]
+    version: bool,
+
+    /// Run in the sandbox profile: no io, os, package or debug, memory capped, no bytecode.
+    #[arg(long)]
+    sandbox: bool,
+
+    /// Stop after this long, in seconds. Applies to each script, -e statement or REPL entry.
+    #[arg(long, value_name = "seconds")]
+    timeout: Option<f64>,
+
+    /// Directory to resolve `require` against. Defaults to the script's directory.
+    #[arg(long, value_name = "dir")]
+    path: Vec<PathBuf>,
+
+    /// The script to run, then its arguments. `-` reads the script from standard input.
+    #[arg(value_name = "script")]
+    script: Vec<String>,
+}
+
+pub fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match run(&cli) {
+        Ok(code) => code,
+        Err(err) => {
+            report(&err);
+            ExitCode::from(EXIT_LUA_ERROR)
+        }
+    }
+}
+
+fn run(cli: &Cli) -> Result<ExitCode, Error> {
+    if cli.version {
+        print_version();
+    }
+
+    let script = cli.script.first().map(String::as_str);
+    let profile = if cli.sandbox {
+        Profile::Sandbox
+    } else {
+        Profile::Trusted
+    };
+
+    // No cancel handle: nothing in `avrt` can trip one yet, and configuring one would install
+    // the limit hook — and pay for it on every run — for no reason. See the README's note on
+    // Ctrl-C during a running script.
+    let mut builder = Runtime::builder(profile);
+    if let Some(seconds) = cli.timeout {
+        if !(seconds.is_finite() && seconds > 0.0) {
+            eprintln!("avrt: --timeout must be a positive number of seconds");
+            return Ok(ExitCode::from(EXIT_USAGE));
+        }
+        builder = builder.time_limit(std::time::Duration::from_secs_f64(seconds));
+    }
+    let rt = builder.store(store_for(cli, script)).build()?;
+    set_arg_table(&rt, &cli.script)?;
+
+    for statement in &cli.execute {
+        rt.exec(statement.as_str(), "=(command line)")?;
+    }
+
+    let script_args = cli.script.get(1..).unwrap_or_default();
+    let ran_script = match script {
+        Some("-") => {
+            run_stdin(&rt, script_args)?;
+            true
+        }
+        Some(path) => {
+            run_file(&rt, Path::new(path), script_args)?;
+            true
+        }
+        None => false,
+    };
+
+    // With nothing to run, behave like stock lua: a REPL on a terminal, otherwise read the
+    // program from standard input.
+    let idle = !ran_script && cli.execute.is_empty() && !cli.version;
+    if cli.interactive || (idle && std::io::stdin().is_terminal()) {
+        repl::run(&rt)?;
+    } else if idle {
+        run_stdin(&rt, &[])?;
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_file(rt: &Runtime, path: &Path, args: &[String]) -> Result<(), Error> {
+    let source = std::fs::read(path)
+        .map_err(|e| Error::Config(format!("cannot open {}: {e}", path.display())))?;
+    // A leading `#!` line is not Lua, but a script with one should still run.
+    let source = strip_shebang(source);
+    run_program(rt, source, format!("@{}", path.display()), args)
+}
+
+fn run_stdin(rt: &Runtime, args: &[String]) -> Result<(), Error> {
+    let mut source = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut source)
+        .map_err(|e| Error::Config(format!("cannot read standard input: {e}")))?;
+    run_program(rt, strip_shebang(source), "=stdin".to_string(), args)
+}
+
+/// Runs a program, passing its arguments as the main chunk's varargs.
+///
+/// A script reaches them either as `...` or through the `arg` table; stock `lua` provides both,
+/// and scripts use both.
+fn run_program(rt: &Runtime, source: Vec<u8>, name: String, args: &[String]) -> Result<(), Error> {
+    let args: Variadic<String> = args.to_vec().into();
+    let _execution = rt.enter()?;
+    rt.load(source, name).call::<()>(args)?;
+    Ok(())
+}
+
+fn strip_shebang(mut source: Vec<u8>) -> Vec<u8> {
+    if source.starts_with(b"#") {
+        let line_end = source
+            .iter()
+            .position(|&b| b == b'\n')
+            .unwrap_or(source.len());
+        // Blank the line rather than removing it, so reported line numbers still line up.
+        source[..line_end].fill(b' ');
+    }
+    source
+}
+
+/// Where `require` looks, by default the script's own directory.
+fn store_for(cli: &Cli, script: Option<&str>) -> FsStore {
+    if !cli.path.is_empty() {
+        return FsStore::with_roots(cli.path.clone());
+    }
+    let root = match script {
+        Some("-") | None => PathBuf::from("."),
+        Some(path) => Path::new(path)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+    };
+    FsStore::new(root)
+}
+
+/// Builds Lua's `arg` table.
+///
+/// `arg[0]` is the script, `arg[1]` onwards its arguments, and the negative indices walk back
+/// through the words before the script to `arg[-n]`, the interpreter itself — the same shape
+/// stock `lua` produces, so a script that inspects `arg` behaves the same under `avrt`.
+fn set_arg_table(rt: &Runtime, script: &[String]) -> Result<(), Error> {
+    let argv: Vec<String> = std::env::args().collect();
+    // clap's trailing var arg takes a contiguous tail of argv, so the script sits exactly that
+    // many words from the end.
+    let script_index = argv.len().saturating_sub(script.len());
+
+    let arg: Table = rt.lua().create_table()?;
+    for (offset, word) in argv[..script_index].iter().rev().enumerate() {
+        arg.raw_set(-(offset as i64 + 1), word.as_str())?;
+    }
+    for (offset, word) in argv[script_index..].iter().enumerate() {
+        arg.raw_set(offset as i64, word.as_str())?;
+    }
+    rt.lua().globals().raw_set("arg", arg)?;
+    Ok(())
+}
+
+fn print_version() {
+    println!("avrt {}", env!("CARGO_PKG_VERSION"));
+    println!("PUC-Rio Lua 5.4, statically linked");
+}
+
+/// Prints an error the way stock `lua` does: the message, then a traceback if there is one.
+fn report(err: &Error) {
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "avrt: {}", message_of(err));
+}
+
+/// Strips the wrapper mlua puts around a Lua error, leaving what the script would have seen.
+fn message_of(err: &Error) -> String {
+    match err {
+        Error::Lua(avarice_rt::mlua::Error::RuntimeError(msg)) => msg.clone(),
+        Error::Lua(avarice_rt::mlua::Error::SyntaxError { message, .. }) => message.clone(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shebang_is_blanked_rather_than_removed() {
+        let source = strip_shebang(b"#!/usr/bin/env avrt\nreturn 1\n".to_vec());
+        assert_eq!(&source[..19], b"                   ");
+        assert!(source.ends_with(b"\nreturn 1\n"));
+    }
+
+    #[test]
+    fn a_file_with_only_a_shebang_is_handled() {
+        assert_eq!(strip_shebang(b"#!/bin/avrt".to_vec()), b"           ");
+    }
+
+    #[test]
+    fn the_store_follows_the_script() {
+        let cli = Cli::parse_from(["avrt", "/srv/app/main.lua"]);
+        let store = store_for(&cli, Some("/srv/app/main.lua"));
+        assert_eq!(store.roots(), [PathBuf::from("/srv/app")]);
+
+        let cli = Cli::parse_from(["avrt", "main.lua"]);
+        let store = store_for(&cli, Some("main.lua"));
+        assert_eq!(store.roots(), [PathBuf::from(".")]);
+    }
+
+    #[test]
+    fn explicit_paths_win_over_the_script_directory() {
+        let cli = Cli::parse_from(["avrt", "--path", "/a", "--path", "/b", "/srv/main.lua"]);
+        let store = store_for(&cli, Some("/srv/main.lua"));
+        assert_eq!(store.roots(), [PathBuf::from("/a"), PathBuf::from("/b")]);
+    }
+
+    #[test]
+    fn script_arguments_are_not_parsed_as_options() {
+        let cli = Cli::parse_from(["avrt", "-e", "x = 1", "main.lua", "-i", "--sandbox"]);
+        assert_eq!(cli.execute, ["x = 1"]);
+        assert!(
+            !cli.interactive,
+            "-i after the script belongs to the script"
+        );
+        assert!(!cli.sandbox);
+        assert_eq!(cli.script, ["main.lua", "-i", "--sandbox"]);
+    }
+}
