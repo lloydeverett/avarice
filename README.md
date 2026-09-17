@@ -72,11 +72,16 @@ directory** — or at the current directory when the program comes from standard
 `-e`. `--path` *replaces* that root rather than adding to it, and several `--path` options are
 tried in the order given.
 
-This is the one respect in which `--sandbox` still reaches the filesystem: a sandboxed script
-cannot open a file, but it can `require` Lua source from the directory its own file sits in.
-Pass `--path` to point that somewhere deliberate. An embedder using the library gets no store at
-all unless it asks for one with `RuntimeBuilder::store`: this default belongs to `avrt`, not to
-the runtime.
+Under `--sandbox` this widens what a script can run, not what it can reach. A module loaded from
+the store is Lua source evaluated in the same runtime under the same profile — no `io`, no `os`,
+binary chunks still refused, the same memory cap and timeout — so it is sandboxed exactly as the
+entry point is. What the default does give a script is the rest of its own directory: any
+`<name>.lua` beside it can be required and run, whether or not you meant it to be part of the
+program. Pass `--path` when that set should be a directory you chose rather than wherever the
+script happens to sit.
+
+An embedder using the library gets no store at all unless it asks for one with
+`RuntimeBuilder::store`: this default belongs to `avrt`, not to the runtime.
 
 ### The REPL
 
