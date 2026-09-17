@@ -16,6 +16,12 @@ installing a custom searcher into the stock one, which would have worked.
 
 ## Consequences
 
+`RuntimeBuilder::build` refuses `StdLib::PACKAGE` rather than dropping it,
+so an embedder who asks for it — most likely by reaching for
+`StdLib::ALL_SAFE`, which contains it — gets an error instead of a runtime
+that quietly disagrees with this decision. `StdLib::DEBUG` is refused in the
+same place, for the different reason given in ADR 0003.
+
 `mlua`'s safe constructor is sufficient; `Lua::unsafe_new` is never needed,
 because that only exists to let *Lua* load C modules. Native modules are reached
 by the host calling `luaopen_*` through `Lua::create_c_function`, which carries

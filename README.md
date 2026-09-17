@@ -47,7 +47,8 @@ avrt [options] [script [args...]]
   -v, --version  print version information
   --sandbox      run in the sandbox profile instead of the trusted one
   --timeout SEC  stop any one script, statement or REPL entry after SEC seconds
-  --path DIR     resolve `require` against DIR; may be repeated
+  --path DIR     resolve `require` against DIR instead of the script's own
+                 directory; may be repeated, and tried in the order given
   --             end of options
   -              read the script from standard input
 ```
@@ -62,6 +63,20 @@ The command exits 0 on success, 1 on a Lua error, and 2 on a usage error.
 Unlike stock `lua`, `avrt` defaults to the **trusted** profile — you asked for an interpreter, so
 you get one — and there is no `-l` flag, because there is no `package.path` for it to search.
 Use `--path` and `require`.
+
+### Where `require` looks
+
+`avrt` always gives the runtime a module store, so a script can `require` a sibling file without
+being told where to look. With no `--path`, that store is rooted at **the script's own
+directory** — or at the current directory when the program comes from standard input or from
+`-e`. `--path` *replaces* that root rather than adding to it, and several `--path` options are
+tried in the order given.
+
+This is the one respect in which `--sandbox` still reaches the filesystem: a sandboxed script
+cannot open a file, but it can `require` Lua source from the directory its own file sits in.
+Pass `--path` to point that somewhere deliberate. An embedder using the library gets no store at
+all unless it asks for one with `RuntimeBuilder::store`: this default belongs to `avrt`, not to
+the runtime.
 
 ### The REPL
 
@@ -106,7 +121,9 @@ one sets, and doing so never affects the profile another runtime is built from.
 Two entries deserve a word.
 
 **`package` is never opened**, in either profile. That is the point of the project rather than an
-oversight; see [ADR 0002](docs/adr/0002-host-registers-modules.md).
+oversight; see [ADR 0002](docs/adr/0002-host-registers-modules.md). `RuntimeBuilder` refuses
+`StdLib::PACKAGE` outright, so it cannot arrive by accident through `StdLib::ALL_SAFE` — which,
+for Lua as opposed to Luau, includes it.
 
 **`debug` is never opened either.** mlua refuses it on a safe Lua state, because parts of it
 (`debug.setmetatable`, `debug.setupvalue`, `debug.upvalueid`) can violate the invariants mlua's

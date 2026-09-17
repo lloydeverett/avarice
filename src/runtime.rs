@@ -284,14 +284,17 @@ impl RuntimeBuilder {
 
     /// Replaces the set of standard libraries to open.
     ///
-    /// [`StdLib::ALL_SAFE`] is a trap here: for Lua (as opposed to Luau) it includes
-    /// `package`, which would hand Lua back the module loading this runtime exists to take away.
+    /// [`StdLib::PACKAGE`] and [`StdLib::DEBUG`] are not accepted: [`build`](Self::build)
+    /// refuses them rather than dropping them quietly. That also rules out
+    /// [`StdLib::ALL_SAFE`], which for Lua — as opposed to Luau — includes `package`.
     pub fn std_libs(mut self, libs: StdLib) -> Self {
         self.std_libs = libs;
         self
     }
 
     /// Opens these libraries in addition to the profile's.
+    ///
+    /// Subject to the same refusals as [`std_libs`](Self::std_libs).
     pub fn with_std_libs(mut self, libs: StdLib) -> Self {
         self.std_libs |= libs;
         self
@@ -370,13 +373,29 @@ impl RuntimeBuilder {
 
     /// Builds the runtime.
     pub fn build(self) -> Result<Runtime> {
-        // mlua rejects both of these on a safe state, and we never reach for the unsafe
-        // constructor: it exists to let *Lua* load C modules, which is the one thing this
-        // runtime is built not to allow.
+        // Two libraries are refused outright rather than quietly dropped, for two different
+        // reasons.
+        //
+        // `debug` mlua will not open on a safe state at all, because parts of it can violate
+        // the invariants that safety rests on — and the unsafe constructor is not a trade worth
+        // making, since it exists to let *Lua* load C modules.
+        //
+        // `package` mlua would open quite happily; the refusal is ours. `require` is this
+        // runtime's own, and `package.loadlib` plus a searcher list that reaches a `.so` is
+        // exactly the capability the runtime exists to remove. `StdLib::ALL_SAFE` contains it,
+        // which is the likeliest way it would arrive by accident.
         if self.std_libs.contains(StdLib::DEBUG) {
             return Err(Error::Config(
                 "the debug library cannot be opened: parts of it can violate mlua's safety \
                  invariants, so a `debug` table carrying only `traceback` is installed instead"
+                    .to_string(),
+            ));
+        }
+        if self.std_libs.contains(StdLib::PACKAGE) {
+            return Err(Error::Config(
+                "the package library cannot be opened: `require` is this runtime's own, and \
+                 `package.loadlib` would hand Lua back the C module loading the runtime exists \
+                 to take away. Register the module from Rust instead"
                     .to_string(),
             ));
         }

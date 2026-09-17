@@ -21,8 +21,6 @@ default = ["cli"]
 # The `avrt` command-line program. Embedders should depend on avarice-rt with
 # `default-features = false` to avoid pulling in clap and reedline.
 cli = ["dep:clap", "dep:reedline"]
-# Expose the async entry points. Runtime-agnostic; pulls in no executor.
-async = ["mlua/async"]
 
 [dependencies]
 mlua = { version = "0.12.1", features = ["lua54", "vendored"] }
