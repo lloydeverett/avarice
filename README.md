@@ -297,4 +297,4 @@ $ cargo build --no-default-features   # library only, no clap or reedline
 
 ## Licence
 
-MIT OR Apache-2.0.
+Not chosen yet.

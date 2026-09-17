@@ -16,6 +16,35 @@ const EXIT_LUA_ERROR: u8 = 1;
 /// Exit code for a usage error. clap uses the same code for a parse failure.
 const EXIT_USAGE: u8 = 2;
 
+/// Anything that stops `avrt` short of running to completion.
+///
+/// Reading a script is the command's own business rather than the runtime's, so it has its own
+/// variants here: [`avarice_rt::Error::Config`] means the runtime could not be built, and
+/// borrowing it to report a missing file would make the two indistinguishable.
+#[derive(Debug, thiserror::Error)]
+enum CliError {
+    /// A script named on the command line could not be read.
+    #[error("cannot open {}: {source}", path.display())]
+    OpenScript {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// Standard input could not be read.
+    #[error("cannot read standard input: {source}")]
+    ReadStdin { source: std::io::Error },
+
+    /// Anything the runtime, or the Lua code it ran, reported.
+    #[error(transparent)]
+    Runtime(#[from] Error),
+}
+
+impl From<avarice_rt::mlua::Error> for CliError {
+    fn from(err: avarice_rt::mlua::Error) -> Self {
+        CliError::Runtime(err.into())
+    }
+}
+
 /// A Lua 5.4 interpreter.
 ///
 /// With no script and no `-e`, `avrt` starts a REPL — or reads a program from standard input,
@@ -41,7 +70,7 @@ struct Cli {
     #[arg(short = 'v', long = "version")]
     version: bool,
 
-    /// Run in the sandbox profile: no io, os, package or debug, memory capped, no bytecode.
+    /// Run in the sandbox profile: no io or os, memory capped, no bytecode.
     #[arg(long)]
     sandbox: bool,
 
@@ -69,7 +98,7 @@ pub fn main() -> ExitCode {
     }
 }
 
-fn run(cli: &Cli) -> Result<ExitCode, Error> {
+fn run(cli: &Cli) -> Result<ExitCode, CliError> {
     if cli.version {
         print_version();
     }
@@ -124,19 +153,21 @@ fn run(cli: &Cli) -> Result<ExitCode, Error> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_file(rt: &Runtime, path: &Path, args: &[String]) -> Result<(), Error> {
-    let source = std::fs::read(path)
-        .map_err(|e| Error::Config(format!("cannot open {}: {e}", path.display())))?;
+fn run_file(rt: &Runtime, path: &Path, args: &[String]) -> Result<(), CliError> {
+    let source = std::fs::read(path).map_err(|source| CliError::OpenScript {
+        path: path.to_path_buf(),
+        source,
+    })?;
     // A leading `#!` line is not Lua, but a script with one should still run.
     let source = strip_shebang(source);
     run_program(rt, source, format!("@{}", path.display()), args)
 }
 
-fn run_stdin(rt: &Runtime, args: &[String]) -> Result<(), Error> {
+fn run_stdin(rt: &Runtime, args: &[String]) -> Result<(), CliError> {
     let mut source = Vec::new();
     std::io::stdin()
         .read_to_end(&mut source)
-        .map_err(|e| Error::Config(format!("cannot read standard input: {e}")))?;
+        .map_err(|source| CliError::ReadStdin { source })?;
     run_program(rt, strip_shebang(source), "=stdin".to_string(), args)
 }
 
@@ -144,7 +175,12 @@ fn run_stdin(rt: &Runtime, args: &[String]) -> Result<(), Error> {
 ///
 /// A script reaches them either as `...` or through the `arg` table; stock `lua` provides both,
 /// and scripts use both.
-fn run_program(rt: &Runtime, source: Vec<u8>, name: String, args: &[String]) -> Result<(), Error> {
+fn run_program(
+    rt: &Runtime,
+    source: Vec<u8>,
+    name: String,
+    args: &[String],
+) -> Result<(), CliError> {
     let args: Variadic<String> = args.to_vec().into();
     let _execution = rt.enter()?;
     rt.load(source, name).call::<()>(args)?;
@@ -205,17 +241,23 @@ fn print_version() {
     println!("PUC-Rio Lua 5.4, statically linked");
 }
 
-/// Prints an error the way stock `lua` does: the message, then a traceback if there is one.
-fn report(err: &Error) {
+/// Prints an error the way stock `lua` does.
+///
+/// A traceback is not printed separately: mlua runs Lua code under a message handler that
+/// appends the traceback to the error message itself, so it is already part of what is printed
+/// here.
+fn report(err: &CliError) {
     let mut stderr = std::io::stderr().lock();
     let _ = writeln!(stderr, "avrt: {}", message_of(err));
 }
 
 /// Strips the wrapper mlua puts around a Lua error, leaving what the script would have seen.
-fn message_of(err: &Error) -> String {
+fn message_of(err: &CliError) -> String {
     match err {
-        Error::Lua(avarice_rt::mlua::Error::RuntimeError(msg)) => msg.clone(),
-        Error::Lua(avarice_rt::mlua::Error::SyntaxError { message, .. }) => message.clone(),
+        CliError::Runtime(Error::Lua(avarice_rt::mlua::Error::RuntimeError(msg))) => msg.clone(),
+        CliError::Runtime(Error::Lua(avarice_rt::mlua::Error::SyntaxError { message, .. })) => {
+            message.clone()
+        }
         other => other.to_string(),
     }
 }

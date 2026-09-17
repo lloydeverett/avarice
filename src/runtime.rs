@@ -17,14 +17,14 @@ use crate::profile::Profile;
 /// The registry key Lua itself uses for its loaded-module table.
 const LOADED: &str = "_LOADED";
 
-type Loader = Box<dyn Fn(&Lua) -> mlua::Result<Value>>;
+type Loader = Rc<dyn Fn(&Lua) -> mlua::Result<Value>>;
 
 /// What `require` resolves against, mutable after the runtime is built.
 #[derive(Default)]
 struct Modules {
     store: RefCell<Option<Arc<dyn ModuleStore>>>,
-    loaders: RefCell<HashMap<String, Rc<Loader>>>,
-    loading: RefCell<Vec<String>>,
+    loaders: RefCell<HashMap<ModuleName, Loader>>,
+    loading: RefCell<Vec<ModuleName>>,
 }
 
 /// A Lua runtime: a Lua state, the libraries a [`Profile`] granted it, and the limits it runs
@@ -110,11 +110,7 @@ impl Runtime {
     /// anything else is shown quoted as a source string.
     pub fn load<'a>(&self, source: impl AsChunk + 'a, name: impl Into<String>) -> Chunk<'a> {
         let chunk = self.lua.load(source).set_name(name);
-        if self.binary_chunks {
-            chunk
-        } else {
-            chunk.set_mode(ChunkMode::Text)
-        }
+        enforce_chunk_mode(chunk, self.binary_chunks)
     }
 
     /// Runs a chunk for its side effects.
@@ -160,7 +156,7 @@ impl Runtime {
         self.modules
             .loaders
             .borrow_mut()
-            .insert(name.into(), Rc::new(Box::new(loader) as Loader));
+            .insert(name, Rc::new(loader));
         Ok(())
     }
 
@@ -204,7 +200,7 @@ impl Runtime {
         let Ok(name) = ModuleName::new(name) else {
             return false;
         };
-        if self.modules.loaders.borrow().contains_key(name.as_str()) {
+        if self.modules.loaders.borrow().contains_key(&name) {
             return true;
         }
         match self.lua.named_registry_value::<Table>(LOADED) {
@@ -392,28 +388,26 @@ impl RuntimeBuilder {
         });
         let limits = Rc::new(Limits::new(self.cancel, self.time_limit));
 
-        let runtime = Runtime {
-            lua,
-            limits: Rc::clone(&limits),
-            modules: Rc::clone(&modules),
-            profile: self.profile,
-            binary_chunks: self.binary_chunks,
-            memory_limit: self.memory_limit,
-        };
-
-        install_require(&runtime, modules)?;
-        install_traceback(&runtime)?;
-        restrict_base_library(&runtime)?;
+        install_require(&lua, Rc::clone(&modules), self.binary_chunks)?;
+        install_traceback(&lua)?;
+        restrict_base_library(&lua, self.binary_chunks)?;
 
         // Last, so that none of our own setup can trip the limits we install.
         if let Some(bytes) = self.memory_limit {
-            runtime.lua.set_memory_limit(bytes)?;
+            lua.set_memory_limit(bytes)?;
         }
         if limits.needs_hook() {
-            limits::install_hook(&runtime.lua, limits, self.check_interval)?;
+            limits::install_hook(&lua, Rc::clone(&limits), self.check_interval)?;
         }
 
-        Ok(runtime)
+        Ok(Runtime {
+            lua,
+            limits,
+            modules,
+            profile: self.profile,
+            binary_chunks: self.binary_chunks,
+            memory_limit: self.memory_limit,
+        })
     }
 }
 
@@ -431,13 +425,24 @@ fn loaded_table(lua: &Lua) -> mlua::Result<Table> {
     }
 }
 
+/// Applies a runtime's chunk rules to a chunk it is about to run.
+///
+/// The one rule is the binary-chunk refusal, and every chunk the runtime loads goes through
+/// here — the script itself via [`Runtime::load`], and module source via [`load_from_store`] —
+/// so the two cannot drift apart.
+fn enforce_chunk_mode(chunk: Chunk<'_>, binary_chunks: bool) -> Chunk<'_> {
+    if binary_chunks {
+        chunk
+    } else {
+        chunk.set_mode(ChunkMode::Text)
+    }
+}
+
 /// Installs our `require`, which resolves host modules and then the module store — and nothing
 /// else. There is no `package.path` to point elsewhere and no searcher that reaches a `.so`.
-fn install_require(runtime: &Runtime, modules: Rc<Modules>) -> Result<()> {
-    let lua = &runtime.lua;
+fn install_require(lua: &Lua, modules: Rc<Modules>, binary_chunks: bool) -> Result<()> {
     loaded_table(lua)?;
 
-    let binary_chunks = runtime.binary_chunks;
     let require = lua.create_function(move |lua, name: String| {
         let name = ModuleName::new(name.clone())
             .map_err(|e| mlua::Error::runtime(format!("invalid module name {name:?}: {e}")))?;
@@ -450,7 +455,7 @@ fn install_require(runtime: &Runtime, modules: Rc<Modules>) -> Result<()> {
 
         let _frame = LoadingFrame::enter(&modules, &name)?;
 
-        let loader = modules.loaders.borrow().get(name.as_str()).cloned();
+        let loader = modules.loaders.borrow().get(&name).cloned();
         let value = match loader {
             Some(loader) => loader(lua)?,
             None => load_from_store(lua, &modules, &name, binary_chunks)?,
@@ -491,13 +496,8 @@ fn load_from_store(
     let chunk = lua
         .load(source.source())
         .set_name(format!("@{}", source.origin()));
-    let chunk = if binary_chunks {
-        chunk
-    } else {
-        chunk.set_mode(ChunkMode::Text)
-    };
     // Lua passes the module its own name, so that one file can serve several names.
-    chunk.call(name.as_str())
+    enforce_chunk_mode(chunk, binary_chunks).call(name.as_str())
 }
 
 fn not_found(name: &ModuleName, store: Option<&str>) -> mlua::Error {
@@ -518,15 +518,18 @@ struct LoadingFrame<'a> {
 impl<'a> LoadingFrame<'a> {
     fn enter(modules: &'a Modules, name: &ModuleName) -> mlua::Result<Self> {
         let mut loading = modules.loading.borrow_mut();
-        if loading.iter().any(|n| n == name.as_str()) {
-            let mut chain = loading.join(" -> ");
-            chain.push_str(" -> ");
-            chain.push_str(name.as_str());
+        if loading.contains(name) {
+            let chain = loading
+                .iter()
+                .chain(std::iter::once(name))
+                .map(ModuleName::as_str)
+                .collect::<Vec<_>>()
+                .join(" -> ");
             return Err(mlua::Error::runtime(format!(
                 "module '{name}' is already loading (require cycle: {chain})"
             )));
         }
-        loading.push(name.as_str().to_owned());
+        loading.push(name.clone());
         drop(loading);
         Ok(LoadingFrame { modules })
     }
@@ -544,8 +547,7 @@ impl Drop for LoadingFrame<'_> {
 /// debug.traceback)` is how Lua code has always got a stack trace, and the underlying
 /// `luaL_traceback` is a plain C API call that needs no library open. Code that feature-detects
 /// on `debug.getinfo` will correctly find it missing.
-fn install_traceback(runtime: &Runtime) -> Result<()> {
-    let lua = &runtime.lua;
+fn install_traceback(lua: &Lua) -> Result<()> {
     let traceback = lua.create_function(|lua, (msg, level): (Option<String>, Option<usize>)| {
         lua.traceback(msg.as_deref(), level.unwrap_or(1))
     })?;
@@ -557,15 +559,15 @@ fn install_traceback(runtime: &Runtime) -> Result<()> {
 
 /// Closes the two holes in Lua's base library: filesystem access, and binary chunks.
 ///
-/// Loaded through [`Runtime::load`] rather than [`Runtime::exec`] so that setting the runtime up
-/// is never subject to the runtime's own limits.
+/// Loaded through [`Lua::load`] rather than [`Runtime::exec`] so that setting the runtime up is
+/// never subject to the runtime's own limits.
 ///
 /// `dofile` and `loadfile` read files despite living in the base library rather than in `io`,
 /// so they follow `io`: present when it is, gone when it is not. `load` defaults to accepting
 /// binary chunks, so unless binary chunks are allowed it is wrapped to force text mode — which
 /// makes `load(bytecode, nil, "b")` fail with Lua's own "attempt to load a binary chunk"
 /// message rather than something of our invention.
-fn restrict_base_library(runtime: &Runtime) -> Result<()> {
+fn restrict_base_library(lua: &Lua, binary_chunks: bool) -> Result<()> {
     const DROP_FILE_FUNCTIONS: &str = r#"
         _G.dofile = nil
         _G.loadfile = nil
@@ -591,16 +593,16 @@ fn restrict_base_library(runtime: &Runtime) -> Result<()> {
         end
     "#;
 
-    let has_io = runtime.lua.globals().contains_key("io")?;
-    if !has_io {
-        runtime
-            .load(DROP_FILE_FUNCTIONS, "=[avarice-rt base library]")
-            .exec()?;
+    let prelude = |source: &'static str| {
+        let chunk = lua.load(source).set_name("=[avarice-rt base library]");
+        enforce_chunk_mode(chunk, binary_chunks).exec()
+    };
+
+    if !lua.globals().contains_key("io")? {
+        prelude(DROP_FILE_FUNCTIONS)?;
     }
-    if !runtime.binary_chunks {
-        runtime
-            .load(TEXT_ONLY_CHUNKS, "=[avarice-rt base library]")
-            .exec()?;
+    if !binary_chunks {
+        prelude(TEXT_ONLY_CHUNKS)?;
     }
     Ok(())
 }

@@ -1,47 +1,15 @@
 //! What `require` resolves, and what it refuses to.
 
+mod common;
+
 use std::cell::Cell;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use avarice_rt::mlua::{Table, Value};
 use avarice_rt::{
     Error, FsStore, ModuleName, ModuleSource, ModuleStore, Profile, Runtime, StoreError,
 };
-
-/// A scratch directory that deletes itself.
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new() -> Self {
-        static COUNTER: AtomicU32 = AtomicU32::new(0);
-        let unique = format!(
-            "avarice-rt-test-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
-        let path = std::env::temp_dir().join(unique);
-        std::fs::create_dir_all(&path).unwrap();
-        TempDir(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-
-    fn write(&self, relative: &str, contents: &str) {
-        let path = self.0.join(relative);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, contents).unwrap();
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use common::TempDir;
 
 #[test]
 fn resolves_a_host_registered_module() {

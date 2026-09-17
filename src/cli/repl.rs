@@ -13,12 +13,20 @@ use reedline::{
 /// How many entries the history file keeps.
 const HISTORY_CAPACITY: usize = 2_000;
 
+/// What the prompt shows on a fresh entry, and on the continuation of an unfinished one.
+const FRESH_INDICATOR: &str = "> ";
+const CONTINUATION_INDICATOR: &str = ">> ";
+
 struct LuaPrompt {
     indicator: &'static str,
 }
 
-const FRESH: LuaPrompt = LuaPrompt { indicator: "> " };
-const CONTINUED: LuaPrompt = LuaPrompt { indicator: ">> " };
+const FRESH: LuaPrompt = LuaPrompt {
+    indicator: FRESH_INDICATOR,
+};
+const CONTINUED: LuaPrompt = LuaPrompt {
+    indicator: CONTINUATION_INDICATOR,
+};
 
 impl Prompt for LuaPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
@@ -34,7 +42,7 @@ impl Prompt for LuaPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
-        Cow::Borrowed(">> ")
+        Cow::Borrowed(CONTINUATION_INDICATOR)
     }
 
     fn render_prompt_history_search_indicator(&self, search: PromptHistorySearch) -> Cow<'_, str> {
@@ -59,10 +67,7 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
     println!(
         "avrt {} — Lua 5.4 ({} profile). Ctrl-D to exit.",
         env!("CARGO_PKG_VERSION"),
-        match rt.profile() {
-            avarice_rt::Profile::Sandbox => "sandbox",
-            _ => "trusted",
-        }
+        rt.profile()
     );
 
     let mut buffer = String::new();

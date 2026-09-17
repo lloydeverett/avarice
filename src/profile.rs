@@ -1,5 +1,7 @@
 //! The two sets of defaults a runtime can be built from.
 
+use std::fmt;
+
 use mlua::StdLib;
 
 /// The memory ceiling [`Profile::Sandbox`] applies unless told otherwise.
@@ -36,6 +38,14 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// The profile's name, lowercase, as `avrt` reports it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Profile::Sandbox => "sandbox",
+            Profile::Trusted => "trusted",
+        }
+    }
+
     /// The standard libraries this profile opens.
     ///
     /// Never includes [`StdLib::PACKAGE`]: module loading is the host's business, so `require`
@@ -71,9 +81,23 @@ impl Profile {
     }
 }
 
+impl fmt::Display for Profile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_profile_names_itself() {
+        // Exhaustive by construction: a new variant makes `name` fail to compile rather than
+        // quietly fall through to someone else's name.
+        assert_eq!(Profile::Sandbox.to_string(), "sandbox");
+        assert_eq!(Profile::Trusted.to_string(), "trusted");
+    }
 
     #[test]
     fn no_profile_opens_package_or_debug() {
