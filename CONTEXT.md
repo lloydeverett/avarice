@@ -51,10 +51,12 @@ modules** to.
 ## Trusted mode
 
 The profile for Lua code the author vouches for. The full standard library is
-available, `package` and `debug` excepted.
+available, `package` and `debug` excepted, and every **stdlib module** is
+registered.
 
-Trusted does not mean harmless: `os.exit` ends the host process, and `io`
-reaches whatever the host user can.
+Trusted does not mean harmless: `os.exit` ends the host process, `io` reaches
+whatever the host user can, and the stdlib modules reach the network and the
+filesystem.
 
 ## Host module
 
@@ -63,6 +65,19 @@ A module the Rust host registers into a runtime, making it reachable by
 
 Host modules are the only way capability reaches Lua. Which modules a runtime
 has is decided in Rust at construction; Lua code never causes one to load.
+
+## Stdlib module
+
+A **host module** that avarice-rt ships, rather than one an embedder wrote.
+`http`, `fs`, `crypto`, `serde`, `datetime`, `utils` and `stores`.
+
+Stdlib modules are host modules like any other, and carry no privilege an
+embedder's own module lacks. What distinguishes them is only that a **profile**
+decides whether they are registered: **trusted mode** registers them all,
+**sandbox mode** registers none.
+
+Named for Lua's standard library by analogy, and separate from it: the standard
+library is Lua's own, opened by `mlua`, and reachable without `require`.
 
 ## Program
 
@@ -87,6 +102,21 @@ going through the command-line program.
 
 A function callable from Lua but implemented in Rust. The only way for Lua
 code to affect the world outside the interpreter.
+
+## Task
+
+Lua work running concurrently with the chunk that spawned it, started from Lua
+rather than by the host.
+
+A task is a green thread, not an OS thread: every task shares the one thread its
+Lua state lives on, so tasks interleave but never run in parallel and never
+observe a half-finished mutation by another. A task outlives the chunk that
+spawned it.
+
+## Write sink
+
+Where `print` sends its output. Owned by the runtime, and replaceable by the
+embedder — writing to the host's standard output is the default, not the rule.
 
 ## Embedder
 
