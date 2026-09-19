@@ -5,12 +5,17 @@ status: accepted
 # PUC-Rio Lua 5.4, not Luau
 
 avarice-rt embeds PUC-Rio Lua 5.4 via `mlua`, even though the author's other
-project, avarice, embeds Luau and was the starting reference for this one. The
-deciding requirement is that trusted code must be able to reach existing Lua C
-libraries — `luaposix` was the motivating example — and Luau cannot: it has no
-`lauxlib.h`, no `package` library, and no dynamic loading, so C modules are not
-merely awkward there but impossible. Lua 5.4 can be restricted down to a
-sandbox with known work; Luau cannot be opened up at all.
+project, avarice, embeds Luau and was the starting reference for this one. Lua
+5.4 was originally chosen because trusted code needed to reach existing Lua C
+libraries — `luaposix` was the motivating example — and Luau could not: no
+`lauxlib.h`, no `package` library, no dynamic loading, so C modules were
+impossible there rather than merely awkward.
+
+avarice-rt no longer supports native C modules at all — see [ADR
+0002](0002-host-registers-modules.md) — so that requirement no longer applies.
+The choice of Lua 5.4 over Luau still stands, but on the reasons below rather
+than that one, and it isn't treated as closed: if a good enough reason to
+reconsider Luau turns up, it's worth reopening.
 
 ## Considered options
 

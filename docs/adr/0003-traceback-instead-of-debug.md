@@ -19,8 +19,7 @@ so this is a choice about `Lua::unsafe_new`, not about `debug` in isolation.
 **Building trusted mode on `Lua::unsafe_new`** was rejected. It would make the two profiles
 differ in their *Rust* safety posture rather than only in what Lua can reach, and a single
 unsafe constructor in the codebase invites the next reach for it. [ADR
-0002](0002-host-registers-modules.md) established that we do not need it for native modules,
-which was its other motivation.
+0002](0002-host-registers-modules.md) established that we do not need it at all.
 
 **Nothing at all** was rejected because `xpcall(f, debug.traceback)` is how Lua code has always
 obtained a stack trace, and losing it would be felt on the first error in a real program.

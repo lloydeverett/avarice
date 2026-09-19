@@ -50,13 +50,6 @@
 //! global debug hook, so a script cannot shed them by running inside a coroutine, and both
 //! latch once tripped, so a `pcall` cannot swallow them. A [`CancelHandle`] is `Send`, and is
 //! the one part of a runtime that may cross threads.
-//!
-//! # Native modules
-//!
-//! Modules written in C are reached by the host calling their `luaopen_*` entry point and
-//! registering the result, never by Lua — see [`Runtime::register_native_module`]. Compile the
-//! module's C sources into your own binary; the README's native-module section has the
-//! `build.rs` for it, and explains why `dlopen`ing a prebuilt `.so` is not supported.
 
 mod error;
 mod limits;

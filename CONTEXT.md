@@ -64,15 +64,6 @@ A module the Rust host registers into a runtime, making it reachable by
 Host modules are the only way capability reaches Lua. Which modules a runtime
 has is decided in Rust at construction; Lua code never causes one to load.
 
-## Native module
-
-A **host module** implemented in C against Lua's C API (`luaposix`, `lpeg`),
-rather than in Rust or Lua.
-
-Lua code never loads native code itself: `package` is never opened, so there is
-no `package.loadlib` and no searcher that reaches a `.so`. The host compiles the
-module into its own binary and registers it, for one profile and not another.
-
 ## Program
 
 Lua source with an entry point, possibly spanning several modules that reach

@@ -34,7 +34,6 @@ The vocabulary used throughout — profile, host module, module store, embedder 
 - [Profiles](#profiles)
 - [Modules](#modules)
 - [Limits](#limits)
-- [Native (C) modules](#native-c-modules)
 - [Building](#building)
 
 ## The `avrt` command
@@ -222,89 +221,6 @@ has established its protection, so the latched error propagates out of the loop 
 A time limit is per top-level execution, not per runtime, and is armed by `Runtime::exec`,
 `Runtime::eval` or `Runtime::enter`. If you drive Lua through `Runtime::lua` directly, hold an
 `Execution` guard from `Runtime::enter` for the limit to apply.
-
-## Native (C) modules
-
-Lua's C ecosystem — `luaposix`, `lpeg`, `lua-cjson` — is reachable, but the host reaches it, not
-Lua. `package` is closed, so there is no `package.loadlib` and no searcher that opens a `.so`:
-the host calls the module's `luaopen_*` entry point and registers the result, for one profile
-and not another.
-
-```rust
-use avarice_rt::mlua::lua_State;
-use avarice_rt::{Profile, Runtime};
-use std::ffi::c_int;
-
-unsafe extern "C-unwind" {
-    fn luaopen_cjson(state: *mut lua_State) -> c_int;
-}
-
-let rt = Runtime::new(Profile::Trusted)?;
-// Safety: luaopen_cjson is a Lua C entry point built against the Lua this crate vendors.
-unsafe { rt.register_native_module("cjson", luaopen_cjson) }?;
-# Ok::<_, avarice_rt::Error>(())
-```
-
-Note what is *not* needed: `Lua::unsafe_new`. That exists to let Lua load C modules, and Lua
-never does.
-
-### Compile the module into your binary
-
-Build the module's C sources as part of your own crate. This is the supported way, and the only
-one that works on Windows. It also removes any chance of version skew between the Lua this crate
-vendors and the Lua a distribution built a module against — a mismatch in `LUAI_MAXSTACK` or
-`LUA_32BITS` corrupts the VM rather than failing cleanly.
-
-The headers' location comes from `mlua-sys`, which declares `links = "lua"`. Cargo passes that
-metadata to **direct dependents only**, so your crate needs its own `mlua-sys` dependency:
-reaching it through avarice-rt is not enough.
-
-```toml
-[dependencies]
-avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false }
-mlua-sys = { version = "0.12", features = ["lua54", "vendored"] }
-
-[build-dependencies]
-cc = "1"
-```
-
-```rust
-// build.rs
-fn main() {
-    let include = std::env::var("DEP_LUA_INCLUDE").expect("set by mlua-sys");
-    cc::Build::new()
-        .file("vendor/lua-cjson/lua_cjson.c")
-        .include(include)
-        .compile("lua_cjson");
-}
-```
-
-### If you tried to `dlopen` a prebuilt `.so`
-
-You will have seen `undefined symbol: lua_gettop` at runtime, not a build error. A prebuilt Lua
-C module contains no Lua; it expects the host process to supply those symbols when it is loaded.
-Under the stock `lua` binary they come from `liblua5.4.so`. This crate links Lua statically, and
-a static library's symbols stay out of the executable's dynamic symbol table:
-
-```console
-$ nm -D --defined-only target/debug/avrt | grep -c 'lua_'
-0
-$ RUSTFLAGS='-C link-arg=-rdynamic' cargo build
-$ nm -D --defined-only target/debug/avrt | grep -c 'lua_'
-207
-```
-
-`-rdynamic` exports them, and `println!("cargo::rustc-link-arg-bins=-rdynamic")` in a `build.rs`
-sets it — but only for binaries in the package that emitted it, never for a downstream crate, so
-no `build.rs` in avarice-rt could do it for you. That is not a route this crate supports: it has
-no Windows equivalent, and it leaves the version skew above unchecked. Compile the module in
-instead.
-
-### Trust
-
-A native module runs in your process with your privileges, and nothing about the sandbox profile
-contains it. Register one into a sandboxed runtime only if you would be happy calling it
-directly from Rust.
 
 ## Building
 
