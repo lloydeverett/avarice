@@ -130,7 +130,7 @@ And `avrt` grows a Ctrl-C handler, closing the gap the README admits to.
 
 39. As an embedder, I want one way to run a chunk, so that I cannot accidentally call an async host function under a synchronous entry point and have it hang.
 40. As an embedder who is not already async, I want a blocking driver, so that `fn main` and `#[test]` stay simple.
-41. As an embedder already inside a tokio runtime, I want a clear error rather than a panic from deep inside tokio, so that I can tell what I did wrong.
+41. As an embedder already inside a tokio runtime, I want the documentation to tell me to build the runtime on its own thread, so that I find out from the docs rather than from a panic.
 42. As an `avrt` user, I want Ctrl-C during a running script to abort it and return me to the prompt, so that a mistake costs me a keystroke rather than my session.
 43. As an `avrt` user, I want Ctrl-C to say how many tasks it aborted, so that I know whether I lost work in flight.
 44. As an `avrt` user, I want Ctrl-D at a prompt to exit cleanly, so that the REPL ends the way every other REPL does.
@@ -193,16 +193,14 @@ bundled with `include_str!` wraps them into the module table. The Lua layer is
 where ergonomics live — default arguments, method syntax, error shaping — and
 keeping it in Lua keeps it readable.
 
-One deliberate departure. Astra sets `astra_internal__*` globals and the Lua
-layer reads them off `_G`. Instead, the loader builds a table of primitives and
-passes it to the chunk as an argument:
-
-```
-local internal = ...
-```
-
-so nothing is added to `_G` and two modules cannot collide. This is the first
+Astra sets `astra_internal__*` globals from Rust and the Lua layer reads them
+off `_G`. That shape is kept. The globals are renamed from `astra_internal__*`
+to `avarice_internal__*`, since they are ours now and the old prefix would claim
+a project name that is not ours — and that rename is the first
 `Changes from the original:` line in every derived file that has a Lua layer.
+
+Because modules are registered lazily, a module's globals appear on first
+`require` of that module and not before.
 
 Lua sources are embedded with `include_str!`. No build script, no precompilation
 step: `cargo build` on a checkout is the whole toolchain.
@@ -214,7 +212,7 @@ Per ADR 0004:
 - `Runtime::exec` and `Runtime::eval` return futures. Their signatures are otherwise unchanged.
 - `Runtime` owns a `tokio::runtime::Runtime` built with `new_current_thread`, and a `LocalSet`.
 - `Runtime::block_on<F: Future>(&self, fut: F) -> F::Output` drives a future on the `LocalSet` to completion, including any tasks spawned during it.
-- `block_on` returns `Error::Config` — not a tokio panic — when called from inside another tokio runtime, naming the problem and the fix (build the `Runtime` on its own thread).
+- `block_on` inside another tokio runtime panics, which is tokio's own behaviour and is left alone. The documented answer for an embedder already inside tokio is to build the `Runtime` on its own thread.
 - Tasks are spawned with `tokio::task::spawn_local`.
 - `Runtime::enter` and the `Execution` guard are unchanged; a time limit arms across awaits, which ADR 0004 accepts.
 - mlua gains its `async` feature. Its `send` feature is not enabled, and `Runtime` stays `!Send`.
@@ -260,20 +258,26 @@ Not taken: `chrono`, `time`, `reqwest-websocket`, `futures`, and the seven
 non-JSON serde formats Astra offers (yaml, json5, ini, toml, csv, xml) — one of
 which, `serde_yaml`, is published as `0.9.34+deprecated`.
 
-**Open, needs approval:** `bitflags` for `StdModules`. mlua already depends on it,
-so it adds nothing to the tree, but it would be a new direct dependency. The
-alternative is hand-rolling the seven-flag type, which is roughly sixty lines of
-`BitOr`/`BitAnd`/`Not`/`contains` and no dependency.
+`bitflags` for `StdModules`, approved on the same terms: mlua already depends on
+it, so it adds nothing to the tree.
+
+`glob` is in on the author's call, against the recommendation to drop it, having
+been verified as `rust-lang/glob`, MIT OR Apache-2.0, current at 0.3.4.
 
 ### `datetime`, the exception
 
 Written from scratch against `jiff`, on jiff's own type model rather than a
-translation of Astra's chrono-shaped one:
+translation of Astra's chrono-shaped one. Six distinct Lua userdata types:
+`Zoned`, `Timestamp`, `civil::DateTime`, `civil::Date`, `civil::Time`, `Span`
+and `TimeZone`. `SignedDuration` is deliberately not among them — it and `Span`
+differ in ways that matter to jiff, calendar units against absolute ones, but
+would read as a confusing pair of near-identical Lua types. `Span` covers what
+scripts need.
 
-- `Zoned`, `Timestamp`, `civil::DateTime`, `civil::Date`, `civil::Time`, `Span`, `TimeZone` as distinct Lua userdata types.
-- `SignedDuration` is not exposed; `Span` covers what Lua needs.
-- Split constructors — `datetime.now()`, `datetime.parse(s)`, `datetime.from(parts)` — rather than Astra's single type-overloaded one.
-- Arithmetic through `Span`.
+- Metamethods throughout: `__tostring`, `__eq`, `__lt`, `__le`, and `__add`/`__sub` taking a `Span`, so `now + span` reads as arithmetic rather than as a method call.
+- `datetime.span{ days = 3 }` replaces Astra's sixteen `add_*`/`sub_*` methods.
+- Per-type constructors rather than Astra's single `datetime.new(differentiator, ...)`, which switches on the type of its first argument — `datetime.new(2024)` meaning "the year 2024" while `datetime.new("2024")` means "parse this" is a trap not worth copying into a file we are writing from scratch anyway.
+- Astra's `to_locale_date_string`/`to_locale_time_string`/`to_locale_datetime_string` are not carried over: jiff has no locale formatting, and chrono only does it behind an unstable feature.
 
 It carries no Astra attribution header. The crate README says why this file
 differs from its neighbours.
@@ -418,8 +422,9 @@ which is unsound in a process with threads), dotenv loading, `clean_require`,
 `close_all_databases`, and the graceful-shutdown/SIGTERM machinery. `utils`
 exposes `env.get` and nothing else of the environment.
 
-**An async driver for embedders already inside tokio.** `block_on` errors
-clearly for them and the documented answer is a dedicated thread. A
+**An async driver for embedders already inside tokio.** `block_on` panics for
+them, as tokio's own `block_on` does, and the documented answer is a dedicated
+thread. A
 `LocalSet`-based async entry point is a reasonable later addition and needs its
 own thought about the runtime's lifetime; ADR 0004 already accepts that
 async-std and smol embedders are locked out entirely.
@@ -449,15 +454,11 @@ carefully after it is cut.
 **Astra carries `sha2` at both 0.10.9 and 0.11.0** in its lock file. We take one
 version.
 
-**Recommended order of work**, each step leaving the tree green:
+**The work is broken into tickets** under
+[docs/tickets/stdlib-modules](../tickets/stdlib-modules/), numbered in dependency
+order. The ordering lives there rather than here, so there is one place to read
+it and one place for it to go stale.
 
-1. Workspace split, empty stdlib crate with `LICENSE`, `NOTICE` and `README`.
-2. `StdModule`, `StdModules`, `loader`, and the wiring in `RuntimeBuilder::build` — with one trivial module behind it, to prove the seam before there is anything to lose.
-3. The async conversion, and the existing suite moved onto `block_on`. Nothing new is exposed; this step is purely the shape change, and it is the one that touches every existing test.
-4. `print` and the write sink, with the ADR 0005 test.
-5. `crypto`, then `serde`, then `fs` — synchronous, and they settle the attribution header against real files.
-6. `utils`, including tasks, which the async work has already made possible.
-7. `http`, with the loopback server.
-8. `stores`.
-9. `datetime`, last, because it is clean-room and shares nothing with the others.
-10. Documentation: README, crate docs, doctests.
+Three tickets have no blockers: the async conversion, the workspace split, and
+`print`. The async conversion is the riskiest of the set and the only one whose
+diff touches code it does not own.
