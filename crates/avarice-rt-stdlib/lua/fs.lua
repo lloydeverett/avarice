@@ -1,0 +1,180 @@
+---@meta
+
+local fs = {}
+
+---@class File
+---@field path fun(self: File): string
+---Pulls some bytes from this source into the specified buffer, returning how many bytes were read. A nonzero n value indicates that the buffer buf has been filled in with n bytes of data from this source.
+---@field read fun(self: File, buffer: Buffer)
+---Pulls some bytes from this source into the specified buffer, advancing the buffer's internal cursor. A nonzero n value indicates that the buffer buf has been filled in with n bytes of data from this source.
+---@field read_buffer fun(self: File, buffer: Buffer)
+---Reads the exact number of bytes required to fill buffer.
+---@field read_exact fun(self: File, buffer: Buffer)
+---This function will attempt to write the entire contents of buffer, but the entire write may not succeed, or the write may also generate an error. A call to write represents at most one attempt to write to any wrapped object. If the return value is n then it must be guaranteed that n <= len(buf). A return value of 0 typically means that the underlying object is no longer able to accept bytes and will likely not be able to in the future as well, or that the buffer provided is empty.
+---@field write fun(self: File, buffer: Buffer)
+---This method will continuously call write until buffer remaining calls returns false. This method will not return until the entire buffer has been successfully written or an error occurs. The first error generated will be returned. The buffer is advanced after each chunk is successfully written.
+---@field write_buffer fun(self: File, buffer: Buffer)
+
+---@class EntryType
+---@field is_file fun(self: EntryType): boolean
+---@field is_dir fun(self: EntryType): boolean
+---@field is_symlink fun(self: EntryType): boolean
+
+---@class DirEntry
+---@field file_name fun(self: DirEntry): string Returns the file_name of the entry
+---@field type fun(self: DirEntry): EntryType
+---@field path fun(self: DirEntry): string Returns the path of each entry in the list
+
+---@class Metadata
+---@field last_accessed fun(self: Metadata): number
+---@field created_at fun(self: Metadata): number
+---@field last_modified fun(self: Metadata): number
+---@field type fun(self: Metadata): EntryType
+---@field file_permissions fun(self: Metadata): FileIOPermissions
+
+---@class FileIOPermissions
+---@field is_readonly fun(self: FileIOPermissions): boolean
+---@field set_readonly fun(self: FileIOPermissions, value: boolean)
+
+---@class GlobResult
+---The directory path that entries are in
+---@field base_path string
+---@field entries string[]
+
+---Parses a path and matches entries with given filenames.
+---
+---For example "examples/templates/**/*.html"
+---@param path string
+---@return GlobResult
+function fs.parse_glob(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__parse_glob(path)
+end
+
+---Creates a new buffer with size in bytes allocated
+---@param capacity number
+---@return Buffer
+function fs.new_buffer(capacity)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__new_buffer(capacity)
+end
+
+---Opens the file in the given path
+---@param path string
+---@return File
+function fs.open(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__open_file(path)
+end
+
+---Returns the entire content of the file
+---@param path string Path to the file
+---@return string
+function fs.read_file(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__read_file_string(path)
+end
+
+---Returns the entire content of the file as bytes
+---@param path string Path to the file
+---@return number[]
+function fs.read_file_bytes(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__read_file_bytes(path)
+end
+
+---Returns the entire content of the file
+---@param path string Path to the file
+---@param contents string | number[] | table
+function fs.write_file(path, contents)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__write_file(path, contents)
+end
+
+---Returns the metadata of a file or directory
+---@param path string
+---@return Metadata
+function fs.get_metadata(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__get_metadata(path)
+end
+
+---Returns the content of the directory
+---@param path string Path to the file
+---@return DirEntry[]
+function fs.read_dir(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__read_dir(path)
+end
+
+---Returns the path of the current directory
+---@return string
+function fs.get_current_dir() ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__get_current_dir()
+end
+
+---Returns the path separator based on the operating system
+---@return string
+function fs.get_separator()
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__get_separator()
+end
+
+---Returns the path of the current running script
+---@return string
+function fs.get_script_path()
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__get_script_path()
+end
+
+---Changes the current directory
+---@param path string Path to the directory
+function fs.change_dir(path)
+  ---@diagnostic disable-next-line: undefined-global
+  astra_internal__change_dir(path)
+end
+
+---Checks if a path exists
+---@param path string Path to the file or directory
+---@return boolean
+function fs.exists(path)
+  ---@diagnostic disable-next-line: undefined-global
+  return astra_internal__exists(path)
+end
+
+---Creates a directory
+---@param path string Path to the directory
+function fs.create_dir(path)
+  ---@diagnostic disable-next-line: undefined-global
+  astra_internal__create_dir(path)
+end
+
+---Creates a directory recursively
+---@param path string Path to the directory
+function fs.create_dir_all(path)
+  ---@diagnostic disable-next-line: undefined-global
+  astra_internal__create_dir_all(path)
+end
+
+---Removes a file
+---@param path string Path to the file
+function fs.remove(path)
+  ---@diagnostic disable-next-line: undefined-global
+  astra_internal__remove(path)
+end
+
+---Removes a directory
+---@param path string Path to the directory
+function fs.remove_dir(path)
+  ---@diagnostic disable-next-line: undefined-global
+  astra_internal__remove_dir(path)
+end
+
+---Removes a directory recursively
+---@param path string Path to the directory
+function fs.remove_dir_all(path)
+  ---@diagnostic disable-next-line: undefined-global
+  astra_internal__remove_dir_all(path)
+end
+
+return fs
