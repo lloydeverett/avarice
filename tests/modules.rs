@@ -2,8 +2,8 @@
 
 mod common;
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use avarice_rt::mlua::{Table, Value};
 use avarice_rt::{
@@ -35,15 +35,19 @@ fn resolves_a_host_registered_module() {
 #[test]
 fn a_lazy_module_loads_once_and_only_when_asked() {
     let rt = Runtime::new(Profile::Sandbox).unwrap();
-    let calls = Rc::new(Cell::new(0));
-    let counter = Rc::clone(&calls);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&calls);
     rt.register_lazy_module("counted", move |lua| {
-        counter.set(counter.get() + 1);
+        counter.fetch_add(1, Ordering::Relaxed);
         Ok(Value::Integer(lua.create_table()?.len()? + 41))
     })
     .unwrap();
 
-    assert_eq!(calls.get(), 0, "loader ran before it was required");
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        0,
+        "loader ran before it was required"
+    );
     let value: i64 = rt
         .eval(
             "local a = require('counted') local b = require('counted') return a + b",
@@ -51,7 +55,11 @@ fn a_lazy_module_loads_once_and_only_when_asked() {
         )
         .unwrap();
     assert_eq!(value, 82);
-    assert_eq!(calls.get(), 1, "loader ran more than once");
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "loader ran more than once"
+    );
 }
 
 #[test]

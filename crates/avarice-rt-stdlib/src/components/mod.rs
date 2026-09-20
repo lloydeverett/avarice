@@ -1,31 +1,21 @@
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/mod.rs
+// Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+// See LICENSE and NOTICE in this crate's root.
+//
+// Changes from the original:
+//   - Removed `pub mod database;`, `pub mod import;` and `pub mod templates;`: those components are not taken.
+//   - Removed `register_components`, which registered every component eagerly; this crate registers each module lazily from `src/modules.rs`.
+//   - Removed `read_from_stdlib`, which read Astra's embedded standard library through `crate::ASTRA_STD_LIBS` (defined in Astra's `main.rs`).
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11.
+
 use mlua::{ExternalError, FromLua, LuaSerdeExt};
 
 pub mod astra_serde;
 pub mod crypto;
-pub mod database;
 pub mod datetime;
 pub mod file_system;
 pub mod http;
-pub mod import;
-pub mod templates;
 pub mod utils;
-
-pub async fn register_components(lua: &mlua::Lua) -> mlua::Result<()> {
-    import::register_import_function(lua)?;
-    utils::register_to_lua(lua)?;
-    astra_serde::register_to_lua(lua)?;
-    http::server::register_to_lua(lua)?;
-    http::client::HTTPClientRequest::register_to_lua(lua)?;
-    database::Database::register_to_lua(lua)?;
-    datetime::AstraDateTime::register_to_lua(lua)?;
-    crypto::register_to_lua(lua)?;
-    file_system::register_to_lua(lua)?;
-    file_system::GlobResult::register_to_lua(lua)?;
-    templates::register_to_lua(lua)?;
-    templates::markdown_support(lua)?;
-
-    Ok(())
-}
 
 macro_rules! astra_buffer_types {
     ($name:ident, $buffer_type:ty) => {
@@ -54,7 +44,7 @@ macro_rules! astra_buffer_types {
                     ) {
                         Ok(parsed_json) => lua.to_value_with(
                             &parsed_json,
-                            mlua::SerializeOptions::new()
+                            mlua::serde::SerializeOptions::new()
                                 .serialize_none_to_null(false)
                                 .serialize_unit_to_null(false),
                         ),
@@ -145,22 +135,4 @@ pub(crate) fn is_table_byte_array(table: &mlua::Table) -> mlua::Result<bool> {
         }
     }
     Ok(true)
-}
-
-#[allow(dead_code)]
-pub async fn read_from_stdlib(
-    stdlib_path: &std::path::Path,
-    path: std::path::PathBuf,
-) -> Option<String> {
-    if let Ok(content) = tokio::fs::read_to_string(stdlib_path.join(path.clone())).await {
-        return Some(content);
-    }
-
-    if let Some(file) = crate::ASTRA_STD_LIBS.get_file(path)
-        && let Some(content) = file.contents_utf8()
-    {
-        return Some(content.to_string());
-    }
-
-    None
 }

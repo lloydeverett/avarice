@@ -1,3 +1,10 @@
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/file_system.rs
+// Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+// See LICENSE and NOTICE in this crate's root.
+//
+// Changes from the original:
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11. Nothing else changed.
+
 use super::AstraBufferMut;
 use mlua::{ExternalError, LuaSerdeExt, UserData};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -162,7 +169,7 @@ impl UserData for AstraFile {
         methods.add_method("path", |lua, this, _: ()| {
             lua.to_value_with(
                 &this.path,
-                mlua::SerializeOptions::new()
+                mlua::serde::SerializeOptions::new()
                     .serialize_none_to_null(false)
                     .serialize_unit_to_null(false),
             )

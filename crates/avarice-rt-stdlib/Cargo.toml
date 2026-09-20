@@ -1,0 +1,64 @@
+[package]
+name = "avarice-rt-stdlib"
+version = "0.1.0"
+# Astra's own edition and rust-version: its sources use let-chains, which need 2024.
+edition = "2024"
+rust-version = "1.94"
+description = "The avarice-rt stdlib modules, derived from Astra"
+repository = "https://github.com/lloydeverett/avarice-rt"
+license = "Apache-2.0"
+publish = false
+
+# Everything below `mlua` and `bitflags` is a dependency Astra already has, at the version
+# requirement Astra's Cargo.toml gives it, because the sources here are Astra's.
+
+[dependencies]
+# Depends on mlua and never on avarice-rt: the dependency runs one way only.
+# `async`, `macros`, `send` and `serialize` are what Astra's sources are written against: `send`
+# because `utils.rs` puts tasks on `tokio::spawn`, which needs a Send Lua.
+mlua = { workspace = true, features = ["async", "macros", "send", "serialize"] }
+# For `StdModules`. Already in the tree through mlua.
+bitflags = "2"
+
+# http
+reqwest = { version = "0.13.4", features = [
+  "charset",
+  "form",
+  "http2",
+  "json",
+  "multipart",
+  "rustls",
+  "stream",
+], default-features = false }
+glob = "0.3.3"
+
+# data formats
+serde-value = "0.7.0"
+serde_json = "1.0.150"
+serde_json5 = "0.2.1"
+serde_yaml = "0.9.34"
+serde_ini = "0.2.0"
+csv = "1.4.0"
+quick-xml = { version = "0.41.0", features = [
+  "async-tokio",
+  "encoding",
+  "escape-html",
+  "overlapped-lists",
+  "serialize",
+] }
+toml = "1.1.2"
+uuid = { version = "1.23.4", features = ["serde", "v4"] }
+sha2 = "0.11.0"
+sha3 = "0.12.0"
+base64 = "0.22.1"
+bytes = { version = "1.12.0", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+
+# runtime
+# Astra takes `macros`, `rt-multi-thread` and `signal`; the sources here use `spawn`, `time`,
+# `fs` and `sync::Mutex`, so those are the features taken.
+tokio = { version = "1.52.3", features = ["fs", "rt", "sync", "time"] }
+futures = "0.3.32"
+tracing = "0.1.44"
+regex = "1.12.4"
+pastey = "0.2.3"

@@ -1,9 +1,7 @@
 //! Cancellation and wall-clock limits, enforced from a global debug hook.
 
-use std::cell::Cell;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use mlua::{HookTriggers, Lua, VmState};
@@ -18,9 +16,8 @@ pub const DEFAULT_CHECK_INTERVAL: u32 = 10_000;
 
 /// A thread-safe handle for stopping a runtime that is already executing.
 ///
-/// This is the one part of the runtime that crosses threads: the [`Runtime`](crate::Runtime)
-/// itself is not `Send`, but a handle cloned out of it can be parked in a signal handler or
-/// handed to a watchdog thread.
+/// A handle cloned out of the [`Runtime`](crate::Runtime) can be parked in a signal handler or
+/// handed to a watchdog thread, and cancelling through it never has to wait for the runtime.
 ///
 /// Cancellation latches. Once tripped, every subsequent limit check fails too, so a `pcall` in
 /// the script cannot swallow the error and carry on; the handle must be [`reset`](Self::reset)
@@ -64,6 +61,23 @@ impl Trip {
             Trip::Cancelled => mlua::Error::external(Cancelled),
             Trip::TimedOut => mlua::Error::external(TimedOut),
         }
+    }
+}
+
+/// A `Cell` that is `Sync`.
+///
+/// mlua's `send` feature, which the stdlib crate needs for its tasks, makes the hook closure
+/// `Send`, so what it shares with the runtime has to be `Sync`.
+#[derive(Debug, Default)]
+struct Cell<T>(Mutex<T>);
+
+impl<T: Copy> Cell<T> {
+    fn get(&self) -> T {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set(&self, value: T) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = value;
     }
 }
 
@@ -164,7 +178,7 @@ impl Limits {
 /// lands *inside* the protected call, where `pcall` catches it; the call hook fires as `pcall`
 /// itself is entered, before it has established its protection, so the latched error propagates
 /// out of the loop instead of being swallowed again.
-pub(crate) fn install_hook(lua: &Lua, limits: Rc<Limits>, interval: u32) -> mlua::Result<()> {
+pub(crate) fn install_hook(lua: &Lua, limits: Arc<Limits>, interval: u32) -> mlua::Result<()> {
     let triggers = HookTriggers::new()
         .every_nth_instruction(interval.max(1))
         .on_calls();
@@ -181,11 +195,11 @@ pub(crate) fn install_hook(lua: &Lua, limits: Rc<Limits>, interval: u32) -> mlua
 /// for themselves.
 #[must_use = "limits apply only while the Execution guard is held"]
 pub struct Execution {
-    limits: Rc<Limits>,
+    limits: Arc<Limits>,
 }
 
 impl Execution {
-    pub(crate) fn new(limits: Rc<Limits>) -> Self {
+    pub(crate) fn new(limits: Arc<Limits>) -> Self {
         limits.enter();
         Execution { limits }
     }

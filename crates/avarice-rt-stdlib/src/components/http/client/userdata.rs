@@ -1,7 +1,14 @@
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/http/client/userdata.rs
+// Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+// See LICENSE and NOTICE in this crate's root.
+//
+// Changes from the original:
+//   - Removed `execute_websocket` and the `reqwest_websocket::Upgrade` import: the WebSocket client is not taken, and `AstraWebSocket` does not satisfy mlua 0.12's `Sync` bound on userdata under its `send` feature.
+//   - Removed `src/components/http/client/websocket.rs` (`AstraWebSocket`) for the same reason; see `client/mod.rs`.
+
 use crate::components::AstraBuffer;
 use futures::StreamExt;
 use mlua::{ExternalError, UserData};
-use reqwest_websocket::Upgrade;
 use std::collections::HashMap;
 
 impl UserData for super::HTTPClientRequest {
@@ -125,30 +132,6 @@ impl UserData for super::HTTPClientRequest {
                     }
 
                     Ok(())
-                });
-                Ok(())
-            },
-        );
-        methods.add_async_method(
-            "execute_websocket",
-            |lua, this, callback: mlua::Function| async move {
-                tokio::spawn(async move {
-                    let request = this.request_builder().await?;
-                    let request = request.upgrade();
-                    if let Ok(response) = request.send().await
-                        && let Ok(response) = response.into_websocket().await
-                    {
-                        if let Err(e) = callback
-                            .call_async::<()>(lua.create_userdata(super::AstraWebSocket(response)))
-                            .await
-                        {
-                            tracing::error!("Error running a task: {e}")
-                        }
-                    } else {
-                        tracing::error!("Websocket request did not execute successfully");
-                    };
-
-                    mlua::Result::Ok(())
                 });
                 Ok(())
             },

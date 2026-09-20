@@ -153,8 +153,9 @@ impl fmt::Debug for ModuleSource {
 /// store ([`FsStore`]) and currently the only one shipped, but nothing above this trait assumes
 /// a filesystem — a store backed by a database table or an archive is equally valid.
 ///
-/// Stores are `Send + Sync` so that one store can back several runtimes; the runtime itself is
-/// not `Send`. A store that cannot meet that bound can be wrapped in a mutex.
+/// Stores are `Send + Sync` so that one store can back several runtimes, and because a runtime
+/// holds its store where Lua's own `require` reaches it. A store that cannot meet that bound can
+/// be wrapped in a mutex.
 pub trait ModuleStore: Send + Sync + 'static {
     /// Fetches source for `name`, or `Ok(None)` if this store does not have it.
     ///

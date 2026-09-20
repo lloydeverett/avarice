@@ -48,8 +48,8 @@
 //!
 //! Memory is capped at the allocator. Wall-clock limits and cancellation are enforced from a
 //! global debug hook, so a script cannot shed them by running inside a coroutine, and both
-//! latch once tripped, so a `pcall` cannot swallow them. A [`CancelHandle`] is `Send`, and is
-//! the one part of a runtime that may cross threads.
+//! latch once tripped, so a `pcall` cannot swallow them. A [`CancelHandle`] is `Send`, and
+//! can stop a runtime from another thread.
 
 mod error;
 mod limits;
@@ -67,6 +67,7 @@ pub use crate::module::{
 };
 pub use crate::profile::{Profile, DEFAULT_SANDBOX_MEMORY_LIMIT};
 pub use crate::runtime::{Runtime, RuntimeBuilder};
+pub use avarice_rt_stdlib::{StdModule, StdModules};
 
 /// mlua, re-exported.
 ///

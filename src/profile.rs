@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use avarice_rt_stdlib::StdModules;
 use mlua::StdLib;
 
 /// The memory ceiling [`Profile::Sandbox`] applies unless told otherwise.
@@ -31,9 +32,11 @@ pub enum Profile {
 
     /// For Lua code the embedder vouches for.
     ///
-    /// Everything the sandbox has plus `io` and `os`, with no memory or time limit and binary
-    /// chunks allowed. Note that `os.exit` will end the host process, and that `package` is
-    /// still absent — Lua never loads its own modules here either.
+    /// Everything the sandbox has plus `io` and `os` and every stdlib module — `http`, `fs`,
+    /// `crypto`, `serde`, `datetime`, `utils` and `stores` — with no memory or time limit and
+    /// binary chunks allowed. Note that `os.exit` will end the host process, that the stdlib
+    /// modules reach the network and the filesystem, and that `package` is still absent — Lua
+    /// never loads its own modules here either.
     Trusted,
 }
 
@@ -58,6 +61,17 @@ impl Profile {
         match self {
             Profile::Sandbox => common,
             Profile::Trusted => common | StdLib::IO | StdLib::OS,
+        }
+    }
+
+    /// The stdlib modules this profile registers: all of them for trusted mode, none for the
+    /// sandbox.
+    ///
+    /// Registered lazily, so a module costs nothing until a program requires it.
+    pub fn std_modules(self) -> StdModules {
+        match self {
+            Profile::Sandbox => StdModules::NONE,
+            Profile::Trusted => StdModules::ALL,
         }
     }
 
@@ -106,6 +120,12 @@ mod tests {
             assert!(!libs.contains(StdLib::PACKAGE), "{profile:?} opens package");
             assert!(!libs.contains(StdLib::DEBUG), "{profile:?} opens debug");
         }
+    }
+
+    #[test]
+    fn trusted_registers_every_stdlib_module_and_sandbox_none() {
+        assert_eq!(Profile::Trusted.std_modules(), StdModules::ALL);
+        assert_eq!(Profile::Sandbox.std_modules(), StdModules::NONE);
     }
 
     #[test]

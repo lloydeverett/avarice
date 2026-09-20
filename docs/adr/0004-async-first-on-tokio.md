@@ -50,3 +50,24 @@ exist for untrusted code, and untrusted code gets no stdlib modules.
 `avrt` waits for every outstanding task before exiting. Its REPL drains tasks to
 completion between prompts, so `spawn_interval` holds the terminal until Ctrl+C
 — which aborts the evaluation and every task, and says so on stderr.
+
+## Amendment, 2026-09-20: `send` is on
+
+The considered option above, **`mlua`'s `send` feature**, was rejected and is now taken. The
+reversal follows from [ADR 0006's amendment](0006-stdlib-derived-from-astra.md): the stdlib
+modules are Astra's own files, and Astra's `utils.rs` puts tasks on `tokio::spawn`, which
+requires the Lua state and every function and userdata handed to it to be `Send`. Keeping `send`
+off would mean editing that file to use `spawn_local`, which is exactly the kind of change the
+amendment exists to avoid.
+
+What the rejection predicted has happened, and is accepted:
+
+- `Modules`' `Rc`/`RefCell` became `Arc`/`Mutex`, and so did `Limits`' `Rc`/`Cell`.
+- `Runtime::register_lazy_module`'s loader must now be `Send + Sync`. The "non-`Send` loader keeps
+  compiling" consequence no longer holds.
+- `Runtime` is no longer `!Send`. The statement in *Consequences* that it stays so is superseded.
+  It is `Send` and `Sync` because mlua's `send` feature guards the Lua state with a lock; that
+  buys no parallelism inside Lua, and one Lua state is still not reentrant.
+
+Unchanged: the core owns a current-thread tokio runtime, and tasks are green threads on the thread
+that drives it. `send` changes what must be `Send`, not which thread runs Lua.

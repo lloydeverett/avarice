@@ -1,11 +1,10 @@
 //! The runtime, and the builder that configures one.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use avarice_rt_stdlib::StdModules;
 use mlua::chunk::{AsChunk, Chunk, ChunkMode};
 use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 
@@ -17,14 +16,22 @@ use crate::profile::Profile;
 /// The registry key Lua itself uses for its loaded-module table.
 const LOADED: &str = "_LOADED";
 
-type Loader = Rc<dyn Fn(&Lua) -> mlua::Result<Value>>;
+// `Send + Sync` because mlua's `send` feature, which the stdlib crate needs for its tasks, makes
+// the `require` function Lua holds `Send`, and `require` reaches the loaders.
+type Loader = Arc<dyn Fn(&Lua) -> mlua::Result<Value> + Send + Sync>;
+
+/// Locks a mutex, carrying on if a panic elsewhere poisoned it: what is inside is only ever
+/// replaced whole, so it is never half-written.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// What `require` resolves against, mutable after the runtime is built.
 #[derive(Default)]
 struct Modules {
-    store: RefCell<Option<Arc<dyn ModuleStore>>>,
-    loaders: RefCell<HashMap<ModuleName, Loader>>,
-    loading: RefCell<Vec<ModuleName>>,
+    store: Mutex<Option<Arc<dyn ModuleStore>>>,
+    loaders: Mutex<HashMap<ModuleName, Loader>>,
+    loading: Mutex<Vec<ModuleName>>,
 }
 
 /// A Lua runtime: a Lua state, the libraries a [`Profile`] granted it, and the limits it runs
@@ -40,8 +47,8 @@ struct Modules {
 /// ```
 pub struct Runtime {
     lua: Lua,
-    limits: Rc<Limits>,
-    modules: Rc<Modules>,
+    limits: Arc<Limits>,
+    modules: Arc<Modules>,
     profile: Profile,
     binary_chunks: bool,
     memory_limit: Option<usize>,
@@ -96,7 +103,7 @@ impl Runtime {
     /// Fails immediately if the runtime's [`CancelHandle`] is already tripped, so that a chunk
     /// too short to reach a single hook tick cannot slip past a cancel.
     pub fn enter(&self) -> Result<Execution> {
-        let execution = Execution::new(Rc::clone(&self.limits));
+        let execution = Execution::new(Arc::clone(&self.limits));
         match self.limits.precheck() {
             Some(err) => Err(err.into()),
             None => Ok(execution),
@@ -150,13 +157,10 @@ impl Runtime {
     /// the code that called `require`.
     pub fn register_lazy_module<F>(&self, name: &str, loader: F) -> Result<()>
     where
-        F: Fn(&Lua) -> mlua::Result<Value> + 'static,
+        F: Fn(&Lua) -> mlua::Result<Value> + Send + Sync + 'static,
     {
         let name = ModuleName::new(name)?;
-        self.modules
-            .loaders
-            .borrow_mut()
-            .insert(name, Rc::new(loader));
+        lock(&self.modules.loaders).insert(name, Arc::new(loader));
         Ok(())
     }
 
@@ -168,7 +172,7 @@ impl Runtime {
         let Ok(name) = ModuleName::new(name) else {
             return false;
         };
-        if self.modules.loaders.borrow().contains_key(&name) {
+        if lock(&self.modules.loaders).contains_key(&name) {
             return true;
         }
         match self.lua.named_registry_value::<Table>(LOADED) {
@@ -181,12 +185,12 @@ impl Runtime {
 
     /// Replaces the module store `require` falls back to.
     pub fn set_store(&self, store: impl ModuleStore) {
-        *self.modules.store.borrow_mut() = Some(Arc::new(store));
+        *lock(&self.modules.store) = Some(Arc::new(store));
     }
 
     /// Removes the module store, leaving only host-registered modules resolvable.
     pub fn clear_store(&self) {
-        *self.modules.store.borrow_mut() = None;
+        *lock(&self.modules.store) = None;
     }
 
     /// The bytes of Lua-visible memory currently in use.
@@ -215,6 +219,7 @@ impl std::fmt::Debug for Runtime {
 pub struct RuntimeBuilder {
     profile: Profile,
     std_libs: StdLib,
+    std_modules: StdModules,
     memory_limit: Option<usize>,
     time_limit: Option<Duration>,
     cancel: Option<CancelHandle>,
@@ -241,6 +246,7 @@ impl RuntimeBuilder {
         RuntimeBuilder {
             profile,
             std_libs: profile.std_libs(),
+            std_modules: profile.std_modules(),
             memory_limit: profile.memory_limit(),
             time_limit: None,
             cancel: None,
@@ -271,6 +277,28 @@ impl RuntimeBuilder {
     /// Withholds these libraries from the profile's set.
     pub fn without_std_libs(mut self, libs: StdLib) -> Self {
         self.std_libs &= !libs;
+        self
+    }
+
+    /// Replaces the set of stdlib modules the runtime registers.
+    ///
+    /// A profile is a set of defaults, so this can add a module to a sandbox as readily as it
+    /// can take one from trusted mode. Nothing here is refused the way [`StdLib::PACKAGE`] is:
+    /// a stdlib module carries no privilege an embedder's own host module lacks.
+    pub fn std_modules(mut self, modules: StdModules) -> Self {
+        self.std_modules = modules;
+        self
+    }
+
+    /// Adds stdlib modules to the set the runtime registers.
+    pub fn with_std_modules(mut self, modules: StdModules) -> Self {
+        self.std_modules |= modules;
+        self
+    }
+
+    /// Removes stdlib modules from the set the runtime registers.
+    pub fn without_std_modules(mut self, modules: StdModules) -> Self {
+        self.std_modules &= !modules;
         self
     }
 
@@ -369,13 +397,13 @@ impl RuntimeBuilder {
         }
         let lua = Lua::new_with(self.std_libs, LuaOptions::default())?;
 
-        let modules = Rc::new(Modules {
-            store: RefCell::new(self.store),
+        let modules = Arc::new(Modules {
+            store: Mutex::new(self.store),
             ..Modules::default()
         });
-        let limits = Rc::new(Limits::new(self.cancel, self.time_limit));
+        let limits = Arc::new(Limits::new(self.cancel, self.time_limit));
 
-        install_require(&lua, Rc::clone(&modules), self.binary_chunks)?;
+        install_require(&lua, Arc::clone(&modules), self.binary_chunks)?;
         install_traceback(&lua)?;
         restrict_base_library(&lua, self.binary_chunks)?;
 
@@ -384,17 +412,24 @@ impl RuntimeBuilder {
             lua.set_memory_limit(bytes)?;
         }
         if limits.needs_hook() {
-            limits::install_hook(&lua, Rc::clone(&limits), self.check_interval)?;
+            limits::install_hook(&lua, Arc::clone(&limits), self.check_interval)?;
         }
 
-        Ok(Runtime {
+        let runtime = Runtime {
             lua,
             limits,
             modules,
             profile: self.profile,
             binary_chunks: self.binary_chunks,
             memory_limit: self.memory_limit,
-        })
+        };
+
+        // The stdlib modules arrive by the path an embedder's own lazy module takes, so they
+        // carry no privilege that one lacks, and none is built until a program requires it.
+        for module in self.std_modules.modules() {
+            runtime.register_lazy_module(module.name(), avarice_rt_stdlib::loader(module))?;
+        }
+        Ok(runtime)
     }
 }
 
@@ -427,7 +462,7 @@ fn enforce_chunk_mode(chunk: Chunk<'_>, binary_chunks: bool) -> Chunk<'_> {
 
 /// Installs our `require`, which resolves host modules and then the module store — and nothing
 /// else. There is no `package.path` to point elsewhere and no searcher that reaches a `.so`.
-fn install_require(lua: &Lua, modules: Rc<Modules>, binary_chunks: bool) -> Result<()> {
+fn install_require(lua: &Lua, modules: Arc<Modules>, binary_chunks: bool) -> Result<()> {
     loaded_table(lua)?;
 
     let require = lua.create_function(move |lua, name: String| {
@@ -442,7 +477,7 @@ fn install_require(lua: &Lua, modules: Rc<Modules>, binary_chunks: bool) -> Resu
 
         let _frame = LoadingFrame::enter(&modules, &name)?;
 
-        let loader = modules.loaders.borrow().get(&name).cloned();
+        let loader = lock(&modules.loaders).get(&name).cloned();
         let value = match loader {
             Some(loader) => loader(lua)?,
             None => load_from_store(lua, &modules, &name, binary_chunks)?,
@@ -469,7 +504,7 @@ fn load_from_store(
     name: &ModuleName,
     binary_chunks: bool,
 ) -> mlua::Result<Value> {
-    let store = modules.store.borrow().clone();
+    let store = lock(&modules.store).clone();
     let Some(store) = store else {
         return Err(not_found(name, None));
     };
@@ -504,7 +539,7 @@ struct LoadingFrame<'a> {
 
 impl<'a> LoadingFrame<'a> {
     fn enter(modules: &'a Modules, name: &ModuleName) -> mlua::Result<Self> {
-        let mut loading = modules.loading.borrow_mut();
+        let mut loading = lock(&modules.loading);
         if loading.contains(name) {
             let chain = loading
                 .iter()
@@ -524,7 +559,7 @@ impl<'a> LoadingFrame<'a> {
 
 impl Drop for LoadingFrame<'_> {
     fn drop(&mut self) {
-        self.modules.loading.borrow_mut().pop();
+        lock(&self.modules.loading).pop();
     }
 }
 

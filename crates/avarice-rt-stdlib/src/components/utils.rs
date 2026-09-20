@@ -1,70 +1,29 @@
-use crate::components::database::DATABASE_POOLS;
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/utils.rs
+// Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+// See LICENSE and NOTICE in this crate's root.
+//
+// Changes from the original:
+//   - Removed `close_dbs` (`astra_internal__close_all_databases`) and the `DATABASE_POOLS` import: the database component is not taken.
+//   - Removed `dotenv_function` (`astra_internal__dotenv_load`): `dotenvy` is not taken.
+//   - Removed `pprint`, which replaced Lua's global `print`: `print` belongs to avarice-rt's core.
+//   - Removed `setenv` (`astra_internal__setenv`): it wraps `std::env::set_var`, which is unsound in a process with threads.
+//   - Removed `invalidate_cache` (`astra_internal__invalidate_cache`): it clears the import cache of Astra's `import.rs`, which is not taken.
+//   - Everything else, including `tokio::spawn` for tasks, is unchanged.
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11.
+
 use mlua::{LuaSerdeExt, UserData};
 
 pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
-    dotenv_function(lua)?;
-    invalidate_cache(lua)?;
-    pprint(lua)?;
     AstraRegex::register_to_lua(lua)?;
     uuid_v4(lua)?;
-    close_dbs(lua)?;
     // env
     getenv(lua)?;
-    setenv(lua)?;
     // async tasks
     spawn_task(lua)?;
     spawn_interval(lua)?;
     spawn_timeout(lua)?;
 
     Ok(())
-}
-
-// At the end of the script, the database files should be closed automatically
-pub fn close_dbs(lua: &mlua::Lua) -> mlua::Result<()> {
-    lua.globals().set(
-        "astra_internal__close_all_databases",
-        lua.create_async_function(|_, _: ()| async {
-            let database_pools = DATABASE_POOLS.lock().await.clone();
-            for (_id, db_type) in database_pools {
-                match db_type {
-                    crate::components::database::DatabaseType::Postgres(pool) => pool.close().await,
-                    crate::components::database::DatabaseType::Sqlite(pool) => pool.close().await,
-                }
-            }
-            Ok(())
-        })?,
-    )
-}
-
-pub fn dotenv_function(lua: &mlua::Lua) -> mlua::Result<()> {
-    lua.globals().set(
-        "astra_internal__dotenv_load",
-        lua.create_function(|_, file_name: String| {
-            let _ = dotenvy::from_filename_override(file_name);
-            Ok(())
-        })?,
-    )
-}
-
-pub fn pprint(lua: &mlua::Lua) -> mlua::Result<()> {
-    lua.globals().set(
-        "print",
-        lua.create_function(|_, args: mlua::MultiValue| {
-            for input in args.iter() {
-                if (input.is_string() || input.is_error())
-                    && let Ok(s) = input.to_string()
-                {
-                    print!("{} ", s);
-                } else if input.is_userdata() {
-                    print!("{input:?} ")
-                } else {
-                    print!("{input:#?} ")
-                }
-            }
-            println!();
-            Ok(())
-        })?,
-    )
 }
 
 pub fn getenv(lua: &mlua::Lua) -> mlua::Result<()> {
@@ -74,7 +33,7 @@ pub fn getenv(lua: &mlua::Lua) -> mlua::Result<()> {
             if let Ok(value) = std::env::var(key) {
                 lua.to_value_with(
                     &value,
-                    mlua::SerializeOptions::new()
+                    mlua::serde::SerializeOptions::new()
                         .serialize_none_to_null(false)
                         .serialize_unit_to_null(false),
                 )
@@ -85,48 +44,16 @@ pub fn getenv(lua: &mlua::Lua) -> mlua::Result<()> {
     )
 }
 
-pub fn setenv(lua: &mlua::Lua) -> mlua::Result<()> {
-    lua.globals().set(
-        "astra_internal__setenv",
-        lua.create_function(|_, (key, value): (String, String)| {
-            unsafe { std::env::set_var(key, value) };
-
-            Ok(())
-        })?,
-    )
-}
-
 pub fn uuid_v4(lua: &mlua::Lua) -> mlua::Result<()> {
     lua.globals().set(
         "astra_internal__uuid",
         lua.create_function(|lua, _: ()| {
             lua.to_value_with(
                 &uuid::Uuid::new_v4(),
-                mlua::SerializeOptions::new()
+                mlua::serde::SerializeOptions::new()
                     .serialize_none_to_null(false)
                     .serialize_unit_to_null(false),
             )
-        })?,
-    )
-}
-
-pub fn invalidate_cache(lua: &mlua::Lua) -> mlua::Result<()> {
-    lua.globals().set(
-        "astra_internal__invalidate_cache",
-        lua.create_function(|lua, path: String| {
-            let key_id = format!("ASTRA_INTERNAL__IMPORT_CACHE_{path}");
-
-            if let Ok(cache) = lua
-                .globals()
-                .get::<Option<mlua::RegistryKey>>(key_id.clone())
-                && let Some(key) = cache
-            {
-                lua.remove_registry_value(key)?;
-            }
-
-            lua.globals().raw_remove(key_id)?;
-
-            Ok(())
         })?,
     )
 }

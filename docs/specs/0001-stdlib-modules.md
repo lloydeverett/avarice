@@ -4,6 +4,16 @@ status: ready-for-agent
 
 # The stdlib modules
 
+> **Amended 2026-09-20.** The stdlib crate now holds Astra's sources verbatim, changed only by
+> removal, and mlua's `send` feature is on. See the amendments to
+> [ADR 0004](../adr/0004-async-first-on-tokio.md) and
+> [ADR 0006](../adr/0006-stdlib-derived-from-astra.md). Where the sections below disagree with
+> them — the `avarice_internal__` rename, `datetime` written on `jiff`, JSON as the only serde
+> format, `spawn_local`, `Runtime` staying `!Send`, `crypto.hmac` and `crypto.uuid` (Astra has
+> neither; its `uuid` is `utils.uuid`), a `regex` in `utils` (Astra exposes it only through
+> `validation`, which is not taken), and key/value in `stores` (Astra's has observables and pubsub
+> only) — the amendments win.
+
 Expose runtime capability to Lua as seven **stdlib modules**, adapted from
 [Astra](https://github.com/ArkForgeLabs/Astra) under Apache-2.0, registered in
 **trusted mode** by default and subtractable by the **embedder**.

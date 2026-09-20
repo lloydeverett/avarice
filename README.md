@@ -79,6 +79,10 @@ entry point is. What the default does give a script is the rest of its own direc
 program. Pass `--path` when that set should be a directory you chose rather than wherever the
 script happens to sit.
 
+A bare stdlib name shadows a store module of that name: with `crypto.lua` in the script's
+directory, `require("crypto")` still returns the stdlib's `crypto`. Name your own modules
+something else, or leave the stdlib module out of the runtime.
+
 An embedder using the library gets no store at all unless it asks for one with
 `RuntimeBuilder::store`: this default belongs to `avrt`, not to the runtime.
 
@@ -116,6 +120,7 @@ one sets, and doing so never affects the profile another runtime is built from.
 | `string` `table` `math` `utf8` `coroutine` | yes | yes     |
 | `io`, `os`            | no                       | yes                  |
 | `dofile`, `loadfile`  | no                       | yes                  |
+| Stdlib modules        | none                     | all seven            |
 | `package`             | never                    | never                |
 | `debug`               | `traceback` only         | `traceback` only     |
 | Binary chunks         | refused                  | allowed              |
@@ -136,8 +141,23 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 `xpcall(f, debug.traceback)` idiom and needs no library open. Code that feature-detects on
 `debug.getinfo` will correctly find it missing.
 
-`Profile::Trusted` is trusted, not harmless: `os.exit` ends the host process, and `io` reads and
-writes whatever the host user can.
+**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils` and `stores`, derived
+from [Astra](https://github.com/ArkForgeLabs/Astra) and kept in their own Apache-2.0 crate,
+[`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They are registered as lazy host
+modules, so `require("crypto")` builds `crypto` and a program that never asks for it costs nothing.
+Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
+`with_std_modules`:
+
+```rust
+use avarice_rt::{Profile, Runtime, StdModules};
+
+let rt = Runtime::builder(Profile::Trusted)
+    .without_std_modules(StdModules::HTTP)
+    .build()?;
+```
+
+`Profile::Trusted` is trusted, not harmless: `os.exit` ends the host process, `io` reads and
+writes whatever the host user can, and the stdlib modules reach the network and the filesystem.
 
 ## Modules
 

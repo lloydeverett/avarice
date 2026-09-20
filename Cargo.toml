@@ -1,8 +1,15 @@
+[workspace]
+members = [".", "crates/avarice-rt-stdlib"]
+resolver = "2"
+
+[workspace.dependencies]
+mlua = { version = "0.12.1", features = ["lua54", "vendored"] }
+
 [package]
 name = "avarice-rt"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.94"
 description = "An embeddable Lua 5.4 runtime with a sandbox, and the avrt interpreter"
 repository = "https://github.com/lloydeverett/avarice-rt"
 publish = false
@@ -23,7 +30,8 @@ default = ["cli"]
 cli = ["dep:clap", "dep:reedline"]
 
 [dependencies]
-mlua = { version = "0.12.1", features = ["lua54", "vendored"] }
+mlua = { workspace = true }
+avarice-rt-stdlib = { path = "crates/avarice-rt-stdlib" }
 thiserror = "2.0"
 clap = { version = "4.6", features = ["derive"], optional = true }
 reedline = { version = "0.51", optional = true }

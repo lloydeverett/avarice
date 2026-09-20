@@ -233,3 +233,28 @@ fn opening_the_debug_library_is_refused_rather_than_ignored() {
         "{err:?}"
     );
 }
+
+#[test]
+fn reaches_no_stdlib_module_and_so_neither_the_network_nor_the_filesystem_through_one() {
+    let rt = sandbox();
+    for name in [
+        "http", "fs", "crypto", "serde", "datetime", "utils", "stores",
+    ] {
+        let absent = rt
+            .eval::<bool>(
+                &format!("local ok = pcall(require, '{name}') return not ok"),
+                "=test",
+            )
+            .unwrap();
+        assert!(absent, "{name} should not be reachable");
+    }
+    // Nor have their primitives leaked into the state without a module to carry them.
+    let leaked = rt
+        .eval::<bool>(
+            "for k in pairs(_G) do if tostring(k):find('^astra_internal__') then return true end end \
+             return false",
+            "=test",
+        )
+        .unwrap();
+    assert!(!leaked, "a stdlib primitive is present in a sandbox");
+}

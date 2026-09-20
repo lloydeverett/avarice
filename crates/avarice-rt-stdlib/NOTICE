@@ -1,0 +1,11 @@
+avarice-rt-stdlib
+
+This crate contains source code taken from Astra
+<https://github.com/ArkForgeLabs/Astra>, Copyright (c) ArkForge Labs, licensed
+under the Apache License, Version 2.0. See LICENSE.
+
+Files that are byte-for-byte Astra's carry no header of their own, so that they
+stay identical to it; UPSTREAM.md lists every such file with the Astra file it
+is and its checksum. Each file that differs from Astra's opens with a header
+naming the Astra file it came from and listing what was changed. Astra
+distributes no NOTICE file, so this one is not inherited from it.

@@ -1,3 +1,11 @@
+-- Derived from Astra <https://github.com/ArkForgeLabs/Astra>, astra/lua/utils.lua
+-- Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+-- See LICENSE and NOTICE in this crate's root.
+--
+-- Changes from the original:
+--   - Removed `clean_require`, `dotenv_load` and `env.set`, and the `astra_internal__` primitives behind them, which `src/components/utils.rs` no longer provides.
+--   - Everything else is unchanged.
+
 ---@meta
 
 --[[
@@ -8,14 +16,6 @@
 local function uuid()
   ---@diagnostic disable-next-line: undefined-global
   return astra_internal__uuid()
-end
-
----Modules are cached upon importing at Astra, you can use this
----function to remove those caches
----@param path string
-local function clean_require(path)
-  ---@diagnostic disable-next-line: undefined-global
-  astra_internal__invalidate_cache(path)
 end
 
 ---Represents an async task
@@ -49,38 +49,18 @@ local function spawn_interval(callback, timeout)
   return astra_internal__spawn_interval(callback, timeout)
 end
 
----Load your own file into env
----@param file_path string
-function dotenv_load(file_path)
-  ---@diagnostic disable-next-line: undefined-global
-  return astra_internal__dotenv_load(file_path)
-end
-
 ---@param key string
 local function env_get(key)
   ---@diagnostic disable-next-line: undefined-global
   return astra_internal__getenv(key)
 end
 
----Sets the environment variable.
----
----NOT SAFE WHEN USED IN MULTITHREADING ENVIRONMENT
----@param key string
----@param value string
-local function env_set(key, value)
-  ---@diagnostic disable-next-line: undefined-global
-  return astra_internal__setenv(key, value)
-end
-
 return {
   uuid = uuid,
-  clean_require = clean_require,
   spawn_task = spawn_task,
   spawn_timeout = spawn_timeout,
   spawn_interval = spawn_interval,
-  dotenv_load = dotenv_load,
   env = {
     get = env_get,
-    set = env_set,
   },
 }

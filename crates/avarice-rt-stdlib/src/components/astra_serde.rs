@@ -1,3 +1,10 @@
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/astra_serde.rs
+// Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+// See LICENSE and NOTICE in this crate's root.
+//
+// Changes from the original:
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11. Nothing else changed.
+
 use mlua::{ExternalError, LuaSerdeExt};
 use pastey::paste;
 
@@ -43,7 +50,7 @@ pub fn sanetize_lua_input(lua: &mlua::Lua, input: mlua::Value) -> mlua::Result<m
 
         lua.to_value_with(
             &new_input,
-            mlua::SerializeOptions::new()
+            mlua::serde::SerializeOptions::new()
                 .serialize_none_to_null(false)
                 .serialize_unit_to_null(false),
         )
@@ -64,7 +71,7 @@ macro_rules! gen_methods {
                         match $crate_name::to_string(&value) {
                             Ok(serialized) => lua.to_value_with(
                                 &serialized,
-                                mlua::SerializeOptions::new()
+                                mlua::serde::SerializeOptions::new()
                                     .serialize_none_to_null(false)
                                     .serialize_unit_to_null(false),
                             ),
@@ -82,7 +89,7 @@ macro_rules! gen_methods {
                             Ok(deserialized) => {
                                 lua.to_value_with(
                                     &deserialized,
-                                    mlua::SerializeOptions::new()
+                                    mlua::serde::SerializeOptions::new()
                                         .serialize_none_to_null(false)
                                         .serialize_unit_to_null(false),
                                 )
@@ -111,7 +118,7 @@ fn xml_encode(lua: &mlua::Lua) -> mlua::Result<()> {
             match quick_xml::se::to_string_with_root(&root, &value) {
                 Ok(serialized) => lua.to_value_with(
                     &serialized,
-                    mlua::SerializeOptions::new()
+                    mlua::serde::SerializeOptions::new()
                         .serialize_none_to_null(false)
                         .serialize_unit_to_null(false),
                 ),
@@ -130,7 +137,7 @@ fn xml_decode(lua: &mlua::Lua) -> mlua::Result<()> {
             match result {
                 Ok(res) => lua.to_value_with(
                     &res,
-                    mlua::SerializeOptions::new()
+                    mlua::serde::SerializeOptions::new()
                         .serialize_none_to_null(false)
                         .serialize_unit_to_null(false),
                 ),
@@ -200,7 +207,7 @@ fn csv_decode(lua: &mlua::Lua) -> mlua::Result<()> {
 
             lua.to_value_with(
                 &(body, header),
-                mlua::SerializeOptions::new()
+                mlua::serde::SerializeOptions::new()
                     .serialize_none_to_null(false)
                     .serialize_unit_to_null(false),
             )
