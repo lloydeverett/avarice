@@ -268,8 +268,10 @@ Not taken: `chrono`, `time`, `reqwest-websocket`, `futures`, and the seven
 non-JSON serde formats Astra offers (yaml, json5, ini, toml, csv, xml) — one of
 which, `serde_yaml`, is published as `0.9.34+deprecated`.
 
-`bitflags` for `StdModules`, approved on the same terms: mlua already depends on
-it, so it adds nothing to the tree.
+`bitflags` for `StdModules`, approved on the premise that mlua already depends on it,
+so it adds nothing to the tree. That premise was wrong: mlua does not. It is in the tree
+through `tower-http` (reqwest) and `crossterm` (reedline), so no crate is added, but it
+was not mlua that put it there.
 
 `glob` is in on the author's call, against the recommendation to drop it, having
 been verified as `rust-lang/glob`, MIT OR Apache-2.0, current at 0.3.4.

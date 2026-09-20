@@ -19,19 +19,19 @@ use crate::components::{astra_serde, crypto, datetime, file_system, http, utils}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum StdModule {
-    /// An HTTP client.
+    /// An HTTP client (Astra's server is not taken).
     Http,
     /// Files and directories.
     Fs,
-    /// Hashing, HMAC, base64 and UUIDs.
+    /// SHA-2 and SHA-3 hashing and base64.
     Crypto,
     /// JSON, JSON5, YAML, TOML, INI, CSV and XML encoding and decoding.
     Serde,
-    /// Instants, civil dates and times, zones and spans.
+    /// Dates and times, built on chrono.
     Datetime,
-    /// Tasks, regular expressions and `env.get`.
+    /// Tasks, `uuid` and `env.get`.
     Utils,
-    /// In-memory key/value, observable and pubsub stores.
+    /// Observables and pubsub.
     Stores,
 }
 

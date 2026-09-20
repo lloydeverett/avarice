@@ -17,7 +17,7 @@ behind it.
 Not blocked by 01. `stores` is synchronous and pure Lua; if the async conversion
 has already landed the tests use `block_on`, and if it has not they do not.
 
-- [x] A `StdModule` enum, one variant per module, each knowing its own `require` name, and a `StdModules` flags type over it with `ALL` and `NONE`. Uses `bitflags`, which mlua already depends on, so it adds nothing to the tree.
+- [x] A `StdModule` enum, one variant per module, each knowing its own `require` name, and a `StdModules` flags type over it with `ALL` and `NONE`. Uses `bitflags`. This ticket said mlua already depends on it; it does not, though `tower-http` and `crossterm` already put it in the tree.
 - [x] `avarice-rt-stdlib` exposes a loader per module, returning the module's value, built on demand. This is the whole surface between the two crates: the core never learns what a module contains.
 - [x] `Profile::std_modules()` sits next to the existing `Profile::std_libs()` — `ALL` for trusted, `NONE` for sandbox.
 - [x] `RuntimeBuilder` gains `std_modules`, `with_std_modules` and `without_std_modules`, mirroring the standard-library trio exactly, so an embedder learns the shape once.

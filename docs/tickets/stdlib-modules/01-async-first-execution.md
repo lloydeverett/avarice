@@ -26,7 +26,7 @@ one change, and it is the only ticket whose diff touches code it does not own.
 - [ ] `Runtime` owns a `tokio::runtime::Runtime` built with `new_current_thread`, plus a `LocalSet`.
 - [ ] `Runtime::block_on` drives a future to completion on that `LocalSet`, including anything spawned onto it during the call.
 - [ ] Calling `block_on` from inside another tokio runtime panics — tokio's own panic, not wrapped or converted. The documented answer for an embedder already inside tokio is to build the `Runtime` on its own thread.
-- [ ] `Runtime` is still `!Send`. mlua's `async` feature is on; its `send` feature is not.
+- [ ] mlua's `async` feature is on. Its `send` feature is on too, from the stdlib crate (see the amendment to ADR 0004), so `Runtime` is `Send`; the original `!Send` requirement is superseded.
 - [ ] `Runtime::enter` and the `Execution` guard are unchanged. A time limit now arms across awaits, which ADR 0004 accepts.
 - [ ] Dropping a `Runtime` drops its outstanding tasks. Nothing is joined implicitly.
 - [ ] The existing suite is moved onto `block_on` and passes unchanged in substance — no test's assertion is weakened to accommodate the new shape.

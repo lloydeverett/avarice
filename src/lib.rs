@@ -16,7 +16,8 @@
 //!
 //! A [`Profile`] is a set of defaults, not a constraint. [`Profile::Sandbox`] withholds `io`,
 //! `os`, `package` and `debug`, caps memory, and refuses binary chunks; [`Profile::Trusted`]
-//! opens everything a safe Lua state can have. [`RuntimeBuilder`] can override anything either
+//! opens everything a safe Lua state can have and registers every stdlib module (`http`, `fs`,
+//! `crypto`, `serde`, `datetime`, `utils` and `stores`; see [`StdModules`]). [`RuntimeBuilder`] can override anything either
 //! one sets, and doing so never affects the profile another runtime is built from.
 //!
 //! # Modules

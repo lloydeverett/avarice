@@ -317,3 +317,11 @@ fn lua_cannot_reach_the_filesystem_through_the_module_system() {
         .unwrap();
     assert!(loaded_is_hidden, "the module cache should not be a global");
 }
+
+#[test]
+fn a_runtime_is_send_and_sync() {
+    // Follows from mlua's `send` feature, which the stdlib crate needs (ADR 0004's amendment).
+    // Asserted so that a field which is not thread-safe is caught when it is added.
+    fn check<T: Send + Sync>() {}
+    check::<Runtime>();
+}

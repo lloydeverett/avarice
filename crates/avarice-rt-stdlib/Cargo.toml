@@ -17,7 +17,8 @@ publish = false
 # `async`, `macros`, `send` and `serialize` are what Astra's sources are written against: `send`
 # because `utils.rs` puts tasks on `tokio::spawn`, which needs a Send Lua.
 mlua = { workspace = true, features = ["async", "macros", "send", "serialize"] }
-# For `StdModules`. Already in the tree through mlua.
+# For `StdModules`. Not an Astra dependency, and not mlua's either; it is already in the tree
+# through reqwest's tower-http and reedline's crossterm.
 bitflags = "2"
 
 # http

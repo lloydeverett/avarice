@@ -4,6 +4,9 @@ status: accepted
 
 # The stdlib is derived from Astra, and lives in its own Apache-2.0 crate
 
+> Amended 2026-09-20: the sources are Astra's own, not adapted. Where the text below says
+> otherwise, or mentions `jiff`, the amendment at the end wins.
+
 The **stdlib modules** are adapted from [Astra](https://github.com/ArkForgeLabs/Astra)
 by ArkForge Labs, which is Apache-2.0. They live in `avarice-rt-stdlib`, a
 separate crate in this repository, so that the derived code and its licence

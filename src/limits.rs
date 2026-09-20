@@ -64,14 +64,14 @@ impl Trip {
     }
 }
 
-/// A `Cell` that is `Sync`.
+/// A `std::cell::Cell` that is `Sync`.
 ///
 /// mlua's `send` feature, which the stdlib crate needs for its tasks, makes the hook closure
 /// `Send`, so what it shares with the runtime has to be `Sync`.
 #[derive(Debug, Default)]
-struct Cell<T>(Mutex<T>);
+struct SyncCell<T>(Mutex<T>);
 
-impl<T: Copy> Cell<T> {
+impl<T: Copy> SyncCell<T> {
     fn get(&self) -> T {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -86,9 +86,9 @@ impl<T: Copy> Cell<T> {
 pub(crate) struct Limits {
     cancel: Option<CancelHandle>,
     time_limit: Option<Duration>,
-    deadline: Cell<Option<Instant>>,
-    depth: Cell<u32>,
-    tripped: Cell<Option<Trip>>,
+    deadline: SyncCell<Option<Instant>>,
+    depth: SyncCell<u32>,
+    tripped: SyncCell<Option<Trip>>,
 }
 
 impl Limits {

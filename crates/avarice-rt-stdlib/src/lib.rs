@@ -25,3 +25,17 @@ pub use crate::modules::{StdModule, StdModules};
 pub fn loader(module: StdModule) -> impl Fn(&Lua) -> mlua::Result<Value> + 'static {
     move |lua| modules::load(lua, module)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The core hands the loader to Lua's `require`, which under mlua's `send` feature must be
+    /// `Send`, and shares it behind an `Arc`. That holds only because an opaque return type leaks
+    /// its auto traits, so it is asserted here rather than left to a change that quietly breaks it.
+    #[test]
+    fn a_loader_is_send_and_sync() {
+        fn check(_: impl Send + Sync + 'static) {}
+        check(loader(StdModule::Stores));
+    }
+}

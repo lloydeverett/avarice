@@ -20,8 +20,8 @@ const LOADED: &str = "_LOADED";
 // the `require` function Lua holds `Send`, and `require` reaches the loaders.
 type Loader = Arc<dyn Fn(&Lua) -> mlua::Result<Value> + Send + Sync>;
 
-/// Locks a mutex, carrying on if a panic elsewhere poisoned it: what is inside is only ever
-/// replaced whole, so it is never half-written.
+/// Locks a mutex, carrying on if a panic elsewhere poisoned it. Nothing under these locks is
+/// held across a call into Lua or a loader, so a panic cannot leave one half-updated.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -155,6 +155,9 @@ impl Runtime {
     /// Use this when building the module is expensive, or when it need not happen at all if the
     /// program never asks for it. The loader runs inside the Lua state, under the same limits as
     /// the code that called `require`.
+    ///
+    /// The loader must be `Send + Sync`: Lua's `require` holds it, and the stdlib crate turns on
+    /// mlua's `send` feature, which makes everything Lua holds `Send`.
     pub fn register_lazy_module<F>(&self, name: &str, loader: F) -> Result<()>
     where
         F: Fn(&Lua) -> mlua::Result<Value> + Send + Sync + 'static,
