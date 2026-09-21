@@ -4,6 +4,9 @@ status: accepted
 
 # `avrt` strips escape codes from its output when it is not a colour terminal
 
+> [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
+> `avarice-rt` and not a crate; where the text below says `avarice-rt-stdlib`, read `src/stdlib`.
+
 > **Amended 2026-09-21; the amendments at the end win.** `anstream` is replaced by a filter of
 > `avrt`'s own, which drops every escape sequence other than colour on a colour terminal too, and
 > `print` now emits colour of its own, so the library no longer decides nothing about colour.

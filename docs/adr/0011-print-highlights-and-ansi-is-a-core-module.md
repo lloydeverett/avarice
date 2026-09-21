@@ -4,6 +4,10 @@ status: accepted
 
 # `print` highlights what it prints, and `ansi` is a core module
 
+> [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
+> `avarice-rt` and not a crate, and licenses the whole project Apache-2.0; where the text below
+> speaks of the stdlib crate, or says the core carries no licence, it wins.
+
 `print` colours what it shows: the strings, keys and commas of a table, and a function's name,
 parameters and address. It does so always, whatever the destination, and it does so in Lua, with the
 codes from `ansi`. To make that possible `ansi` moves out of the stdlib crate and into the core,

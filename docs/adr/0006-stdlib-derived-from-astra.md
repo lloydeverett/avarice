@@ -8,7 +8,7 @@ status: accepted
 > is taken after all, and every Astra file carries a header, with no `NOTICE` or `UPSTREAM.md`.
 > Amended 2026-09-21 again: a change may also be an **addition** that leaves everything Astra does
 > as it was, and the first is a `__tostring` on the `fs` userdata.
-> [ADR 0012](0012-the-stdlib-is-a-module-not-a-crate.md) moves the stdlib from its own crate to a
+> [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) moves the stdlib from its own crate to a
 > directory of `avarice-rt`, licenses the whole project Apache-2.0 with one `LICENSE` at the root,
 > and folds the crate's `README.md` into the root one; where the text below calls it a crate, says
 > the licence is its boundary, or points at its README, it wins.
@@ -149,8 +149,8 @@ whose it was or under what licence. It is reversed.
 - **Every file under `src/components/` and `lua/` opens with a header** naming the Astra file, the
   version and commit, the copyright holder and the licence, and a `Changes from the original:`
   list. A file that is otherwise unchanged says `none`, and is byte-for-byte Astra's below its
-  header. So the earlier rule that the list is never empty holds again, and so does the header
-  format; the rule about changes being removals and respellings only is unchanged.
+  header. So the earlier rule that the list is never empty holds again; the rule about changes
+  being removals and respellings only is unchanged.
 - **`NOTICE` is deleted.** Astra ships none, so none is inherited (§4(d)), and the copyright line
   is in every header. §4(a) is met by `LICENSE`, §4(b) and §4(c) by the headers.
 - **`UPSTREAM.md` is deleted.** Its per-file table and SHA-256 checksums were the attribution the

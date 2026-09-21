@@ -20,7 +20,7 @@ use mlua::{Lua, Table, Value};
 /// One of the stdlib modules.
 ///
 /// Each knows the name Lua `require`s it by. The set of modules is this enum; what a module
-/// contains is this crate's business and never the core's.
+/// contains is this directory's business and never the core's.
 ///
 /// Every variant exists in every build. A module is usable only if it is **compiled in**, which
 /// its Cargo feature (see [`StdModule::feature`]) decides.
@@ -175,8 +175,7 @@ impl StdModule {
         self.entry().compiled_in
     }
 
-    /// The Cargo feature that compiles this module in, spelled the same on this crate and on
-    /// `avarice-rt`.
+    /// The Cargo feature that compiles this module in.
     pub const fn feature(self) -> &'static str {
         self.entry().feature
     }

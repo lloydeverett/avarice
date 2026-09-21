@@ -4,8 +4,10 @@ status: accepted
 
 # The stdlib is a directory of avarice-rt, not a crate of its own, and the whole project is Apache-2.0
 
-The **stdlib modules** move from `crates/avarice-rt-stdlib`, a workspace member, to `src/stdlib/`, a
-module of the `avarice-rt` crate. The workspace goes with it: the repository is one package.
+The stdlib's code moves from `crates/avarice-rt-stdlib`, a workspace member, to `src/stdlib/`, a
+directory of the `avarice-rt` crate. The workspace goes with it: the repository is one package.
+(This ADR says *directory*, and not *module*, so that *module* keeps the meaning `CONTEXT.md` gives
+it.)
 
 Two things follow from that, and are decided together. The project as a whole is licensed under the
 Apache License 2.0, with one `LICENSE` at the root and `license = "Apache-2.0"` in the manifest, so
@@ -40,20 +42,21 @@ header.
 ## What is kept: it depends on nothing of ours
 
 The stdlib is still self-contained, and the dependency still runs one way. Nothing in `src/stdlib`
-names another module of `avarice-rt`; it names `mlua`, `tokio`, `bitflags` and the dependencies of
+reaches anything else in `avarice-rt`; it names `mlua`, `tokio`, `bitflags` and the dependencies of
 its own that are behind its features. What the rest of the crate takes from it is three things,
 declared in `src/stdlib/mod.rs`: `StdModule`, `StdModules` and `loader`. The core registers a
 module's loader as an ordinary lazy module and never learns what any of them contains, as before.
 
 The compiler used to hold that line, because a crate cannot name its dependant. It no longer can,
-so `tests/stdlib_boundary.rs` does: it reads the sources under `src/stdlib` and fails on any path
-into the rest of the crate.
+and nothing replaces it: the line is a convention, kept by review. A test that read the sources for
+what they import was written and then deleted. It asserted on the shape of the source and not on
+anything the code does, and it grew rules of its own to keep up with that (comments, nested
+paths, `include_str!`) which cost more than the drift it guarded against.
 
 **One name is allowed through**, `crate::components`. Astra's `http` files spell their neighbours
 that way, and a header is the only record of how a file differs from Astra's, so those files are
 not edited (ADR 0006). `src/lib.rs` has a single `use` behind `stdlib-http` that makes the name
-resolve, and the test allows the name and no other. It is the one place the rest of the crate
-knows something of what is in the directory.
+resolve. It is the one place the rest of the crate knows something of what is in the directory.
 
 ## The licence
 
@@ -75,7 +78,8 @@ the earlier ADRs' statements that the rest of the repository carries no licence 
 
 The headers say "See LICENSE in this crate's root". They are not edited, because a header changes
 when the file's contents do and not otherwise, and they have no need to be: the crate's root is the
-repository root, and the `LICENSE` is there.
+repository root, and the `LICENSE` is there. Some also say "which this workspace is on", which was
+true of a workspace member and now reads as this package; the README says so beside the licence.
 
 ## Considered options
 
@@ -87,8 +91,8 @@ headers discharge it wherever the files sit.
 above. It would have changed two files' bodies and so two headers' `Changes from the original`
 lists, to save one line in `lib.rs`.
 
-**A `README.md` in `src/stdlib`** was kept for a while and removed. It said how the headers are
-kept, what was not taken, how a module is built and why some features start with an underscore, and
+**A `README.md` in `src/stdlib`**, carried over from the crate, was rejected. It said how the
+headers are kept, what was not taken, how a module is built and why some features start with an underscore, and
 all of that is about the stdlib as the project ships it, so it is in the root `README.md` where a
 reader of the project looks.
 
@@ -106,13 +110,17 @@ reader of the project looks.
 - **Features are declared once**, in the root `Cargo.toml`, with the `_astra_*` helpers beside them,
   and `scripts/check-features.sh` runs plain `cargo test`.
 - **The module table's tests moved with it**, into `src/stdlib/`, where they can reach `loader`
-  without it being public. None were dropped; `tests/stdlib_boundary.rs` is the one added.
+  without it being public. None were dropped, and none were added.
 - **The manifest names its licence**, so a package built from this repository says what it
   contains.
+- **References to the design spec and its tickets were reworded, not amended.** ADRs 0004, 0006 and
+  0007 pointed at `docs/specs/` and `docs/tickets/` ("ticket 01", "the spec's rename", "the header
+  format in the spec"). Those documents are deleted, so the references were reworded to stand
+  without them, and a clause that only pointed at the spec was dropped. Nothing else in those ADRs
+  changed.
 
-Where [ADR 0006](0006-stdlib-derived-from-astra.md), [ADR 0007](0007-stdlib-modules-are-compile-time-optional.md),
-[ADR 0008](0008-ansi-is-original-and-pure.md) and [ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md)
-describe the stdlib as a separate crate, a workspace member, or a set of features forwarded from
-one manifest to another, or say the Apache-2.0 boundary is a crate, that the rest of the repository
-carries no licence, or that the crate's `README.md` says something, this decision wins. Everything
-else in them stands.
+Where an earlier ADR (0006, 0007, 0008, 0009 and 0011 do) names the `avarice-rt-stdlib` crate or its
+path, describes the stdlib as a separate crate, a workspace member, or a set of features forwarded
+from one manifest to another, or says the Apache-2.0 boundary is a crate, that the rest of the
+repository carries no licence, or that the crate's `README.md` says something, this decision wins.
+Everything else in them stands.

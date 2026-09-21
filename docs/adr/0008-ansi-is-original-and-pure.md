@@ -4,6 +4,10 @@ status: superseded by [ADR 0011](0011-print-highlights-and-ansi-is-a-core-module
 
 # `ansi` is an original module in the Astra-derived crate, and is pure
 
+> [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
+> `avarice-rt` and not a crate, and licenses the whole project Apache-2.0; where the text below
+> speaks of the stdlib crate, its boundary or its licence, it wins.
+
 `ansi` is a **stdlib module**: a table of ANSI escape codes for formatting text on a terminal, and
 a few functions for the colours a table cannot hold. It is written entirely in Lua, in
 `crates/avarice-rt-stdlib/lua/ansi.lua`, and it is the first stdlib module that is not Astra's.

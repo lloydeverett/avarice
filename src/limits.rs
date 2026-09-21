@@ -105,7 +105,7 @@ pub(crate) fn cancelled_error() -> mlua::Error {
 
 /// A `std::cell::Cell` that is `Sync`.
 ///
-/// mlua's `send` feature, which the stdlib crate needs for its tasks, makes the hook closure
+/// mlua's `send` feature, which the stdlib needs for its tasks, makes the hook closure
 /// `Send`, so what it shares with the runtime has to be `Sync`.
 #[derive(Debug, Default)]
 struct SyncCell<T>(Mutex<T>);

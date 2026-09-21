@@ -186,12 +186,11 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 **Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
 `validation`. They are derived from [Astra](https://github.com/ArkForgeLabs/Astra), and kept in
 their own directory, [`src/stdlib`](src/stdlib), with a header on each file that says where it came
-from (see [The stdlib's source](#the-stdlibs-source)). They
-are registered as lazy host modules, so `require("crypto")` builds `crypto` and a program that
-never asks for it costs nothing. A program can ask which it has: `stdlib()` returns a list of the
-names to pass to `require`, in a fixed order. It says what this runtime registered, so in a sandbox
-it lists only the pure modules, and it is short one module when an embedder took one out. It builds
-nothing.
+from (see [The stdlib's source](#the-stdlibs-source)). They are registered as lazy host modules, so
+`require("crypto")` builds `crypto` and a program that never asks for it costs nothing. A program
+can ask which it has: `stdlib()` returns a list of the names to pass to `require`, in a fixed order.
+It says what this runtime registered, so in a sandbox it lists only the pure modules, and it is
+short one module when an embedder took one out. It builds nothing.
 
 ```lua
 print(#stdlib())        --> 8, in trusted mode
@@ -437,15 +436,16 @@ Astra's `src/components/` is `components/` there, and its `astra/lua/` is `lua/`
 `modules.rs` are avarice-rt's own.
 
 **Every Astra file opens with a header** that names the Astra file, the copyright holder and the
-licence, and has a `Changes from the original:` list. A file that is otherwise unchanged says
-`none` and is byte-for-byte Astra's below its header, so `sed '1,/^$/d' <file>` gives Astra's file
-exactly. A file that differs lists every change: removals of what is not taken, the respelling of
+licence, and has a `Changes from the original:` list. A file that is otherwise unchanged says `none`
+and is byte-for-byte Astra's below its header, so `sed '1,/^$/d' <file>` gives Astra's file exactly.
+A file that differs lists every change: removals of what is not taken, the respelling of
 `mlua::SerializeOptions` for the mlua this crate is on, and a few additions, such as a `__tostring`
-on each userdata so that `print` can show which value one is. Nothing Astra does has been altered
-in how it works, and the header is the only record of what differs, so a file's header changes when
-its contents do and not otherwise ([ADR 0006](docs/adr/0006-stdlib-derived-from-astra.md)). The
-headers say "See LICENSE in this crate's root": that is the `LICENSE` at the root of this
-repository. Astra distributes no `NOTICE` file, so there is none here. Astra's own `LICENSE`
+on each userdata so that `print` can show which value one is. Nothing Astra does has been altered in
+how it works, and the header is the only record of what differs, so a file's header changes when its
+contents do and not otherwise ([ADR 0006](docs/adr/0006-stdlib-derived-from-astra.md)). The headers
+say "See LICENSE in this crate's root": that is the `LICENSE` at the root of this repository. Some
+also say "which this workspace is on": that was true when the stdlib was a workspace member, and now
+means this package. Astra distributes no `NOTICE` file, so there is none here. Astra's own `LICENSE`
 differs from the canonical text in section 8 and in the appendix; ours is the canonical text, and
 the headers' `Copyright 2024 ArkForge LLC` is the line Astra's appendix carries.
 
@@ -476,13 +476,14 @@ without registering the module it belongs to. `http` turns on `_astra_serde` (fo
 `validation` turns on `_astra_utils` (for `AstraRegex`). Every gate is an attribute in
 `components/mod.rs`, which is the only Astra file that changed for it, and its header lists them.
 
-**It is self-contained.** Nothing in `src/stdlib` names another module of this crate; it names
-`mlua`, `tokio` and its own optional dependencies. The rest of the crate takes exactly three things
-from it, declared in `src/stdlib/mod.rs`: `StdModule`, `StdModules` and `loader`. There is no crate
-boundary to enforce that, so `tests/stdlib_boundary.rs` does ([ADR 0012](docs/adr/0012-the-stdlib-is-a-module-not-a-crate.md)).
-The one name it lets through is `crate::components`, which Astra's `http` files spell that way and
-are kept exactly as Astra wrote them; `src/lib.rs` has a single `use` behind `stdlib-http` that
-makes it resolve.
+**It is self-contained.** Nothing in `src/stdlib` reaches anything else in this crate; it names
+`mlua`, `tokio`, `bitflags` and its own optional dependencies. The rest of the crate takes exactly
+three things from it, declared in `src/stdlib/mod.rs`: `StdModule`, `StdModules` and `loader`.
+That is a convention, not something the compiler or a test checks
+([ADR 0012](docs/adr/0012-the-stdlib-is-a-directory-not-a-crate.md)). The one name it uses from
+the crate root is `crate::components`, which Astra's `http` files spell that way and are kept
+exactly as Astra wrote them; `src/lib.rs` has a single `use` behind `stdlib-http` that makes it
+resolve.
 
 **What the rest of the crate has to accept.** Astra runs tasks with `tokio::spawn`, which needs Lua
 to be `Send`, so mlua's `send` feature is on in every build and everything handed to Lua has to be

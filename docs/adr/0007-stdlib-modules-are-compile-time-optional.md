@@ -4,7 +4,7 @@ status: accepted
 
 # Stdlib modules are compile-time optional
 
-> [ADR 0012](0012-the-stdlib-is-a-module-not-a-crate.md) makes the stdlib a directory of
+> [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
 > `avarice-rt` and not a crate of its own, so the features below are declared once, on `avarice-rt`,
 > and are not forwarded from a stdlib crate. Where the text says otherwise, it wins.
 

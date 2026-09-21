@@ -30,7 +30,7 @@ const LOADED: &str = "_LOADED";
 /// program that has just run out of work can be to notice it.
 const TASK_POLL: Duration = Duration::from_millis(5);
 
-// `Send + Sync` because mlua's `send` feature, which the stdlib crate needs for its tasks, makes
+// `Send + Sync` because mlua's `send` feature, which the stdlib needs for its tasks, makes
 // the `require` function Lua holds `Send`, and `require` reaches the loaders.
 type Loader = Arc<dyn Fn(&Lua) -> mlua::Result<Value> + Send + Sync>;
 
@@ -309,8 +309,8 @@ impl Runtime {
     /// program never asks for it. The loader runs inside the Lua state, under the same limits as
     /// the code that called `require`.
     ///
-    /// The loader must be `Send + Sync`: Lua's `require` holds it, and the stdlib crate turns on
-    /// mlua's `send` feature, which makes everything Lua holds `Send`.
+    /// The loader must be `Send + Sync`: Lua's `require` holds it, and the crate turns on
+    /// mlua's `send` feature (the stdlib's tasks need it), which makes everything Lua holds `Send`.
     pub fn register_lazy_module<F>(&self, name: &str, loader: F) -> Result<()>
     where
         F: Fn(&Lua) -> mlua::Result<Value> + Send + Sync + 'static,

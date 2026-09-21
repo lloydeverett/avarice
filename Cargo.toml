@@ -67,7 +67,7 @@ stdlib-validation = ["_astra_utils"]
 # another's Rust takes the whole file, and these compile the file without adding the module: `http`
 # calls `sanetize_lua_input` from `astra_serde.rs` and `validation` builds `AstraRegex` from
 # `utils.rs`, and neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and
-# JSON helpers that `stdlib/components/mod.rs` holds for `http` and `fs`.
+# JSON helpers that `src/stdlib/components/mod.rs` holds for `http` and `fs`.
 _astra_serde = [
   "dep:serde-value",
   "dep:serde_json",
@@ -96,9 +96,9 @@ mlua = { version = "0.12.1", features = [
   "serialize",
 ] }
 # The core owns the executor (ADR 0004). `time` is the driver the stdlib's task timers need, so the
-# runtime is built with it rather than relying on a feature arriving by unification; `net` is the
-# one http needs, and `stdlib-http` adds it, as `stdlib-fs` adds `fs` and `io-util`. `sync` is for
-# waking a waiting chunk when it is cancelled, and Astra's `sync::Mutex`.
+# runtime is built with it rather than relying on a feature arriving by unification; `sync` is for
+# waking a waiting chunk when it is cancelled, and Astra's `sync::Mutex`. The drivers a module
+# needs on top of these (`net`, `fs`, `io-util`) come with its feature.
 tokio = { version = "1.52.3", features = ["rt", "sync", "time"] }
 thiserror = "2.0"
 # For `StdModules`. Not an Astra dependency, and not mlua's either; it is already in the tree
