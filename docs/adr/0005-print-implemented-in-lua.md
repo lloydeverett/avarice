@@ -66,3 +66,29 @@ stdio buffering; trusted mode opens `io`, so we cannot inherit that.
 The mlua behaviour above is arguably a bug there — a `Debug` impl should not
 abort on safe input — but we are not relying on it being fixed, and this
 decision does not depend on the outcome either way.
+
+## Amendment, 2026-09-21: what the implementation settled
+
+The default sink flushes C stdio before it writes. This is the interleaving hazard the section
+above names, and the write sink alone does not remove it: Rust's `stdout` and `io.write`'s C
+buffer are different buffers, so on a pipe `io.write("a") print("b")` came out as `b` then `a`.
+Calling `fflush(NULL)` first puts what `io.write` has written ahead of what `print` is about to.
+It is the core's only `unsafe`, and the reason is that there is nothing safe that reaches C's
+buffer. A test in `tests/cli.rs` fails without it.
+
+Choices the decision left open:
+
+- A table with a `__tostring` metamethod prints through it, like stock `print`; every other
+  table prints structurally, with raw access, so no `__index`, `__pairs` or `__len` runs.
+- Keys come out in a fixed order — array part, then numbers, strings, booleans and the rest — so
+  that a table prints the same way each time.
+- Only a table containing itself is marked; a table reachable by two paths is printed in full
+  both times. That leaves output growth to the memory cap, as this decision intends.
+- There is no depth budget. The 30 000-deep case ends at the memory cap (`not enough memory`)
+  rather than at a stack overflow, because the indentation is quadratic in depth; either is a
+  catchable Lua error.
+- The output is built whole before anything is written, so an error leaves the sink untouched.
+- A sink that fails makes `print` raise a Lua error. Stock `print` ignores write errors, but it
+  also dies of SIGPIPE, which Rust does not; an error is the nearest thing to that which a script
+  can see.
+

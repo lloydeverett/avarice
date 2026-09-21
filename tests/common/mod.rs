@@ -1,7 +1,38 @@
 //! Helpers shared between the integration tests.
 
+// Each test file uses some of these and not others.
+#![allow(dead_code)]
+
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// A write sink a test can read back: hand a clone to the runtime, keep one to inspect.
+#[derive(Clone, Default)]
+pub struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+impl Buffer {
+    pub fn new() -> Self {
+        Buffer::default()
+    }
+
+    /// Everything written so far, as text.
+    pub fn contents(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+impl Write for Buffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// A scratch directory that deletes itself.
 pub struct TempDir(PathBuf);

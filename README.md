@@ -33,6 +33,7 @@ The vocabulary used throughout — profile, host module, module store, embedder 
 - [Embedding](#embedding)
 - [Profiles](#profiles)
 - [Modules](#modules)
+- [`print`](#print)
 - [Limits](#limits)
 - [Building](#building)
 
@@ -203,6 +204,32 @@ impl ModuleStore for SqliteStore {
 `register_lazy_module` defers building a module until something requires it.
 `Runtime::set_store` replaces the store after construction. Both host modules and store modules
 are cached in Lua's own `_LOADED` table, so `require("x") == require("x")`.
+
+## `print`
+
+Both profiles replace `print` with one that shows a table's contents rather than its address.
+Scalars format exactly as `tostring` does, so `print(1)` and `print("x")` are unchanged; a table
+prints as indented Lua-like text with its keys in a fixed order, a table that contains itself is
+marked `<cycle: ...>` rather than followed, and a table with a `__tostring` metamethod prints
+through it, as it does under stock `print`.
+
+It is written in Lua, so its limits are a Lua program's: a table nested too deeply to print is a
+catchable error, bounded by the memory cap, and does not abort the process. The reasons are in
+[ADR 0005](docs/adr/0005-print-implemented-in-lua.md).
+
+`print` writes to the runtime's **write sink**, which is standard output unless an embedder
+redirects it. Each call writes one line and flushes.
+
+```rust
+use avarice_rt::{Profile, Runtime};
+
+let rt = Runtime::builder(Profile::Sandbox)
+    .write_sink(std::io::stderr())
+    .build()?;
+// Or, once built:
+rt.set_write_sink(std::io::sink());
+# Ok::<_, avarice_rt::Error>(())
+```
 
 ## Limits
 

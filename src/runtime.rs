@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 use crate::error::{Error, Result};
 use crate::limits::{self, CancelHandle, Execution, Limits, DEFAULT_CHECK_INTERVAL};
 use crate::module::{ModuleName, ModuleStore};
+use crate::print::{self, Sink};
 use crate::profile::Profile;
 
 /// The registry key Lua itself uses for its loaded-module table.
@@ -23,7 +25,7 @@ type Loader = Arc<dyn Fn(&Lua) -> mlua::Result<Value> + Send + Sync>;
 
 /// Locks a mutex, carrying on if a panic elsewhere poisoned it. Nothing under these locks is
 /// held across a call into Lua or a loader, so a panic cannot leave one half-updated.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -64,6 +66,7 @@ pub struct Runtime {
     lua: Lua,
     limits: Arc<Limits>,
     modules: Arc<Modules>,
+    sink: Sink,
     profile: Profile,
     binary_chunks: bool,
     memory_limit: Option<usize>,
@@ -223,6 +226,15 @@ impl Runtime {
         }
     }
 
+    /// Redirects `print` to `writer`, from now on.
+    ///
+    /// The **write sink** is where `print` sends what it prints; until it is replaced it is the
+    /// process's standard output. Each `print` call writes its whole line and then flushes, so
+    /// a sink that buffers sees no data held back.
+    pub fn set_write_sink(&self, writer: impl Write + Send + 'static) {
+        *lock(&self.sink) = Box::new(writer);
+    }
+
     /// Replaces the module store `require` falls back to.
     pub fn set_store(&self, store: impl ModuleStore) {
         *lock(&self.modules.store) = Some(Arc::new(store));
@@ -266,6 +278,7 @@ pub struct RuntimeBuilder {
     check_interval: u32,
     binary_chunks: bool,
     store: Option<Arc<dyn ModuleStore>>,
+    sink: Option<Sink>,
 }
 
 impl std::fmt::Debug for RuntimeBuilder {
@@ -293,6 +306,7 @@ impl RuntimeBuilder {
             check_interval: DEFAULT_CHECK_INTERVAL,
             binary_chunks: profile.allows_binary_chunks(),
             store: None,
+            sink: None,
         }
     }
 
@@ -408,6 +422,15 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Sends what `print` prints to `writer`, instead of to standard output.
+    ///
+    /// Clones of a builder share the sink, so two runtimes built from one write to the same
+    /// place. See [`Runtime::set_write_sink`].
+    pub fn write_sink(mut self, writer: impl Write + Send + 'static) -> Self {
+        self.sink = Some(print::new_sink(writer));
+        self
+    }
+
     /// Builds the runtime.
     pub fn build(self) -> Result<Runtime> {
         // Two libraries are refused outright rather than quietly dropped, for two different
@@ -447,6 +470,8 @@ impl RuntimeBuilder {
         install_require(&lua, Arc::clone(&modules), self.binary_chunks)?;
         install_traceback(&lua)?;
         restrict_base_library(&lua, self.binary_chunks)?;
+        let sink = self.sink.unwrap_or_else(print::default_sink);
+        print::install(&lua, Arc::clone(&sink))?;
 
         // Last, so that none of our own setup can trip the limits we install.
         if let Some(bytes) = self.memory_limit {
@@ -466,6 +491,7 @@ impl RuntimeBuilder {
             lua,
             limits,
             modules,
+            sink,
             profile: self.profile,
             binary_chunks: self.binary_chunks,
             memory_limit: self.memory_limit,

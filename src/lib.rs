@@ -20,6 +20,12 @@
 //! it for a caller who is not async. It panics if called from inside another tokio runtime, so an
 //! embedder that is already async builds its `Runtime` on a thread of its own.
 //!
+//! # Output
+//!
+//! Both profiles replace `print` with one that renders tables structurally. It writes to the
+//! runtime's write sink, which is standard output until [`RuntimeBuilder::write_sink`] or
+//! [`Runtime::set_write_sink`] says otherwise, and flushes after every call.
+//!
 //! # Profiles
 //!
 //! A [`Profile`] is a set of defaults, not a constraint. [`Profile::Sandbox`] withholds `io`,
@@ -63,6 +69,7 @@
 mod error;
 mod limits;
 mod module;
+mod print;
 mod profile;
 mod runtime;
 

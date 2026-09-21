@@ -47,6 +47,15 @@ fn runs_a_statement_given_on_the_command_line() {
 }
 
 #[test]
+fn print_interleaves_with_io_write_on_a_pipe() {
+    // `io.write` is buffered by C stdio and `print` is not, so without care the pipe would see
+    // `b` before `a`. Stock Lua gets this right because both go through the same buffer.
+    let output = avrt(["-e", r#"io.write("a") print("b") io.write("c") print("d")"#]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "ab\ncd\n");
+}
+
+#[test]
 fn statements_run_in_order_and_before_the_script() {
     let dir = TempDir::new();
     let script = dir.write("main.lua", "print('script', x)");
