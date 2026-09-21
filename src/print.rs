@@ -1,6 +1,6 @@
 //! `print`, and the write sink it writes to.
 //!
-//! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is the two
+//! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is a pair of
 //! functions it is given: one appends bytes to the runtime's write sink, and the other says what
 //! parameters a function takes, which Lua can only be asked through its C API.
 
@@ -63,22 +63,25 @@ fn flush_c_stdio() {
     }
 }
 
-/// The parameters of a function written in Lua, spelled as its definition spells them: `a, b, ...`.
-/// `None` for a function written in Rust, whose parameters nothing knows.
+/// The parameters of a function written in Lua, spelled as its definition spells them:
+/// `a, b, ...`.
+/// `None` for a function not written in Lua, such as one of Lua's own library functions or a
+/// method on a Rust userdata, whose parameters nothing knows.
 ///
 /// A parameter has no name to give if the function's debug information was stripped, and is
 /// written `?` then. Lua has no types to report, and cannot say that a parameter is optional.
-fn parameters(lua: &Lua, function: &Function) -> mlua::Result<Option<String>> {
+fn parameter_list(lua: &Lua, function: &Function) -> mlua::Result<Option<String>> {
     let info = function.info();
     if info.what == "C" {
         return Ok(None);
     }
     let mut names = Vec::with_capacity(usize::from(info.num_params) + 1);
     // SAFETY: the closure runs in a protected call with `function` as the one value on the stack,
-    // and leaves the stack as it found it, which is what `exec_raw` requires. `lua_getlocal` with
-    // no activation record and a function on top reads that function's parameter names: it pushes
-    // nothing, cannot raise an error, and returns either null or a string that lives as long as
-    // the function does, so it is copied before the function is popped.
+    // and pops that one value before it returns, so nothing is left for `exec_raw` to collect.
+    // `lua_getlocal` with no activation record and a function on top reads that function's
+    // parameter names: it pushes nothing, cannot raise an error, and returns either null or a
+    // string that lives as long as the function does, so it is copied before the function is
+    // popped.
     unsafe {
         lua.exec_raw::<()>(function.clone(), |state| {
             for n in 1..=c_int::from(info.num_params) {
@@ -108,7 +111,8 @@ pub(crate) fn install(lua: &Lua, sink: Sink) -> mlua::Result<()> {
             .and_then(|()| sink.flush())
             .map_err(|e| mlua::Error::runtime(format!("could not write output: {e}")))
     })?;
-    let parameters = lua.create_function(|lua, function: Function| parameters(lua, &function))?;
+    let parameters =
+        lua.create_function(|lua, function: Function| parameter_list(lua, &function))?;
     let print: Function = lua
         .load(PRINT)
         .set_name("=[avarice-rt print]")

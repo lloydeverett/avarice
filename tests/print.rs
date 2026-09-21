@@ -95,12 +95,13 @@ fn functions_and_other_non_tables_print_as_tostring_does() {
 
 // -- Functions ---------------------------------------------------------------------------------
 
-/// What follows the address in a printed function: `(a, b)` for a Lua function, `` for one
-/// written in Rust. Fails if `text` is not one function followed by a newline.
+/// What follows the address in a printed function: `(a, b)` for a Lua function, and nothing for
+/// one that is not written in Lua. Takes the function as `print` wrote it, which may still have a
+/// newline or, inside a table, a comma after it. Fails if `text` is not a function.
 fn after_address(text: &str) -> &str {
+    let text = text.trim_end_matches(['\n', ',']);
     let rest = text
-        .strip_suffix('\n')
-        .and_then(|line| line.strip_prefix("function: 0x"))
+        .strip_prefix("function: 0x")
         .unwrap_or_else(|| panic!("not a function line: {text:?}"));
     let digits = rest.chars().take_while(char::is_ascii_hexdigit).count();
     assert!(digits > 0, "no address in {text:?}");
@@ -110,20 +111,18 @@ fn after_address(text: &str) -> &str {
 #[test]
 fn a_lua_function_prints_its_parameters_after_its_address() {
     for profile in BOTH {
-        let signature = |source: &str| printed(profile, source);
-        assert_eq!(
-            after_address(&signature("print(function(a, b) end)")),
-            "(a, b)"
-        );
-        assert_eq!(after_address(&signature("print(function() end)")), "()");
-        assert_eq!(
-            after_address(&signature("print(function(...) end)")),
-            "(...)"
-        );
-        assert_eq!(
-            after_address(&signature("print(function(a, b, ...) end)")),
-            "(a, b, ...)"
-        );
+        for (source, expected) in [
+            ("print(function(a, b) end)", "(a, b)"),
+            ("print(function() end)", "()"),
+            ("print(function(...) end)", "(...)"),
+            ("print(function(a, b, ...) end)", "(a, b, ...)"),
+        ] {
+            assert_eq!(
+                after_address(&printed(profile, source)),
+                expected,
+                "{source}"
+            );
+        }
     }
 }
 
@@ -137,10 +136,16 @@ fn a_method_shows_its_self() {
 }
 
 #[test]
-fn a_function_written_in_rust_prints_as_tostring_does() {
-    // Nothing is known about its parameters, and `()` would claim it takes none.
-    let text = printed(Profile::Sandbox, "print(string.format)");
-    assert_eq!(after_address(&text), "");
+fn a_function_not_written_in_lua_prints_as_tostring_does() {
+    // Nothing is known about its parameters, and `()` would claim it takes none. `string.format`
+    // is one of Lua's own C functions; a method on a Rust userdata is the same to Lua.
+    let text = printed(
+        Profile::Trusted,
+        r#"print(string.format, require("validation").regex("a").is_match)"#,
+    );
+    let mut functions = text.trim_end().split('\t');
+    assert_eq!(after_address(functions.next().unwrap()), "");
+    assert_eq!(after_address(functions.next().unwrap()), "");
 }
 
 #[test]
@@ -151,13 +156,12 @@ fn a_function_inside_a_table_prints_its_parameters_too() {
     );
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines.len(), 4, "{text}");
-    let field = |line: &str, name: &str| {
+    let field = |line: &str, name: &str| -> String {
         let value = line
             .trim()
             .strip_prefix(&format!("{name} = "))
-            .and_then(|value| value.strip_suffix(','))
             .unwrap_or_else(|| panic!("not a `{name}` field: {line:?}"));
-        after_address(&format!("{value}\n")).to_owned()
+        after_address(value).to_owned()
     };
     assert_eq!(field(lines[1], "add"), "(a, b)");
     assert_eq!(field(lines[2], "format"), "");
@@ -568,4 +572,12 @@ fn a_runtime_without_the_string_or_table_library_still_prints() {
         "{}",
         buffer.contents()
     );
+
+    // And a function is left as `tostring` shows it: parameters are for a print that can lay
+    // them out.
+    let before = buffer.contents().len();
+    rt.block_on(rt.exec("print(function(a) end)", "=test"))
+        .unwrap();
+    let text = buffer.contents()[before..].to_owned();
+    assert_eq!(after_address(&text), "");
 }

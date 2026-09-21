@@ -6,7 +6,8 @@ status: accepted
 
 Both profiles replace Lua's `print` with one that renders tables structurally
 rather than as `table: 0x...`. That replacement is written in Lua, over a small
-Rust function that writes bytes to the runtime's **write sink**.
+Rust function that writes bytes to the runtime's **write sink**. (The amendments at the end win
+where they differ: the second adds a second Rust function.)
 
 A reader would otherwise expect the opposite. Every other capability here is a
 **host function** in Rust, Rust is faster, and the code this is adapted from —
@@ -108,16 +109,24 @@ top level and inside a table, so that printing a module lists what each of its f
   function is variadic, and the names come from `lua_getlocal` with no activation record, which
   reads a function's parameter names and needs no `debug` library. That is the core's second
   `unsafe`, in `src/print.rs`, called through `Lua::exec_raw`, which takes mlua's lock and protects
-  the call: `mlua` has no safe way to ask for the names. A function written in Rust has no
-  parameters to report, so it prints as `tostring` does rather than as `()`, which would claim it
-  takes none. That includes every method on a Rust userdata, such as a compiled regex's.
-- The names are Rust's to produce and Lua's to place. `print.lua` is handed a second function,
-  `parameters`, and stays the only thing that decides how anything is laid out. The call does no
-  Lua, so the debug hook has nothing to interrupt in it; what it builds is bounded by the function's
-  own source, which the memory cap already charged for.
+  the call: `mlua` has no safe way to ask for the names. A function that is not written in Lua
+  has no parameters to report, so it prints as `tostring` does rather than as `()`, which would
+  claim it takes none. That is Lua's own library functions, such as `string.format`, and every
+  method on a Rust userdata, such as a compiled regex's.
+- `print.lua` is handed a second function, `parameters`, which returns the parameters spelled as a
+  definition spells them, and stays the only thing that decides where they go and how the rest is
+  laid out. The call runs no Lua, but the debug hook's call event still fires on entering it, and
+  a limit that trips there comes back through the protected call as an ordinary Lua error. What it
+  builds is bounded by the function's own source, which the memory cap already charged for.
 - Nothing is said about types or optional parameters, because Lua has neither. A function
   `f(a, b)` whose `b` may be left off prints both names.
+- It is a value's parameters that are shown. A function used as a table key prints as `tostring`
+  does, and so does every function in a runtime built without the `string` or `table` library,
+  whose `print` is the fallback that only prints scalars and addresses.
 - A function is printed this way only if its string form is the plain one, the same test a table
   gets, so a function that has a string form of its own keeps it.
+- Names are shown as the function has them. A binary chunk, which only trusted mode can load,
+  could carry names that distort the layout of the line; the chunk is already trusted with far
+  more than that.
 - A function whose debug information was stripped (`string.dump(f, true)`, loadable only where a
   binary chunk is) has no names, and each is shown as `?`.

@@ -6,7 +6,8 @@
 --
 -- Loaded once as a chunk when a runtime is built. It receives `write`, which appends a string to
 -- the runtime's write sink, and `parameters`, which says what parameters a function written in Lua
--- takes (`"a, b, ..."`) and returns nil for one written in Rust. It returns the `print` function.
+-- takes (`"a, b, ..."`) and returns nil for one that is not written in Lua. It returns the `print`
+-- function.
 -- Nothing here is a global, so a script can replace `print` but cannot reach the sink except
 -- through it.
 
@@ -52,15 +53,18 @@ end
 -- the address, and it runs `__tostring` once, so the caller uses the text rather than asking again.
 --
 -- That is what stock `print` shows, except that a function is followed by its parameters, so
--- `function: 0x55d0(a, b, ...)`. A function written in Rust has no parameters to show, and is
--- left as `function: 0x55d0` rather than claim it takes none.
+-- `function: 0x55d0(a, b, ...)`. A function not written in Lua, such as `string.format`, has no
+-- parameters to show, and is left as `function: 0x55d0` rather than claim it takes none.
+--
+-- The same goes for the runtime built without `string` or `table`, below: it prints every function
+-- as `tostring` does.
 local function line_text(value)
   local text = tostring(value)
   local kind = type(value)
-  if kind == "table" and text == "table: " .. format("%p", value) then
-    return nil
-  end
-  if kind == "function" and text == "function: " .. format("%p", value) then
+  if (kind == "table" or kind == "function") and text == kind .. ": " .. format("%p", value) then
+    if kind == "table" then
+      return nil
+    end
     local names = parameters(value)
     if names then
       return text .. "(" .. names .. ")"

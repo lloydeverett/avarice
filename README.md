@@ -265,10 +265,10 @@ print(string.format)                 --> function: 0x5581c09b2c10
 ```
 
 Only names are shown: Lua has no parameter types, and cannot say that one is optional. A function
-written in Rust, which is every method on a Rust userdata such as a compiled regex, has no
-parameter information at all and prints as `tostring` does, without brackets, rather than claim it
-takes none. A function whose debug information was stripped shows `?` for each name. `tostring` is
-unchanged.
+written in Rust or C, which is Lua's own library functions and every method on a Rust userdata
+such as a compiled regex, has no parameter information at all and prints as `tostring` does,
+without brackets, rather than claim it takes none. A function whose debug information was
+stripped shows `?` for each name. `tostring` is unchanged.
 
 It is written in Lua, so its limits are a Lua program's: a table nested too deeply to print is a
 catchable error, bounded by the memory cap, and does not abort the process. The reasons are in
