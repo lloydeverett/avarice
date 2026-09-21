@@ -256,6 +256,20 @@ prints as indented Lua-like text with its keys in a fixed order, a table that co
 marked `<cycle: ...>` rather than followed, and a table with a `__tostring` metamethod prints
 through it, as it does under stock `print`.
 
+A function prints its parameters after its address, at the top level and inside a table:
+
+```lua
+print(require("validation").regex)   --> function: 0x5581c0a4e6f0(expression)
+print(function(a, b, ...) end)       --> function: 0x5581c0a4f120(a, b, ...)
+print(string.format)                 --> function: 0x5581c09b2c10
+```
+
+Only names are shown: Lua has no parameter types, and cannot say that one is optional. A function
+written in Rust, which is every method on a Rust userdata such as a compiled regex, has no
+parameter information at all and prints as `tostring` does, without brackets, rather than claim it
+takes none. A function whose debug information was stripped shows `?` for each name. `tostring` is
+unchanged.
+
 It is written in Lua, so its limits are a Lua program's: a table nested too deeply to print is a
 catchable error, bounded by the memory cap, and does not abort the process. The reasons are in
 [ADR 0005](docs/adr/0005-print-implemented-in-lua.md).

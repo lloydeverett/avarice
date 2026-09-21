@@ -93,6 +93,130 @@ fn functions_and_other_non_tables_print_as_tostring_does() {
     assert!(parts.next().unwrap().starts_with("thread: "), "{text}");
 }
 
+// -- Functions ---------------------------------------------------------------------------------
+
+/// What follows the address in a printed function: `(a, b)` for a Lua function, `` for one
+/// written in Rust. Fails if `text` is not one function followed by a newline.
+fn after_address(text: &str) -> &str {
+    let rest = text
+        .strip_suffix('\n')
+        .and_then(|line| line.strip_prefix("function: 0x"))
+        .unwrap_or_else(|| panic!("not a function line: {text:?}"));
+    let digits = rest.chars().take_while(char::is_ascii_hexdigit).count();
+    assert!(digits > 0, "no address in {text:?}");
+    &rest[digits..]
+}
+
+#[test]
+fn a_lua_function_prints_its_parameters_after_its_address() {
+    for profile in BOTH {
+        let signature = |source: &str| printed(profile, source);
+        assert_eq!(
+            after_address(&signature("print(function(a, b) end)")),
+            "(a, b)"
+        );
+        assert_eq!(after_address(&signature("print(function() end)")), "()");
+        assert_eq!(
+            after_address(&signature("print(function(...) end)")),
+            "(...)"
+        );
+        assert_eq!(
+            after_address(&signature("print(function(a, b, ...) end)")),
+            "(a, b, ...)"
+        );
+    }
+}
+
+#[test]
+fn a_method_shows_its_self() {
+    let text = printed(
+        Profile::Sandbox,
+        "local o = {} function o:area(scale) end print(o.area)",
+    );
+    assert_eq!(after_address(&text), "(self, scale)");
+}
+
+#[test]
+fn a_function_written_in_rust_prints_as_tostring_does() {
+    // Nothing is known about its parameters, and `()` would claim it takes none.
+    let text = printed(Profile::Sandbox, "print(string.format)");
+    assert_eq!(after_address(&text), "");
+}
+
+#[test]
+fn a_function_inside_a_table_prints_its_parameters_too() {
+    let text = printed(
+        Profile::Sandbox,
+        "print({ add = function(a, b) end, format = string.format })",
+    );
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    let field = |line: &str, name: &str| {
+        let value = line
+            .trim()
+            .strip_prefix(&format!("{name} = "))
+            .and_then(|value| value.strip_suffix(','))
+            .unwrap_or_else(|| panic!("not a `{name}` field: {line:?}"));
+        after_address(&format!("{value}\n")).to_owned()
+    };
+    assert_eq!(field(lines[1], "add"), "(a, b)");
+    assert_eq!(field(lines[2], "format"), "");
+}
+
+#[test]
+fn tostring_is_not_changed() {
+    // Only `print` shows parameters, so a script that parses or compares `tostring(f)` is
+    // unaffected.
+    let text = printed(
+        Profile::Sandbox,
+        "local f = function(a) end print(tostring(f) == string.format('function: %p', f))",
+    );
+    assert_eq!(text, "true\n");
+}
+
+#[test]
+fn a_function_with_no_parameter_names_shows_question_marks() {
+    // Stripped debug information is the only way names go missing, and only trusted mode can load
+    // a binary chunk to have it happen.
+    let text = printed(
+        Profile::Trusted,
+        r#"
+        local stripped = load(string.dump(function(a, b, ...) end, true), "=stripped", "b")
+        print(stripped)
+        "#,
+    );
+    assert_eq!(after_address(&text), "(?, ?, ...)");
+}
+
+#[test]
+fn a_stdlib_function_prints_the_names_its_lua_layer_gave_it() {
+    let text = printed(Profile::Trusted, r#"print(require("validation").regex)"#);
+    assert_eq!(after_address(&text), "(expression)");
+}
+
+#[test]
+fn printing_a_function_works_from_inside_a_coroutine() {
+    // The parameters are read off the Lua state `print` is running on, which in a coroutine is
+    // not the main one.
+    let text = printed(
+        Profile::Sandbox,
+        "coroutine.wrap(function() print(function(inside) end) end)()",
+    );
+    assert_eq!(after_address(&text), "(inside)");
+}
+
+#[test]
+fn a_function_in_a_self_containing_table_leaves_the_cycle_mark_alone() {
+    // Functions are leaves, so they cannot be what makes a table cyclic, and printing one must
+    // not disturb the cycle mark of the table around it.
+    let text = printed(
+        Profile::Sandbox,
+        "local t = { f = function(x) end } t.self = t print(t)",
+    );
+    assert!(text.contains("<cycle: table: 0x"), "{text}");
+    assert!(text.contains("(x),"), "{text}");
+}
+
 // -- Tables ------------------------------------------------------------------------------------
 
 #[test]

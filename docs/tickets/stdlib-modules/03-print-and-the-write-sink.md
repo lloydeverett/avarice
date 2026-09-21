@@ -24,3 +24,4 @@ inside the sandbox's memory cap.
 - [x] The sink is flushed per `print` call, so output interleaves correctly with anything else writing to the same stream.
 - [x] **The ADR 0005 case:** a 30 000-deep nested table, built under the sandbox's default memory cap, is printed and produces a catchable Lua error with the process still alive. This test is the entire reason `print` is written in Lua rather than Rust; it must not be quietly deleted when it gets slow.
 - [x] Redirecting the sink to a buffer and reading it back is how the other `print` tests assert, in-process, with no subprocess and no stdout capture.
+- [x] Added afterwards: a function prints its parameters after its address (see the second amendment to ADR 0005). Lua functions only; a function written in Rust prints as `tostring` does.

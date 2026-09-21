@@ -73,10 +73,10 @@ The default sink flushes C stdio before it writes. This is the interleaving haza
 above names, and the write sink alone does not remove it: Rust's `stdout` and `io.write`'s C
 buffer are different buffers, so on a pipe `io.write("a") print("b")` came out as `b` then `a`.
 Calling `fflush(NULL)` first puts what `io.write` has written ahead of what `print` is about to.
-It is the core's only `unsafe`, and the reason is that there is nothing safe that reaches C's
-buffer. A test in `tests/cli.rs` fails without it. The cost is that `fflush(NULL)` flushes every
-open C stream, so a file a trusted script has open through `io.open` has its buffer written out
-early too; it is done once per `print` call.
+It was the core's only `unsafe` until the amendment below; the reason is that there is nothing
+safe that reaches C's buffer. A test in `tests/cli.rs` fails without it. The cost is that
+`fflush(NULL)` flushes every open C stream, so a file a trusted script has open through `io.open`
+has its buffer written out early too; it is done once per `print` call.
 
 Choices the decision left open:
 
@@ -97,3 +97,27 @@ Choices the decision left open:
 - A sink that fails makes `print` raise a Lua error. Stock `print` ignores write errors, but it
   also dies of SIGPIPE, which Rust does not; an error is the nearest thing to that which a script
   can see.
+
+## Amendment, 2026-09-21: a function prints its parameters
+
+`print` shows a function's parameters after its address — `function: 0x55d0(a, b, ...)` — at the
+top level and inside a table, so that printing a module lists what each of its functions takes.
+`tostring` is unchanged.
+
+- Only Lua functions have anything to show. `Function::info` gives the count and whether the
+  function is variadic, and the names come from `lua_getlocal` with no activation record, which
+  reads a function's parameter names and needs no `debug` library. That is the core's second
+  `unsafe`, in `src/print.rs`, called through `Lua::exec_raw`, which takes mlua's lock and protects
+  the call: `mlua` has no safe way to ask for the names. A function written in Rust has no
+  parameters to report, so it prints as `tostring` does rather than as `()`, which would claim it
+  takes none. That includes every method on a Rust userdata, such as a compiled regex's.
+- The names are Rust's to produce and Lua's to place. `print.lua` is handed a second function,
+  `parameters`, and stays the only thing that decides how anything is laid out. The call does no
+  Lua, so the debug hook has nothing to interrupt in it; what it builds is bounded by the function's
+  own source, which the memory cap already charged for.
+- Nothing is said about types or optional parameters, because Lua has neither. A function
+  `f(a, b)` whose `b` may be left off prints both names.
+- A function is printed this way only if its string form is the plain one, the same test a table
+  gets, so a function that has a string form of its own keeps it.
+- A function whose debug information was stripped (`string.dump(f, true)`, loadable only where a
+  binary chunk is) has no names, and each is shown as `?`.

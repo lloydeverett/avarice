@@ -1,13 +1,16 @@
 //! `print`, and the write sink it writes to.
 //!
-//! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is the one
-//! function it is given, which appends bytes to the runtime's write sink.
+//! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is the two
+//! functions it is given: one appends bytes to the runtime's write sink, and the other says what
+//! parameters a function takes, which Lua can only be asked through its C API.
 
+use std::ffi::{c_int, CStr};
 use std::io::{self, Write};
+use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use mlua::chunk::ChunkMode;
-use mlua::{Function, Lua, LuaString};
+use mlua::{ffi, Function, Lua, LuaString};
 
 use crate::lock::lock;
 
@@ -60,6 +63,41 @@ fn flush_c_stdio() {
     }
 }
 
+/// The parameters of a function written in Lua, spelled as its definition spells them: `a, b, ...`.
+/// `None` for a function written in Rust, whose parameters nothing knows.
+///
+/// A parameter has no name to give if the function's debug information was stripped, and is
+/// written `?` then. Lua has no types to report, and cannot say that a parameter is optional.
+fn parameters(lua: &Lua, function: &Function) -> mlua::Result<Option<String>> {
+    let info = function.info();
+    if info.what == "C" {
+        return Ok(None);
+    }
+    let mut names = Vec::with_capacity(usize::from(info.num_params) + 1);
+    // SAFETY: the closure runs in a protected call with `function` as the one value on the stack,
+    // and leaves the stack as it found it, which is what `exec_raw` requires. `lua_getlocal` with
+    // no activation record and a function on top reads that function's parameter names: it pushes
+    // nothing, cannot raise an error, and returns either null or a string that lives as long as
+    // the function does, so it is copied before the function is popped.
+    unsafe {
+        lua.exec_raw::<()>(function.clone(), |state| {
+            for n in 1..=c_int::from(info.num_params) {
+                let name = ffi::lua_getlocal(state, ptr::null(), n);
+                names.push(if name.is_null() {
+                    "?".into()
+                } else {
+                    CStr::from_ptr(name).to_string_lossy().into_owned()
+                });
+            }
+            ffi::lua_pop(state, 1);
+        })?;
+    }
+    if info.is_vararg {
+        names.push("...".into());
+    }
+    Ok(Some(names.join(", ")))
+}
+
 /// Replaces `print` with the one that writes to `sink`.
 ///
 /// Runs before the runtime's limits are installed, like the rest of setup.
@@ -70,10 +108,11 @@ pub(crate) fn install(lua: &Lua, sink: Sink) -> mlua::Result<()> {
             .and_then(|()| sink.flush())
             .map_err(|e| mlua::Error::runtime(format!("could not write output: {e}")))
     })?;
+    let parameters = lua.create_function(|lua, function: Function| parameters(lua, &function))?;
     let print: Function = lua
         .load(PRINT)
         .set_name("=[avarice-rt print]")
         .set_mode(ChunkMode::Text)
-        .call(write)?;
+        .call((write, parameters))?;
     lua.globals().raw_set("print", print)
 }

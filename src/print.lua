@@ -1,14 +1,16 @@
--- The runtime's `print`, written in Lua over one Rust function (ADR 0005).
+-- The runtime's `print`, written in Lua over two Rust functions (ADR 0005).
 --
 -- It is Lua so that its limits are the ones a Lua program already has: recursion into a nested
 -- table is Lua recursion, which raises a catchable stack overflow rather than aborting the
 -- process, and every string built here is charged to the memory cap.
 --
 -- Loaded once as a chunk when a runtime is built. It receives `write`, which appends a string to
--- the runtime's write sink, and returns the `print` function. Nothing here is a global, so a
--- script can replace `print` but cannot reach the sink except through it.
+-- the runtime's write sink, and `parameters`, which says what parameters a function written in Lua
+-- takes (`"a, b, ..."`) and returns nil for one written in Rust. It returns the `print` function.
+-- Nothing here is a global, so a script can replace `print` but cannot reach the sink except
+-- through it.
 
-local write = ...
+local write, parameters = ...
 
 -- Kept in locals so that a script redefining a global later does not change how `print` works,
 -- which is also true of stock `print`.
@@ -43,15 +45,26 @@ repeat return then true until while]]):gmatch("%a+") do
   KEYWORDS[word] = true
 end
 
--- What stock `print` would show for `value`, or nil if it is a table that has no string form of
+-- What `print` shows for `value` on one line, or nil if it is a table that has no string form of
 -- its own, which is the case this file exists to print better. A table has one if its metatable
 -- has `__tostring` or `__name`, and asking `tostring` is the only way to find out that respects a
 -- protected metatable, which `getmetatable` would hide. The check is that the answer is not just
 -- the address, and it runs `__tostring` once, so the caller uses the text rather than asking again.
-local function stock_text(value)
+--
+-- That is what stock `print` shows, except that a function is followed by its parameters, so
+-- `function: 0x55d0(a, b, ...)`. A function written in Rust has no parameters to show, and is
+-- left as `function: 0x55d0` rather than claim it takes none.
+local function line_text(value)
   local text = tostring(value)
-  if type(value) == "table" and text == "table: " .. format("%p", value) then
+  local kind = type(value)
+  if kind == "table" and text == "table: " .. format("%p", value) then
     return nil
+  end
+  if kind == "function" and text == "function: " .. format("%p", value) then
+    local names = parameters(value)
+    if names then
+      return text .. "(" .. names .. ")"
+    end
   end
   return text
 end
@@ -99,7 +112,7 @@ local function render(value, depth, ancestors, out)
     out[#out + 1] = quote(value)
     return
   end
-  local text = stock_text(value)
+  local text = line_text(value)
   if text then
     out[#out + 1] = text
     return
@@ -152,7 +165,7 @@ return function(...)
   local parts = {}
   for i = 1, n do
     local value = (select(i, ...))
-    local text = stock_text(value)
+    local text = line_text(value)
     if text then
       parts[i] = text
     else
