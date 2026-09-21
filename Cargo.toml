@@ -27,8 +27,9 @@ required-features = ["cli"]
 default = ["cli", "stdlib"]
 # The `avrt` command-line program. Embedders should depend on avarice-rt with
 # `default-features = false` to avoid pulling in clap and reedline. `tokio/signal` is what
-# catches Ctrl-C.
-cli = ["dep:clap", "dep:reedline", "tokio/signal"]
+# catches Ctrl-C, and `anstream` is what strips escape codes from `avrt`'s output when it is not a
+# colour terminal (ADR 0009).
+cli = ["dep:anstream", "dep:clap", "dep:reedline", "tokio/signal"]
 
 # The stdlib modules, one feature each, forwarded to the stdlib crate under the same name (ADR
 # 0007). A feature decides whether a module is compiled in; which a runtime registers is the
@@ -68,5 +69,6 @@ tokio = { version = "1.52.3", features = ["rt", "sync", "time"] }
 # arrives through it, in every build, which the core's `Send + Sync` loader bound relies on.
 avarice-rt-stdlib = { path = "crates/avarice-rt-stdlib", default-features = false }
 thiserror = "2.0"
+anstream = { version = "1", optional = true }
 clap = { version = "4.6", features = ["derive"], optional = true }
 reedline = { version = "0.51", optional = true }

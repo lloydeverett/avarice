@@ -99,6 +99,7 @@ pub use crate::limits::{CancelHandle, Execution, DEFAULT_CHECK_INTERVAL};
 pub use crate::module::{
     FsStore, ModuleName, ModuleSource, ModuleStore, MAX_NAME_LEN, MAX_NAME_SEGMENTS,
 };
+pub use crate::print::flush_c_stdio;
 pub use crate::profile::{Profile, DEFAULT_SANDBOX_MEMORY_LIMIT};
 pub use crate::runtime::{Runtime, RuntimeBuilder};
 pub use avarice_rt_stdlib::{StdModule, StdModules};

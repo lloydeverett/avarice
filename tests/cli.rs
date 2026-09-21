@@ -498,3 +498,133 @@ mod interrupt {
         assert!(stderr.contains("aborting 2 running tasks\n"), "{stderr}");
     }
 }
+
+/// What `avrt` does with escape codes when its output is not a colour terminal.
+///
+/// Every run here has a pipe for stdout and stderr, so it is not a terminal, and the colour
+/// variables are cleared first so that whatever the person running the tests has set does not
+/// decide the result.
+mod colour {
+    use super::*;
+
+    const RED: &str = "\x1b[31m";
+    const RESET: &str = "\x1b[0m";
+
+    fn avrt_with(colour_env: &[(&str, &str)], args: &[&str]) -> Output {
+        let mut command = Command::new(AVRT);
+        command.args(args).stdin(Stdio::null());
+        for var in ["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"] {
+            command.env_remove(var);
+        }
+        command.envs(colour_env.iter().copied());
+        command.output().expect("avrt should run")
+    }
+
+    #[test]
+    fn print_drops_escape_codes_when_output_is_not_a_terminal() {
+        let output = avrt_with(&[], &["-e", r#"print("\27[31mred\27[0m")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), "red\n");
+    }
+
+    #[test]
+    fn print_keeps_escape_codes_when_colour_is_forced() {
+        let output = avrt_with(
+            &[("CLICOLOR_FORCE", "1")],
+            &["-e", r#"print("\27[31mred\27[0m")"#],
+        );
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), format!("{RED}red{RESET}\n"));
+    }
+
+    #[test]
+    fn the_ansi_module_is_filtered_like_any_other_text() {
+        let output = avrt_with(
+            &[],
+            &[
+                "-e",
+                r#"local ansi = require("ansi") print(ansi.bold .. ansi.fg.red .. "x" .. ansi.reset)"#,
+            ],
+        );
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), "x\n");
+    }
+
+    #[test]
+    fn io_write_is_left_raw() {
+        // `io` is C stdio and does not go through the write sink, so it is the way to send bytes
+        // exactly as they are.
+        let output = avrt_with(&[], &["-e", r#"io.write("\27[31mred\27[0m\n")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), format!("{RED}red{RESET}\n"));
+    }
+
+    #[test]
+    fn print_and_io_write_stay_in_order_through_the_filter() {
+        let output = avrt_with(
+            &[],
+            &[
+                "-e",
+                r#"io.write("a") print("\27[1mb") io.write("c") print("d")"#,
+            ],
+        );
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), "ab\ncd\n");
+    }
+
+    #[test]
+    fn print_is_text_so_control_bytes_are_dropped_when_colour_is_off() {
+        // ADR 0009: `print` is a text function. A NUL is not text, so the filter drops it;
+        // `io.write` is how a program writes bytes it means to be taken literally.
+        let output = avrt_with(&[], &["-e", r#"print("a\0b")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(output.stdout, b"ab\n");
+
+        let output = avrt_with(&[], &["-e", r#"io.write("a\0b\n")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(output.stdout, b"a\0b\n");
+    }
+
+    #[test]
+    fn print_passes_control_bytes_through_when_colour_is_forced() {
+        let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print("a\0b")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(output.stdout, b"a\0b\n");
+    }
+
+    #[test]
+    fn an_error_report_drops_escape_codes_when_stderr_is_not_a_terminal() {
+        let output = avrt_with(&[], &["-e", r#"error("\27[31mboom\27[0m", 0)"#]);
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = stderr_of(&output);
+        assert!(stderr.contains("avrt: boom"), "{stderr}");
+        assert!(!stderr.contains('\x1b'), "{stderr:?}");
+    }
+
+    #[test]
+    fn an_error_report_keeps_escape_codes_when_colour_is_forced() {
+        let output = avrt_with(
+            &[("CLICOLOR_FORCE", "1")],
+            &["-e", r#"error("\27[31mboom\27[0m", 0)"#],
+        );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr_of(&output).contains(&format!("{RED}boom{RESET}")));
+    }
+
+    #[test]
+    fn no_color_wins_over_forcing_colour_on() {
+        let output = avrt_with(
+            &[("NO_COLOR", "1"), ("CLICOLOR_FORCE", "1")],
+            &["-e", r#"print("\27[31mred\27[0m")"#],
+        );
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), "red\n");
+    }
+
+    #[test]
+    fn io_stderr_is_left_raw_too() {
+        let output = avrt_with(&[], &["-e", r#"io.stderr:write("\27[31mred\27[0m\n")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stderr_of(&output), format!("{RED}red{RESET}\n"));
+    }
+}

@@ -51,7 +51,14 @@ impl Write for Stdout {
     }
 }
 
-fn flush_c_stdio() {
+/// Flushes the buffers of C stdio, which is where Lua's `io.write` puts its output.
+///
+/// A write sink that ends up at the process's standard output should call this before it writes,
+/// so that what `io.write` has written comes out ahead of what is about to be: Rust's `stdout`
+/// does not share C's buffer, and on a pipe the two would otherwise come out in the wrong order.
+/// The default sink does. An embedder that replaces it with something that wraps `stdout` needs
+/// to do the same for `print` and `io.write` to interleave.
+pub fn flush_c_stdio() {
     unsafe extern "C" {
         fn fflush(stream: *mut std::ffi::c_void) -> std::ffi::c_int;
     }

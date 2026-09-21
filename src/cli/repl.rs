@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
+use anstream::{eprintln, println};
 use avarice_rt::mlua::{self, Function, MultiValue};
 use avarice_rt::{Error, Runtime};
 use reedline::{

@@ -1,6 +1,7 @@
 //! `avrt`: the command-line interpreter.
 
 mod interrupt;
+mod output;
 mod repl;
 
 use std::future::Future;
@@ -8,6 +9,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anstream::{eprintln, println};
 use avarice_rt::mlua::{Table, Variadic};
 use avarice_rt::{was_cancelled, CancelHandle, Error, FsStore, Profile, Runtime};
 use clap::Parser;
@@ -127,7 +129,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
     // Always cancellable, because Ctrl-C has to be able to stop whatever is running. That installs
     // the limit hook, so every run pays a little throughput for it.
     let cancel = CancelHandle::new();
-    let mut builder = Runtime::builder(profile).cancel_handle(cancel.clone());
+    let mut builder = Runtime::builder(profile)
+        .cancel_handle(cancel.clone())
+        .write_sink(output::Stdout::auto());
     if let Some(seconds) = cli.timeout {
         if !(seconds.is_finite() && seconds > 0.0) {
             eprintln!("avrt: --timeout must be a positive number of seconds");
@@ -305,7 +309,7 @@ fn print_version() {
 /// appends the traceback to the error message itself, so it is already part of what is printed
 /// here.
 fn report(err: &CliError) {
-    let mut stderr = std::io::stderr().lock();
+    let mut stderr = anstream::stderr().lock();
     let _ = writeln!(stderr, "avrt: {}", message_of(err));
 }
 

@@ -130,7 +130,7 @@ terminal until Ctrl-C, which makes an interval, in the REPL, a foreground comman
 avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false }
 ```
 
-`default-features = false` drops clap and reedline, which only the `avrt` binary needs, and it
+`default-features = false` drops clap, reedline and anstream, which only the `avrt` binary needs, and it
 drops the stdlib modules too: they are all compiled in by default, and `default-features = false`
 leaves you the ones you name. See [Choosing stdlib modules](#choosing-stdlib-modules).
 
@@ -200,6 +200,11 @@ govern it like any Lua a program writes, and a sandbox registers it. `ansi` is a
 escape codes (`ansi.bold .. ansi.fg.red .. "error" .. ansi.reset`) and a few colour functions
 (`ansi.fg.rgb(255, 128, 0)`, `ansi.bg.hex("#003366")`, `ansi.fg.color256(202)`). It does not check
 whether the output is a terminal or whether `NO_COLOR` is set; that is for the program to decide.
+`avrt` decides by stripping the escape codes from what `print` writes, and from its own messages,
+unless the output is a colour terminal (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `TERM=dumb`
+are honoured). `io.write` is left alone, so it is the way to write bytes exactly as they are:
+`print` is a text function, and control bytes such as NUL do not survive it when colour is off
+([ADR 0009](docs/adr/0009-avrt-filters-escapes-on-non-terminals.md)). An embedder's write sink gets `print`'s output as it stands.
 
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
 `with_std_modules`. This is a choice made for each runtime, at run time; the next section is the
@@ -391,7 +396,7 @@ compiler is needed but a system Lua is not.
 ```console
 $ cargo build --release      # the avrt binary and the library
 $ cargo test                 # unit and integration tests
-$ cargo build --no-default-features   # library only, no clap or reedline, and no stdlib modules
+$ cargo build --no-default-features   # library only, no clap, reedline or anstream, and no stdlib modules
 $ scripts/check-features.sh           # tests with no modules, all of them, and each on its own
 ```
 
