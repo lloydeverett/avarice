@@ -584,6 +584,7 @@ impl RuntimeBuilder {
         restrict_base_library(&lua, self.binary_chunks)?;
         let sink = self.sink.unwrap_or_else(print::default_sink);
         print::install(&lua, Arc::clone(&sink))?;
+        install_stdlib_list(&lua, self.std_modules)?;
 
         // Last, so that none of our own setup can trip the limits we install.
         if let Some(bytes) = self.memory_limit {
@@ -685,6 +686,21 @@ fn install_require(lua: &Lua, modules: Arc<Modules>, binary_chunks: bool) -> Res
     })?;
 
     lua.globals().raw_set("require", require)?;
+    Ok(())
+}
+
+/// Installs `stdlib`, which lists the stdlib modules this runtime registered, by the names
+/// `require` takes them under.
+///
+/// The list is fixed here, when the runtime is built, and says what *this* runtime has: none in
+/// the sandbox profile, and no more than an embedder left in. It answers from the selection rather
+/// than from what has been required, so asking builds nothing. Each call returns a table of its
+/// own, so a script that edits the one it was given does not change the next answer.
+fn install_stdlib_list(lua: &Lua, modules: StdModules) -> Result<()> {
+    let names: Vec<&'static str> = modules.modules().map(|module| module.name()).collect();
+    let stdlib =
+        lua.create_function(move |lua, ()| lua.create_sequence_from(names.iter().copied()))?;
+    lua.globals().raw_set("stdlib", stdlib)?;
     Ok(())
 }
 

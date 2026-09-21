@@ -399,3 +399,66 @@ fn uuid_and_env_get_work() {
         .unwrap();
     assert!(ok);
 }
+
+// -- `stdlib()` --------------------------------------------------------------------------------
+
+/// What `stdlib()` returns in `rt`.
+fn listed(rt: &Runtime) -> Vec<String> {
+    rt.block_on(rt.eval("return stdlib()", "=test")).unwrap()
+}
+
+#[test]
+fn stdlib_lists_the_names_require_takes() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    assert_eq!(listed(&rt), NAMES);
+}
+
+#[test]
+fn stdlib_lists_what_this_runtime_has_and_nothing_else() {
+    assert!(listed(&Runtime::new(Profile::Sandbox).unwrap()).is_empty());
+
+    let rt = Runtime::builder(Profile::Trusted)
+        .without_std_modules(StdModules::HTTP)
+        .build()
+        .unwrap();
+    let expected: Vec<_> = NAMES.into_iter().filter(|name| *name != "http").collect();
+    assert_eq!(listed(&rt), expected);
+
+    let rt = Runtime::builder(Profile::Sandbox)
+        .with_std_modules(StdModules::FS | StdModules::VALIDATION)
+        .build()
+        .unwrap();
+    assert_eq!(listed(&rt), ["fs", "validation"]);
+}
+
+#[test]
+fn every_name_stdlib_lists_can_be_required() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    for name in listed(&rt) {
+        assert!(requirable(&rt, &name), "{name}");
+    }
+}
+
+#[test]
+fn stdlib_does_not_build_any_module() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let untouched: bool = rt
+        .block_on(rt.eval(
+            "stdlib() return astra_internal__hash == nil and package == nil",
+            "=test",
+        ))
+        .unwrap();
+    assert!(untouched);
+}
+
+#[test]
+fn stdlib_hands_out_a_fresh_list_each_call() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let independent: bool = rt
+        .block_on(rt.eval(
+            "local a = stdlib() a[1] = 'changed' table.remove(a) return stdlib()[1] == 'http' and #stdlib() == 8",
+            "=test",
+        ))
+        .unwrap();
+    assert!(independent);
+}

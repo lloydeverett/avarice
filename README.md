@@ -182,6 +182,15 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 Apache-2.0 crate,
 [`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They are registered as lazy host
 modules, so `require("crypto")` builds `crypto` and a program that never asks for it costs nothing.
+A program can ask which it has: `stdlib()` returns a list of the names to pass to `require`, in a
+fixed order. It says what this runtime registered, so it is empty in a sandbox and short one
+module when an embedder took one out, and it builds nothing.
+
+```lua
+print(#stdlib())        --> 8, in trusted mode
+print(stdlib()[1])      --> http
+```
+
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
 `with_std_modules`:
 
