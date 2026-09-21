@@ -4,13 +4,13 @@
 //! the same deal an embedder does. The one test that needs a second tokio runtime builds it by
 //! hand, because building it is the point.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "stdlib-utils")]
-use avarice_rt::{was_timed_out, Error};
+use avarice_rt::{Error, was_timed_out};
 use avarice_rt::{Profile, Runtime};
 
 fn trusted() -> Runtime {
@@ -117,7 +117,7 @@ fn a_task_spawned_during_the_call_runs_during_the_call() {
 #[test]
 fn a_task_is_not_driven_between_calls() {
     // The executor is only running while `block_on` is. This is what a REPL that drains tasks
-    // between prompts has to work around, and what ticket 11 builds on.
+    // between prompts has to work around.
     let rt = trusted();
     rt.block_on(rt.exec(
         r#"

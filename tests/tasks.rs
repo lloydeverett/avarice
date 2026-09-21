@@ -6,12 +6,12 @@
 
 #![cfg(feature = "stdlib-utils")]
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use avarice_rt::{was_cancelled, was_timed_out, CancelHandle, Error, Profile, Runtime, StdModules};
+use avarice_rt::{CancelHandle, Error, Profile, Runtime, StdModules, was_cancelled, was_timed_out};
 
 fn trusted() -> Runtime {
     Runtime::new(Profile::Trusted).unwrap()

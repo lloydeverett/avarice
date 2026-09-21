@@ -5,13 +5,13 @@
 //! parameters a function takes, which Lua can only be asked through its C API. It is also given
 //! the `ansi` table it highlights with (ADR 0011).
 
-use std::ffi::{c_int, CStr};
+use std::ffi::{CStr, c_int};
 use std::io::{self, Write};
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use mlua::chunk::ChunkMode;
-use mlua::{ffi, Function, Lua, LuaString};
+use mlua::{Function, Lua, LuaString, ffi};
 
 use crate::ansi;
 use crate::lock::lock;

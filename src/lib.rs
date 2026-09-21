@@ -98,19 +98,26 @@ mod module;
 mod print;
 mod profile;
 mod runtime;
+mod stdlib;
+
+// Astra's `http` files name their neighbours as `crate::components`, and they are kept exactly as
+// Astra wrote them (ADR 0006), so the name has to resolve from the root. Nothing else uses it;
+// the stdlib is otherwise reached only through `StdModule`, `StdModules` and `stdlib::loader`.
+#[cfg(feature = "stdlib-http")]
+use crate::stdlib::components;
 
 pub use crate::error::{
-    was_cancelled, was_out_of_memory, was_timed_out, Cancelled, Error, InvalidModuleName, Result,
-    StoreError, TimedOut,
+    Cancelled, Error, InvalidModuleName, Result, StoreError, TimedOut, was_cancelled,
+    was_out_of_memory, was_timed_out,
 };
-pub use crate::limits::{CancelHandle, Execution, DEFAULT_CHECK_INTERVAL};
+pub use crate::limits::{CancelHandle, DEFAULT_CHECK_INTERVAL, Execution};
 pub use crate::module::{
-    FsStore, ModuleName, ModuleSource, ModuleStore, MAX_NAME_LEN, MAX_NAME_SEGMENTS,
+    FsStore, MAX_NAME_LEN, MAX_NAME_SEGMENTS, ModuleName, ModuleSource, ModuleStore,
 };
 pub use crate::print::flush_c_stdio;
-pub use crate::profile::{Profile, DEFAULT_SANDBOX_MEMORY_LIMIT};
+pub use crate::profile::{DEFAULT_SANDBOX_MEMORY_LIMIT, Profile};
 pub use crate::runtime::{Runtime, RuntimeBuilder};
-pub use avarice_rt_stdlib::{StdModule, StdModules};
+pub use crate::stdlib::{StdModule, StdModules};
 
 /// mlua, re-exported.
 ///

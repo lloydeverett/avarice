@@ -1,7 +1,7 @@
 //! What the sandbox profile does and does not hand to Lua.
 
 use avarice_rt::{
-    was_out_of_memory, Profile, Runtime, StdModule, StdModules, DEFAULT_SANDBOX_MEMORY_LIMIT,
+    DEFAULT_SANDBOX_MEMORY_LIMIT, Profile, Runtime, StdModule, StdModules, was_out_of_memory,
 };
 
 fn sandbox() -> Runtime {
@@ -115,9 +115,10 @@ fn refuses_binary_chunks_handed_straight_to_the_runtime() {
     assert_eq!(bytecode[0], 0x1b, "expected a precompiled chunk");
 
     let rt = sandbox();
-    assert!(rt
-        .block_on(rt.eval::<i64>(bytecode.clone(), "=payload"))
-        .is_err());
+    assert!(
+        rt.block_on(rt.eval::<i64>(bytecode.clone(), "=payload"))
+            .is_err()
+    );
     assert!(rt.block_on(rt.exec(bytecode, "=payload")).is_err());
 }
 

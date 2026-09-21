@@ -4,6 +4,10 @@ status: accepted
 
 # Stdlib modules are compile-time optional
 
+> [ADR 0012](0012-the-stdlib-is-a-module-not-a-crate.md) makes the stdlib a directory of
+> `avarice-rt` and not a crate of its own, so the features below are declared once, on `avarice-rt`,
+> and are not forwarded from a stdlib crate. Where the text says otherwise, it wins.
+
 Each **stdlib module** is behind a Cargo feature, so an embedder that wants only `crypto` and
 `serde` does not build reqwest, a TLS stack and the rest for a `http` it will never register. A
 feature decides whether a module is **compiled in**. It does not decide whether a runtime has it:
@@ -109,7 +113,7 @@ ten builds: no modules, all of them, and each module alone. Each module alone is
 dependency put behind the wrong feature. There is no CI, so the script is the check.
 
 **Documentation.** The README's build section, the `Profile` docs and `lib.rs` describe compiled in
-against registered, and the spec's line saying there is no feature flag points here.
+against registered, and the earlier design's line saying there is no feature flag points here.
 
 ## Amendment, 2026-09-21: `ansi` makes nine
 

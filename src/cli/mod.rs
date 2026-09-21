@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use avarice_rt::mlua::{Table, Variadic};
-use avarice_rt::{was_cancelled, CancelHandle, Error, FsStore, Profile, Runtime};
+use avarice_rt::{CancelHandle, Error, FsStore, Profile, Runtime, was_cancelled};
 use clap::Parser;
 use output::{eprintln, println};
 

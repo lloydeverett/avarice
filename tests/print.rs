@@ -11,13 +11,13 @@
 mod common;
 
 use std::io::{self, BufWriter, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use avarice_rt::mlua::StdLib;
-use avarice_rt::{was_timed_out, Error, Profile, Runtime, DEFAULT_SANDBOX_MEMORY_LIMIT};
-use common::{plain, Buffer};
+use avarice_rt::{DEFAULT_SANDBOX_MEMORY_LIMIT, Error, Profile, Runtime, was_timed_out};
+use common::{Buffer, plain};
 
 /// A runtime whose `print` writes to the returned buffer.
 fn printing(profile: Profile) -> (Runtime, Buffer) {

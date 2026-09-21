@@ -333,52 +333,52 @@ impl FromIterator<StdModule> for StdModules {
 /// A module that is not compiled in is an error naming the feature, not a panic: [`loader`] is
 /// public, and hands out a loader for any variant.
 ///
-/// [`loader`]: crate::loader
+/// [`loader`]: super::loader
 fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static str> {
     // `lua` is only used by a module that is compiled in.
     let _ = lua;
     match module {
         #[cfg(feature = "stdlib-http")]
         StdModule::Http => {
-            crate::components::http::client::HTTPClientRequest::register_to_lua(lua)?;
-            Ok(include_str!("../lua/http.lua"))
+            super::components::http::client::HTTPClientRequest::register_to_lua(lua)?;
+            Ok(include_str!("lua/http.lua"))
         }
         #[cfg(feature = "stdlib-fs")]
         StdModule::Fs => {
-            crate::components::file_system::register_to_lua(lua)?;
-            crate::components::file_system::GlobResult::register_to_lua(lua)?;
-            Ok(include_str!("../lua/fs.lua"))
+            super::components::file_system::register_to_lua(lua)?;
+            super::components::file_system::GlobResult::register_to_lua(lua)?;
+            Ok(include_str!("lua/fs.lua"))
         }
         #[cfg(feature = "stdlib-crypto")]
         StdModule::Crypto => {
-            crate::components::crypto::register_to_lua(lua)?;
-            Ok(include_str!("../lua/crypto.lua"))
+            super::components::crypto::register_to_lua(lua)?;
+            Ok(include_str!("lua/crypto.lua"))
         }
         #[cfg(feature = "stdlib-serde")]
         StdModule::Serde => {
-            crate::components::astra_serde::register_to_lua(lua)?;
-            Ok(include_str!("../lua/serde.lua"))
+            super::components::astra_serde::register_to_lua(lua)?;
+            Ok(include_str!("lua/serde.lua"))
         }
         #[cfg(feature = "stdlib-datetime")]
         StdModule::Datetime => {
-            crate::components::datetime::AstraDateTime::register_to_lua(lua)?;
-            Ok(include_str!("../lua/datetime.lua"))
+            super::components::datetime::AstraDateTime::register_to_lua(lua)?;
+            Ok(include_str!("lua/datetime.lua"))
         }
         #[cfg(feature = "stdlib-utils")]
         StdModule::Utils => {
-            crate::components::utils::register_to_lua(lua)?;
-            Ok(include_str!("../lua/utils.lua"))
+            super::components::utils::register_to_lua(lua)?;
+            Ok(include_str!("lua/utils.lua"))
         }
         // Astra's `stores` has no Rust half: it is Lua all the way down, and so it is pure.
         #[cfg(feature = "stdlib-stores")]
-        StdModule::Stores => Ok(include_str!("../lua/stores.lua")),
+        StdModule::Stores => Ok(include_str!("lua/stores.lua")),
         // The regex primitive is set by Astra's `utils` Rust half, alongside the tasks, so
         // `validation` sets it too rather than lean on `utils` having been built first. Setting
         // it twice is harmless.
         #[cfg(feature = "stdlib-validation")]
         StdModule::Validation => {
-            crate::components::utils::AstraRegex::register_to_lua(lua)?;
-            Ok(include_str!("../lua/validation.lua"))
+            super::components::utils::AstraRegex::register_to_lua(lua)?;
+            Ok(include_str!("lua/validation.lua"))
         }
         // Only reached by a module whose feature is off; in a build with every feature on, every
         // variant has an arm above.

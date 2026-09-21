@@ -1,6 +1,6 @@
 //! Cancellation and wall-clock limits, enforced from a global debug hook.
 
-use std::future::{poll_fn, Future};
+use std::future::{Future, poll_fn};
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

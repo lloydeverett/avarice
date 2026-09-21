@@ -3,8 +3,7 @@
 # module, and each module alone. "Each module alone" is the one that finds a dependency put behind
 # the wrong feature, or a module that quietly needs another's Rust.
 #
-# The stdlib crate and the core spell their features the same, so one `--features` list serves
-# both. Extra arguments go to `cargo test`, before `--`, e.g. `scripts/check-features.sh --quiet`.
+# Extra arguments go to `cargo test`, before `--`, e.g. `scripts/check-features.sh --quiet`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,7 +15,7 @@ run() {
     shift
     echo
     echo "==> $label"
-    if ! cargo test --workspace "$@" "${extra[@]}"; then
+    if ! cargo test "$@" "${extra[@]}"; then
         failed+=("$label")
     fi
 }

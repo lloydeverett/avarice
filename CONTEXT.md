@@ -98,7 +98,7 @@ embedder's own module lacks.
 ## Pure module
 
 A **host module** written entirely in Lua, with no Rust code behind it,
-whichever crate it lives in: `stores` and `ansi`. It only computes over the
+wherever it lives: `stores` and `ansi`. It only computes over the
 values it is given, so it reaches nothing outside the Lua state: no network, no
 filesystem, no environment.
 

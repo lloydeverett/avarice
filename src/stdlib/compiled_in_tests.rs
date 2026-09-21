@@ -4,7 +4,7 @@
 //! passes under every combination `scripts/check-features.sh` builds, and means something under
 //! each.
 
-use avarice_rt_stdlib::{StdModule, StdModules, loader};
+use super::{StdModule, StdModules, loader};
 
 /// Each module's name, and whether the feature that compiles it in is on in this build.
 const EXPECTED: [(&str, bool); 8] = [

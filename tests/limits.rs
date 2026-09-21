@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use avarice_rt::{was_cancelled, was_timed_out, CancelHandle, Error, Profile, Runtime};
+use avarice_rt::{CancelHandle, Error, Profile, Runtime, was_cancelled, was_timed_out};
 
 fn lua_error(err: Error) -> avarice_rt::mlua::Error {
     match err {

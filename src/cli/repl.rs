@@ -12,7 +12,7 @@ use reedline::{
 
 use super::escape::takes_colour;
 use super::output::{eprintln, println};
-use super::{run_and_settle_tasks, CliError};
+use super::{CliError, run_and_settle_tasks};
 
 /// How many entries the history file keeps.
 const HISTORY_CAPACITY: usize = 2_000;

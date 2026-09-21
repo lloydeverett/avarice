@@ -7,7 +7,7 @@
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
 
-use super::escape::{takes_colour, Filter};
+use super::escape::{Filter, takes_colour};
 
 /// The write sink `avrt` installs: `print`'s output, through the filter.
 ///

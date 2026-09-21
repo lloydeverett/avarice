@@ -80,7 +80,7 @@ that drives it. `send` changes what must be `Send`, not which thread runs Lua.
 
 ## Amendment, 2026-09-21: no `LocalSet`
 
-The opening paragraph and ticket 01 put a `LocalSet` beside the tokio runtime, so that tasks could
+The opening paragraph put a `LocalSet` beside the tokio runtime, so that tasks could
 be `!Send`. With `send` on that reason is gone: Astra's tasks are `tokio::spawn`ed, Lua futures are
 `Send`, and a plain current-thread runtime drives them all. Keeping a `LocalSet` would make
 `Runtime` `!Send` again — `LocalSet` is not `Send` — and undo the amendment above for no benefit.

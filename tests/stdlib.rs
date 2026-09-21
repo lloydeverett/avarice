@@ -1,7 +1,7 @@
 //! The stdlib modules, reached through `require`, and the selection of which a runtime has.
 //!
 //! Every test drives `require` and calls what comes back. None calls
-//! `avarice_rt_stdlib::loader` directly, because an embedder cannot: a module that works when
+//! `stdlib::loader` directly, because an embedder cannot: a module that works when
 //! called directly but is not reachable through `require` is broken in the only way that matters.
 
 mod common;

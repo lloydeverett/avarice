@@ -36,7 +36,9 @@ The vocabulary used throughout — profile, host module, module store, embedder 
 - [Modules](#modules)
 - [`print`](#print)
 - [Limits](#limits)
+- [The stdlib's source](#the-stdlibs-source)
 - [Building](#building)
+- [Licence](#licence)
 
 ## The `avrt` command
 
@@ -183,7 +185,8 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 
 **Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
 `validation`. They are derived from [Astra](https://github.com/ArkForgeLabs/Astra), and kept in
-their own Apache-2.0 crate, [`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They
+their own directory, [`src/stdlib`](src/stdlib), with a header on each file that says where it came
+from (see [The stdlib's source](#the-stdlibs-source)). They
 are registered as lazy host modules, so `require("crypto")` builds `crypto` and a program that
 never asks for it costs nothing. A program can ask which it has: `stdlib()` returns a list of the
 names to pass to `require`, in a fixed order. It says what this runtime registered, so in a sandbox
@@ -425,6 +428,67 @@ A time limit is per top-level execution, not per runtime, and is armed when the 
 while the chunk awaits. If you drive Lua through `Runtime::lua` directly, prefer `Runtime::run`;
 failing that, hold an `Execution` guard from `Runtime::enter` for the limit to apply.
 
+## The stdlib's source
+
+Most stdlib modules are Astra's, by ArkForge LLC (Apache License 2.0), kept as close to Astra's own
+files as they can be. Everything under `src/stdlib/components/` and `src/stdlib/lua/` is Astra's,
+from version 0.51.2 (commit `885586cca0ef065ac80d6a7c702d05e60fbdbb47`), at the same relative path:
+Astra's `src/components/` is `components/` there, and its `astra/lua/` is `lua/`. `mod.rs` and
+`modules.rs` are avarice-rt's own.
+
+**Every Astra file opens with a header** that names the Astra file, the copyright holder and the
+licence, and has a `Changes from the original:` list. A file that is otherwise unchanged says
+`none` and is byte-for-byte Astra's below its header, so `sed '1,/^$/d' <file>` gives Astra's file
+exactly. A file that differs lists every change: removals of what is not taken, the respelling of
+`mlua::SerializeOptions` for the mlua this crate is on, and a few additions, such as a `__tostring`
+on each userdata so that `print` can show which value one is. Nothing Astra does has been altered
+in how it works, and the header is the only record of what differs, so a file's header changes when
+its contents do and not otherwise ([ADR 0006](docs/adr/0006-stdlib-derived-from-astra.md)). The
+headers say "See LICENSE in this crate's root": that is the `LICENSE` at the root of this
+repository. Astra distributes no `NOTICE` file, so there is none here. Astra's own `LICENSE`
+differs from the canonical text in section 8 and in the appendix; ours is the canonical text, and
+the headers' `Copyright 2024 ArkForge LLC` is the line Astra's appendix carries.
+
+**Not taken:** the HTTP server, templates, the database, Astra's own `require` (`import.rs`), and
+the Lua layers `templates.lua`, `database.lua` and `test.lua`; the WebSocket client, which does not
+satisfy mlua 0.12's `Sync` bound on userdata under the `send` feature; and Astra's `main.rs`,
+`commands/` and `build.rs`.
+
+**How a module is built.** Astra's own shape: a Rust half, `components/<module>.rs`, whose
+`register_to_lua(lua)` sets primitives on the Lua globals as `astra_internal__<name>`, and a Lua
+file, `lua/<module>.lua`, that wraps them into the module table. `stores` has no Rust half at all
+and is **pure**, which is why sandbox mode registers it and why giving it a Rust half would move
+it out of the sandbox (ADR 0007). The Lua source is embedded with `include_str!`; there is no
+build script. One module is loaded differently, in `modules.rs` and not in Astra's file:
+`validation.lua` defines `number`, `struct`, `regex` and a dozen more as *global* functions, which
+would appear in every program's globals as soon as anything required the module, so it runs against
+a table of its own that reads through to the real globals. It also registers the regex primitive
+itself, which Astra's `utils` Rust half would otherwise have to have set first. Modules are
+registered lazily, so nothing runs until a script first requires one; in particular the
+`astra_internal__*` globals do not exist until then. They are an implementation detail, not an
+interface: a script can see them and overwrite them.
+
+**Feature plumbing.** Astra's files are not split, so a module that needs another's Rust takes the
+whole file. Three features that start with an underscore, `_astra_serde`, `_astra_utils` and
+`_astra_buffers`, are not part of the API: they compile that file, and the dependencies it needs,
+without registering the module it belongs to. `http` turns on `_astra_serde` (for
+`sanetize_lua_input`) and `_astra_buffers` (for `AstraBuffer`), `fs` turns on `_astra_buffers`, and
+`validation` turns on `_astra_utils` (for `AstraRegex`). Every gate is an attribute in
+`components/mod.rs`, which is the only Astra file that changed for it, and its header lists them.
+
+**It is self-contained.** Nothing in `src/stdlib` names another module of this crate; it names
+`mlua`, `tokio` and its own optional dependencies. The rest of the crate takes exactly three things
+from it, declared in `src/stdlib/mod.rs`: `StdModule`, `StdModules` and `loader`. There is no crate
+boundary to enforce that, so `tests/stdlib_boundary.rs` does ([ADR 0012](docs/adr/0012-the-stdlib-is-a-module-not-a-crate.md)).
+The one name it lets through is `crate::components`, which Astra's `http` files spell that way and
+are kept exactly as Astra wrote them; `src/lib.rs` has a single `use` behind `stdlib-http` that
+makes it resolve.
+
+**What the rest of the crate has to accept.** Astra runs tasks with `tokio::spawn`, which needs Lua
+to be `Send`, so mlua's `send` feature is on in every build and everything handed to Lua has to be
+`Send` (see [ADR 0004](docs/adr/0004-async-first-on-tokio.md)'s amendment). The package is on
+edition 2024, because Astra's sources use let-chains.
+
 ## Building
 
 Lua is vendored and built from source by `lua-src` (5.4.9 at the time of writing), so a C
@@ -439,4 +503,5 @@ $ scripts/check-features.sh           # tests with no modules, all of them, and 
 
 ## Licence
 
-Not chosen yet.
+Apache License 2.0; see [LICENSE](LICENSE). The whole project is under it, Astra's files and
+avarice-rt's own alike.

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use avarice_rt_stdlib::StdModules;
+use crate::stdlib::StdModules;
 use mlua::StdLib;
 
 /// The memory ceiling [`Profile::Sandbox`] applies unless told otherwise.

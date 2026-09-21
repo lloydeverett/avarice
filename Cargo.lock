@@ -88,28 +88,18 @@ version = "0.1.0"
 dependencies = [
  "anstyle-parse",
  "anstyle-query",
- "avarice-rt-stdlib",
- "clap",
- "mlua",
- "reedline",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "avarice-rt-stdlib"
-version = "0.1.0"
-dependencies = [
  "base64 0.22.1",
  "bitflags",
  "bytes",
  "chrono",
+ "clap",
  "csv",
  "futures",
  "glob",
  "mlua",
  "pastey",
  "quick-xml",
+ "reedline",
  "regex",
  "reqwest",
  "serde-value",
@@ -119,6 +109,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sha3",
+ "thiserror",
  "tokio",
  "toml",
  "tracing",

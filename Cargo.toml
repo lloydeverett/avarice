@@ -1,17 +1,12 @@
-[workspace]
-members = [".", "crates/avarice-rt-stdlib"]
-resolver = "2"
-
-[workspace.dependencies]
-mlua = { version = "0.12.1", features = ["lua54", "vendored"] }
-
 [package]
 name = "avarice-rt"
 version = "0.1.0"
-edition = "2021"
+# 2024, because the stdlib's sources (Astra's) use let-chains.
+edition = "2024"
 rust-version = "1.94"
 description = "An embeddable Lua 5.4 runtime with a sandbox, and the avrt interpreter"
 repository = "https://github.com/lloydeverett/avarice-rt"
+license = "Apache-2.0"
 publish = false
 
 [lib]
@@ -37,10 +32,9 @@ cli = [
   "tokio/signal",
 ]
 
-# The stdlib modules, one feature each, forwarded to the stdlib crate under the same name (ADR
-# 0007). A feature decides whether a module is compiled in; which a runtime registers is the
-# profile's business. An embedder that wants a few of them depends on avarice-rt with
-# `default-features = false` and names those.
+# The stdlib modules, one feature each (ADR 0007). A feature decides whether a module is compiled
+# in; which a runtime registers is the profile's business. An embedder that wants a few of them
+# depends on avarice-rt with `default-features = false` and names those.
 stdlib = [
   "stdlib-http",
   "stdlib-fs",
@@ -52,28 +46,108 @@ stdlib = [
   "stdlib-validation",
 ]
 # `net` is the tokio driver reqwest needs, so it follows `http`.
-stdlib-http = ["avarice-rt-stdlib/stdlib-http", "tokio/net"]
-stdlib-fs = ["avarice-rt-stdlib/stdlib-fs"]
-stdlib-crypto = ["avarice-rt-stdlib/stdlib-crypto"]
-stdlib-serde = ["avarice-rt-stdlib/stdlib-serde"]
-stdlib-datetime = ["avarice-rt-stdlib/stdlib-datetime"]
-stdlib-utils = ["avarice-rt-stdlib/stdlib-utils"]
-stdlib-stores = ["avarice-rt-stdlib/stdlib-stores"]
-stdlib-validation = ["avarice-rt-stdlib/stdlib-validation"]
+stdlib-http = [
+  "dep:reqwest",
+  "dep:futures",
+  "dep:tracing",
+  "tokio/net",
+  "_astra_serde",
+  "_astra_buffers",
+]
+stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
+stdlib-crypto = ["dep:sha2", "dep:sha3", "dep:base64"]
+stdlib-serde = ["_astra_serde"]
+stdlib-datetime = ["dep:chrono"]
+stdlib-utils = ["_astra_utils"]
+# Astra's `stores` has no Rust half, so there is nothing for it to pull in.
+stdlib-stores = []
+stdlib-validation = ["_astra_utils"]
+
+# Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
+# another's Rust takes the whole file, and these compile the file without adding the module: `http`
+# calls `sanetize_lua_input` from `astra_serde.rs` and `validation` builds `AstraRegex` from
+# `utils.rs`, and neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and
+# JSON helpers that `stdlib/components/mod.rs` holds for `http` and `fs`.
+_astra_serde = [
+  "dep:serde-value",
+  "dep:serde_json",
+  "dep:serde_json5",
+  "dep:serde_yaml",
+  "dep:serde_ini",
+  "dep:csv",
+  "dep:quick-xml",
+  "dep:toml",
+  "dep:pastey",
+]
+_astra_utils = ["dep:uuid", "dep:regex"]
+_astra_buffers = ["dep:bytes", "dep:serde_json"]
 
 [dependencies]
-# `async` for `exec_async` and friends; the stdlib crate adds `send` on top, by unification.
-mlua = { workspace = true, features = ["async"] }
+# `async` for `exec_async` and friends. `macros`, `send` and `serialize` are what the stdlib's
+# sources (Astra's) are written against: `send` because `utils.rs` puts tasks on `tokio::spawn`,
+# which needs a Send Lua. All are on in every build, so the API does not vary with features (ADR
+# 0007) and the core's `Send + Sync` loader bound holds.
+mlua = { version = "0.12.1", features = [
+  "lua54",
+  "vendored",
+  "async",
+  "macros",
+  "send",
+  "serialize",
+] }
 # The core owns the executor (ADR 0004). `time` is the driver the stdlib's task timers need, so the
-# runtime is built with it rather than relying on another crate's features arriving by
-# unification; `net` is the one http needs, and `stdlib-http` adds it. `sync` is for waking a
-# waiting chunk when it is cancelled.
+# runtime is built with it rather than relying on a feature arriving by unification; `net` is the
+# one http needs, and `stdlib-http` adds it, as `stdlib-fs` adds `fs` and `io-util`. `sync` is for
+# waking a waiting chunk when it is cancelled, and Astra's `sync::Mutex`.
 tokio = { version = "1.52.3", features = ["rt", "sync", "time"] }
-# Its defaults are off so that the features above are the whole selection. mlua's `send` still
-# arrives through it, in every build, which the core's `Send + Sync` loader bound relies on.
-avarice-rt-stdlib = { path = "crates/avarice-rt-stdlib", default-features = false }
 thiserror = "2.0"
+# For `StdModules`. Not an Astra dependency, and not mlua's either; it is already in the tree
+# through reqwest's tower-http and reedline's crossterm.
+bitflags = "2"
 anstyle-parse = { version = "1", optional = true }
 anstyle-query = { version = "1", optional = true }
 clap = { version = "4.6", features = ["derive"], optional = true }
 reedline = { version = "0.51", optional = true }
+
+# The stdlib's own dependencies (src/stdlib), all optional, behind the feature that needs them.
+# They are Astra's, at the version requirement Astra's Cargo.toml gives, because the sources are
+# Astra's.
+# http
+reqwest = { version = "0.13.4", features = [
+  "charset",
+  "form",
+  "http2",
+  "json",
+  "multipart",
+  "rustls",
+  "stream",
+], default-features = false, optional = true }
+glob = { version = "0.3.3", optional = true }
+
+# data formats
+serde-value = { version = "0.7.0", optional = true }
+serde_json = { version = "1.0.150", optional = true }
+serde_json5 = { version = "0.2.1", optional = true }
+serde_yaml = { version = "0.9.34", optional = true }
+serde_ini = { version = "0.2.0", optional = true }
+csv = { version = "1.4.0", optional = true }
+quick-xml = { version = "0.41.0", features = [
+  "async-tokio",
+  "encoding",
+  "escape-html",
+  "overlapped-lists",
+  "serialize",
+], optional = true }
+toml = { version = "1.1.2", optional = true }
+uuid = { version = "1.23.4", features = ["serde", "v4"], optional = true }
+sha2 = { version = "0.11.0", optional = true }
+sha3 = { version = "0.12.0", optional = true }
+base64 = { version = "0.22.1", optional = true }
+bytes = { version = "1.12.0", features = ["serde"], optional = true }
+chrono = { version = "0.4.45", features = ["serde"], optional = true }
+
+# runtime
+futures = { version = "0.3.32", optional = true }
+tracing = { version = "0.1.44", optional = true }
+regex = { version = "1.12.4", optional = true }
+pastey = { version = "0.2.3", optional = true }

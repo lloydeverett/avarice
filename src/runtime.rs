@@ -6,20 +6,20 @@ use std::io::Write;
 use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 use std::time::Duration;
 
-use avarice_rt_stdlib::StdModules;
 use mlua::chunk::{AsChunk, Chunk, ChunkMode};
 use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 
 use crate::ansi;
 use crate::error::{Error, Result};
 use crate::limits::{
-    self, cancelled_error, unless_cancelled, CancelHandle, Execution, Limits,
-    DEFAULT_CHECK_INTERVAL,
+    self, CancelHandle, DEFAULT_CHECK_INTERVAL, Execution, Limits, cancelled_error,
+    unless_cancelled,
 };
 use crate::lock::lock;
 use crate::module::{ModuleName, ModuleStore};
 use crate::print::{self, Sink};
 use crate::profile::Profile;
+use crate::stdlib::StdModules;
 
 /// The registry key Lua itself uses for its loaded-module table.
 const LOADED: &str = "_LOADED";
@@ -636,7 +636,7 @@ impl RuntimeBuilder {
         runtime.register_lazy_module("ansi", |lua| ansi::build(lua).map(Value::Table))?;
         // The stdlib modules arrive the same way, and none is built until a program requires it.
         for module in self.std_modules.modules() {
-            runtime.register_lazy_module(module.name(), avarice_rt_stdlib::loader(module))?;
+            runtime.register_lazy_module(module.name(), crate::stdlib::loader(module))?;
         }
         Ok(runtime)
     }

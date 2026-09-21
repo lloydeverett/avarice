@@ -2,8 +2,8 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use avarice_rt::mlua::{Table, Value};
 use avarice_rt::{
