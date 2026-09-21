@@ -23,8 +23,9 @@ pub enum Profile {
     /// `os`, `package`, `debug` — along with the filesystem functions that hide in the base
     /// library (`dofile`, `loadfile`). Caps memory at
     /// [`DEFAULT_SANDBOX_MEMORY_LIMIT`], and refuses binary chunks, `load`'s `"b"` mode
-    /// included. Registers no stdlib module that has Rust behind it, and the ones written only in
-    /// Lua (`stores`, `ansi`), which the memory cap and the time limit govern like any other Lua.
+    /// included. Registers no stdlib module that has Rust behind it, and the one written only in
+    /// Lua (`stores`), which the memory cap and the time limit govern like any other Lua. The core
+    /// module `ansi` is registered here as it is everywhere.
     ///
     /// No time limit is set by default: a sandbox that is merely slow is a judgement call only
     /// the embedder can make, so ask for one with
@@ -34,8 +35,8 @@ pub enum Profile {
     /// For Lua code the embedder vouches for.
     ///
     /// Everything the sandbox has plus `io` and `os` and every stdlib module — `http`, `fs`,
-    /// `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation` and `ansi` — with no memory
-    /// or time limit and binary chunks allowed. Note that `os.exit` will end the host process, that
+    /// `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation` — with no memory or time
+    /// limit and binary chunks allowed. Note that `os.exit` will end the host process, that
     /// the stdlib modules reach the network and the filesystem, and that `package` is still absent
     /// — Lua never loads its own modules here either.
     Trusted,

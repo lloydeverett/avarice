@@ -50,7 +50,6 @@ stdlib = [
   "stdlib-utils",
   "stdlib-stores",
   "stdlib-validation",
-  "stdlib-ansi",
 ]
 # `net` is the tokio driver reqwest needs, so it follows `http`.
 stdlib-http = ["avarice-rt-stdlib/stdlib-http", "tokio/net"]
@@ -61,7 +60,6 @@ stdlib-datetime = ["avarice-rt-stdlib/stdlib-datetime"]
 stdlib-utils = ["avarice-rt-stdlib/stdlib-utils"]
 stdlib-stores = ["avarice-rt-stdlib/stdlib-stores"]
 stdlib-validation = ["avarice-rt-stdlib/stdlib-validation"]
-stdlib-ansi = ["avarice-rt-stdlib/stdlib-ansi"]
 
 [dependencies]
 # `async` for `exec_async` and friends; the stdlib crate adds `send` on top, by unification.

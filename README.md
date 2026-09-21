@@ -159,7 +159,8 @@ one sets, and doing so never affects the profile another runtime is built from.
 | `string` `table` `math` `utf8` `coroutine` | yes | yes     |
 | `io`, `os`            | no                       | yes                  |
 | `dofile`, `loadfile`  | no                       | yes                  |
-| Stdlib modules        | the pure ones            | every one compiled in (all nine by default) |
+| Stdlib modules        | the pure ones            | every one compiled in (all eight by default) |
+| `ansi`                | yes                      | yes                  |
 | `package`             | never                    | never                |
 | `debug`               | `traceback` only         | `traceback` only     |
 | Binary chunks         | refused                  | allowed              |
@@ -180,34 +181,38 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 `xpcall(f, debug.traceback)` idiom and needs no library open. Code that feature-detects on
 `debug.getinfo` will correctly find it missing.
 
-**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`,
-`validation` and `ansi`. All but `ansi` are derived from [Astra](https://github.com/ArkForgeLabs/Astra);
-`ansi` is original. They are kept in their own Apache-2.0 crate,
-[`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They are registered as lazy host
-modules, so `require("crypto")` builds `crypto` and a program that never asks for it costs nothing.
-A program can ask which it has: `stdlib()` returns a list of the names to pass to `require`, in a
-fixed order. It says what this runtime registered, so in a sandbox it lists only the pure modules, and it is
-short one module when an embedder took one out. It builds nothing.
+**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
+`validation`. They are derived from [Astra](https://github.com/ArkForgeLabs/Astra), and kept in
+their own Apache-2.0 crate, [`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They
+are registered as lazy host modules, so `require("crypto")` builds `crypto` and a program that
+never asks for it costs nothing. A program can ask which it has: `stdlib()` returns a list of the
+names to pass to `require`, in a fixed order. It says what this runtime registered, so in a sandbox
+it lists only the pure modules, and it is short one module when an embedder took one out. It builds
+nothing.
 
 ```lua
-print(#stdlib())        --> 9, in trusted mode
+print(#stdlib())        --> 8, in trusted mode
 print(stdlib()[1])      --> http
 ```
 
-Two of the modules, `stores` and `ansi`, are **pure**: written entirely in Lua, with no Rust behind
-them. A pure module reaches nothing outside the Lua state, so the memory cap and the time limit
-govern it like any Lua a program writes, and a sandbox registers it. `ansi` is a table of ANSI
-escape codes (`ansi.bold .. ansi.fg.red .. "error" .. ansi.reset`) and a few colour functions
-(`ansi.fg.rgb(255, 128, 0)`, `ansi.bg.hex("#003366")`, `ansi.fg.color256(202)`). It does not check
-whether the output is a terminal or whether `NO_COLOR` is set; that is for the program to decide.
-`avrt` decides by letting only text through what `print` writes, and its own messages: every escape
-sequence other than colour is dropped, and so is a control character such as NUL, and colour is
-dropped too unless the output is a colour terminal (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and
-`TERM=dumb` are honoured). The REPL's prompt is coloured under the same rule. `io.write` is left
-alone, so it is the way to write bytes exactly as they are
+One of the modules, `stores`, is **pure**: written entirely in Lua, with no Rust behind it. A pure
+module reaches nothing outside the Lua state, so the memory cap and the time limit govern it like
+any Lua a program writes, and a sandbox registers it.
+
+**`ansi` is a core module**, not a stdlib module: the core registers it in every runtime, whatever
+the profile and whatever features the build has, because `print` highlights with its codes (see
+[`print`](#print)). It is pure Lua too. It is a table of ANSI escape codes
+(`ansi.bold .. ansi.fg.red .. "error" .. ansi.reset`) and a few colour functions
+(`ansi.fg.rgb(255, 128, 0)`, `ansi.bg.hex("#003366")`, `ansi.fg.color256(202)`), and it is not in
+`stdlib()`. It does not check whether the output is a terminal or whether `NO_COLOR` is set; that is
+for the program to decide. `avrt` decides by letting only text through what `print` writes, and its
+own messages: every escape sequence other than colour is dropped, and so is a control character
+such as NUL, and colour is dropped too unless the output is a colour terminal (`NO_COLOR`,
+`CLICOLOR`, `CLICOLOR_FORCE` and `TERM=dumb` are honoured). The REPL's prompt is coloured under the
+same rule. `io.write` is left alone, so it is the way to write bytes exactly as they are
 ([ADR 0010](docs/adr/0010-avrt-filters-terminal-escapes-itself.md), which amends
 [ADR 0009](docs/adr/0009-avrt-filters-escapes-on-non-terminals.md)). An embedder's write sink gets
-`print`'s output as it stands.
+`print`'s output as it stands, colour included.
 
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
 `with_std_modules`. This is a choice made for each runtime, at run time; the next section is the
@@ -224,10 +229,10 @@ let rt = Runtime::builder(Profile::Trusted)
 ### Choosing stdlib modules
 
 Each stdlib module is behind a Cargo feature that compiles it in: `stdlib-http`, `stdlib-fs`,
-`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
-`stdlib-validation` and `stdlib-ansi`. `stdlib` turns on all nine and is a default feature, so an embedder who
-changes nothing gets nothing different. One who wants a smaller dependency tree and faster builds
-names the modules instead:
+`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores` and
+`stdlib-validation`. `stdlib` turns on all eight and is a default feature, so an embedder who
+changes nothing gets nothing different. `ansi` has no feature: it is in every build. One who wants
+a smaller dependency tree and faster builds names the modules instead:
 
 ```toml
 [dependencies]
@@ -315,19 +320,48 @@ prints as indented Lua-like text with its keys in a fixed order, a table that co
 marked `<cycle: ...>` rather than followed, and a table with a `__tostring` metamethod prints
 through it, as it does under stock `print`.
 
-A function prints its parameters after its address, at the top level and inside a table:
+A function prints its parameters and then its address, at the top level and inside a table:
 
 ```lua
-print(require("validation").regex)   --> function: 0x5581c0a4e6f0(expression)
-print(function(a, b, ...) end)       --> function: 0x5581c0a4f120(a, b, ...)
-print(string.format)                 --> function: 0x5581c09b2c10
+print(require("validation").regex)   --> function (expression) [0x5581c0a4e6f0]
+print(function(a, b, ...) end)       --> function (a, b, ...) [0x5581c0a4f120]
+print(string.format)                 --> function [0x5581c09b2c10]
 ```
 
 Only names are shown: Lua has no parameter types, and cannot say that one is optional. A function
 written in Rust or C, which is Lua's own library functions and every method on a Rust userdata
-such as a compiled regex, has no parameter information at all and prints as `tostring` does,
-without brackets, rather than claim it takes none. A function whose debug information was
-stripped shows `?` for each name. `tostring` is unchanged.
+such as a compiled regex, has no parameter information at all and prints without parentheses,
+rather than claim it takes none. A function whose debug information was stripped shows `?` for each
+name, `function (?, ?, ...) [0x…]`. A function with a string form of its own keeps it. `tostring`
+is unchanged.
+
+### Highlighting
+
+`print` colours what it shows, in a table and, for a few things, at the top level:
+
+| What                                               | Colour  |
+| -------------------------------------------------- | ------- |
+| a string inside a table                            | green   |
+| the comma after each entry, and between parameters | cyan    |
+| a key, brackets and quotes included                | yellow  |
+| `function`                                         | red     |
+| an address, brackets included, and `<cycle: …>`    | dim     |
+| `true`, `false` and `nil`, top level or in a table | magenta |
+
+Everything else is plain: numbers, braces, `=`, a function's parameter names, a top-level string
+(which is a message, not a literal), and whatever a value's own `__tostring` says. Each coloured
+token ends with a full reset.
+
+The colour is always there. Nothing in the runtime asks whether the reader can see it, so what
+reaches the write sink carries escape sequences. `avrt` removes them where they cannot be shown
+(a pipe, a file, `NO_COLOR`), so a script's output is plain text there and coloured on a terminal.
+An embedder's sink, and the library's default one, receive them as written: one that wants plain
+text wraps its sink and strips them. The codes are copied out of `ansi` when the runtime is built,
+so a script that edits `require("ansi")` cannot change how `print` highlights
+([ADR 0011](docs/adr/0011-print-highlights-and-ansi-is-a-core-module.md)).
+
+`print` needs the `string` and `table` libraries, and `RuntimeBuilder::build` refuses a runtime
+without them.
 
 It is written in Lua, so its limits are a Lua program's: a table nested too deeply to print is a
 catchable error, bounded by the memory cap, and does not abort the process. The reasons are in

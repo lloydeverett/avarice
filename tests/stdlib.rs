@@ -13,7 +13,7 @@ use avarice_rt::{Profile, Runtime, StdModules};
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
-const NAMES: [&str; 9] = [
+const NAMES: [&str; 8] = [
     "http",
     "fs",
     "crypto",
@@ -22,7 +22,6 @@ const NAMES: [&str; 9] = [
     "utils",
     "stores",
     "validation",
-    "ansi",
 ];
 
 /// The names of the pure modules that are compiled in: what a sandbox registers (ADR 0007).
@@ -528,7 +527,7 @@ fn printed_in_fs(dir: &TempDir, source: &str) -> String {
     let prelude = format!("local fs, dir = require('fs'), {:?}\n", dir.path());
     rt.block_on(rt.exec(format!("{prelude}{source}"), "=test"))
         .unwrap();
-    buffer.contents()
+    common::plain(&buffer.contents())
 }
 
 #[cfg(feature = "stdlib-fs")]

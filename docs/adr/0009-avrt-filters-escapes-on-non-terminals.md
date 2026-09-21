@@ -4,8 +4,9 @@ status: accepted
 
 # `avrt` strips escape codes from its output when it is not a colour terminal
 
-> **Amended 2026-09-21; the amendment at the end wins.** `anstream` is replaced by a filter of
-> `avrt`'s own, which drops every escape sequence other than colour on a colour terminal too.
+> **Amended 2026-09-21; the amendments at the end win.** `anstream` is replaced by a filter of
+> `avrt`'s own, which drops every escape sequence other than colour on a colour terminal too, and
+> `print` now emits colour of its own, so the library no longer decides nothing about colour.
 `avrt` writes what a program prints through [`anstream`](https://docs.rs/anstream), which passes
 ANSI escape codes to a colour terminal and removes them everywhere else: a pipe, a file, a terminal
 with `TERM=dumb`, or any destination while `NO_COLOR` is set. Apart from the REPL's prompt, `avrt`
@@ -120,3 +121,13 @@ of its own. That is library code, outside `avrt`, and is left alone.
   above. `anstream` stays in the tree through clap.
 
 What this ADR decides about the environment, the REPL's prompt, `io.write` and the flush stands.
+
+## Amendment, 2026-09-21: the library now emits colour
+
+[ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md) has `print` highlight what it shows,
+always, so the library now writes colour to its write sink. Where this ADR says that the library
+"decides nothing" and that `avrt` only decides whether colour a *program* wrote is delivered, that
+holds for a program's own colour and no longer for `print`'s own. The decision stands otherwise:
+the environment decides, in `avrt`'s filter, and an embedder's sink receives `print`'s output as it
+is written, which now has colour in it. The filter is why a script's printed table is plain in a
+pipe.

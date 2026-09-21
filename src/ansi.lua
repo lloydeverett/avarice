@@ -1,11 +1,11 @@
 -- Original to avarice-rt. This file is not taken from Astra, and is not derived from anything.
--- Licensed under the Apache License, Version 2.0, like the rest of this crate. See LICENSE in this
--- crate's root.
 --
--- This module is PURE: this file is all of it. There is no Rust behind it, so it computes over the
+-- This is a CORE module: the core registers it in every runtime, whatever the profile, and no
+-- build can leave it out, because `print` uses these codes to highlight what it prints (ADR 0011).
+-- It is also PURE: this file is all of it. There is no Rust behind it, so it computes over the
 -- values it is given and reaches nothing outside the Lua state, and every limit a runtime puts on
--- Lua (the memory cap, the time limit) applies to it. That is why a sandbox registers it. Giving it
--- a Rust half would move it out of the sandbox (ADR 0007, ADR 0008).
+-- Lua (the memory cap, the time limit) applies to it. That is why it is safe to have in a sandbox,
+-- and giving it a Rust half would need that decision made again (ADR 0007).
 --
 -- Every value is a complete escape sequence, meant to be concatenated with text:
 --
@@ -13,6 +13,10 @@
 --
 -- Nothing here looks at whether the output is a terminal or whether NO_COLOR is set. That is for
 -- the program, or the host, to decide.
+--
+-- The runtime evaluates this file once for `print`, which keeps the codes it needs in locals, and
+-- again if a script requires it, so a script that edits the table it required cannot change how
+-- `print` highlights.
 
 ---@meta
 

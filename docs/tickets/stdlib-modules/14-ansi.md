@@ -1,5 +1,11 @@
 # 14: `ansi`
 
+> **Amended 2026-09-21.** `ansi` is no longer a stdlib module. It is a **core module**, registered
+> in every runtime with no feature, so `StdModule::Ansi`, `StdModules::ANSI`, `stdlib-ansi` and its
+> place in `stdlib()` below are gone, and the count is eight again. What the ticket says about the
+> module's contents stands. See
+> [ADR 0011](../../adr/0011-print-highlights-and-ansi-is-a-core-module.md).
+
 **What to build:** `require("ansi")`, a table of ANSI escape codes for formatting text on a
 terminal, and the few functions a table cannot hold, as the ninth **stdlib module**. It is written
 in Lua only, so it is the first **pure module** a sandbox registers, and the first that is not

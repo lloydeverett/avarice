@@ -1,14 +1,13 @@
-//! The `ansi` stdlib module, reached through `require`.
+//! The `ansi` core module, reached through `require`.
 //!
-//! It is pure Lua (ADR 0008), so every test also holds in a sandbox, and the ones that matter for
-//! that say so. Each test drives `require("ansi")` and looks at the strings it hands back, which
-//! are what a terminal is given.
-#![cfg(feature = "stdlib-ansi")]
+//! It is pure Lua and registered in every runtime whatever its features (ADR 0011), so every test
+//! also holds in a sandbox, and the ones that matter for that say so. Each test drives
+//! `require("ansi")` and looks at the strings it hands back, which are what a terminal is given.
 
 mod common;
 
-use avarice_rt::{Profile, Runtime};
-use common::requirable;
+use avarice_rt::{Profile, Runtime, StdModules};
+use common::{listed, requirable};
 
 fn runtime() -> Runtime {
     Runtime::new(Profile::Sandbox).unwrap()
@@ -38,13 +37,34 @@ fn error(rt: &Runtime, expr: &str) -> String {
 // -- Availability ------------------------------------------------------------------------------
 
 #[test]
-fn a_sandbox_has_ansi_because_it_is_pure() {
+fn a_sandbox_has_ansi() {
     assert!(requirable(&runtime(), "ansi"));
 }
 
 #[test]
 fn trusted_mode_has_ansi_too() {
     assert!(requirable(&Runtime::new(Profile::Trusted).unwrap(), "ansi"));
+}
+
+#[test]
+fn ansi_is_core_so_no_selection_of_stdlib_modules_removes_it() {
+    // It is registered by the core, and no build or profile decides it (ADR 0011).
+    for profile in [Profile::Sandbox, Profile::Trusted] {
+        let rt = Runtime::builder(profile)
+            .std_modules(StdModules::NONE)
+            .build()
+            .unwrap();
+        assert!(rt.has_module("ansi"), "{profile:?}");
+        assert!(requirable(&rt, "ansi"), "{profile:?}");
+    }
+}
+
+#[test]
+fn ansi_is_not_a_stdlib_module_so_stdlib_does_not_list_it() {
+    for profile in [Profile::Sandbox, Profile::Trusted] {
+        let rt = Runtime::new(profile).unwrap();
+        assert!(!listed(&rt).contains(&"ansi".to_owned()), "{profile:?}");
+    }
 }
 
 // -- Styles ------------------------------------------------------------------------------------

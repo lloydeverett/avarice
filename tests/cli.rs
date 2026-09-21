@@ -551,6 +551,25 @@ mod colour {
     }
 
     #[test]
+    fn a_printed_table_is_plain_when_output_is_not_a_terminal() {
+        // `print` highlights whatever the destination is; `avrt` removes it where it cannot be
+        // taken.
+        let output = avrt_with(&[], &["-e", r#"print({ "x", a = true })"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), "{\n  \"x\",\n  a = true,\n}\n");
+    }
+
+    #[test]
+    fn a_printed_table_is_highlighted_when_colour_is_forced() {
+        let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print({ "x" })"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(
+            stdout_of(&output),
+            "{\n  \x1b[32m\"x\"\x1b[0m\x1b[36m,\x1b[0m\n}\n"
+        );
+    }
+
+    #[test]
     fn io_write_is_left_raw() {
         // `io` is C stdio and does not go through the write sink, so it is the way to send bytes
         // exactly as they are.

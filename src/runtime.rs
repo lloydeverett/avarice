@@ -10,6 +10,7 @@ use avarice_rt_stdlib::StdModules;
 use mlua::chunk::{AsChunk, Chunk, ChunkMode};
 use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 
+use crate::ansi;
 use crate::error::{Error, Result};
 use crate::limits::{
     self, cancelled_error, unless_cancelled, CancelHandle, Execution, Limits,
@@ -579,6 +580,16 @@ impl RuntimeBuilder {
                     .to_string(),
             ));
         }
+        // `print` and the core `ansi` module are Lua (ADR 0005, ADR 0011), and use these two. A
+        // runtime without one is refused rather than given a `print` that quietly does less.
+        for (lib, name) in [(StdLib::STRING, "string"), (StdLib::TABLE, "table")] {
+            if !self.std_libs.contains(lib) {
+                return Err(Error::Config(format!(
+                    "the {name} library is required: `print` and the core `ansi` module are \
+                     written in Lua and use it"
+                )));
+            }
+        }
         // Refused rather than dropped, as `package` is: a runtime that quietly lacks a module it
         // was asked for disagrees with the code that asked (ADR 0007).
         self.std_modules
@@ -620,8 +631,10 @@ impl RuntimeBuilder {
             memory_limit: self.memory_limit,
         };
 
-        // The stdlib modules arrive by the path an embedder's own lazy module takes, so they
-        // carry no privilege that one lacks, and none is built until a program requires it.
+        // `ansi` is a core module: registered in every runtime, whatever the profile, and by the
+        // path an embedder's own lazy module takes, so it carries no privilege that one lacks.
+        runtime.register_lazy_module("ansi", |lua| ansi::build(lua).map(Value::Table))?;
+        // The stdlib modules arrive the same way, and none is built until a program requires it.
         for module in self.std_modules.modules() {
             runtime.register_lazy_module(module.name(), avarice_rt_stdlib::loader(module))?;
         }

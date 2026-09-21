@@ -24,7 +24,6 @@ stdlib = [
   "stdlib-utils",
   "stdlib-stores",
   "stdlib-validation",
-  "stdlib-ansi",
 ]
 stdlib-http = ["dep:reqwest", "dep:futures", "dep:tracing", "_astra_serde", "_astra_buffers"]
 stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
@@ -35,8 +34,6 @@ stdlib-utils = ["_astra_utils"]
 # Astra's `stores` has no Rust half, so there is nothing for it to pull in.
 stdlib-stores = []
 stdlib-validation = ["_astra_utils"]
-# Pure Lua, like `stdlib-stores`: no dependency, and no Rust.
-stdlib-ansi = []
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
 # another's Rust takes the whole file, and these compile the file without adding the module: `http`

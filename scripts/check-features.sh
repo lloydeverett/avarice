@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-modules=(http fs crypto serde datetime utils stores validation ansi)
+modules=(http fs crypto serde datetime utils stores validation)
 failed=()
 
 run() {

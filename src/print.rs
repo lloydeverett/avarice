@@ -2,7 +2,8 @@
 //!
 //! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is a pair of
 //! functions it is given: one appends bytes to the runtime's write sink, and the other says what
-//! parameters a function takes, which Lua can only be asked through its C API.
+//! parameters a function takes, which Lua can only be asked through its C API. It is also given
+//! the `ansi` table it highlights with (ADR 0011).
 
 use std::ffi::{c_int, CStr};
 use std::io::{self, Write};
@@ -12,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use mlua::chunk::ChunkMode;
 use mlua::{ffi, Function, Lua, LuaString};
 
+use crate::ansi;
 use crate::lock::lock;
 
 const PRINT: &str = include_str!("print.lua");
@@ -110,7 +112,9 @@ fn parameter_list(lua: &Lua, function: &Function) -> mlua::Result<Option<String>
 
 /// Replaces `print` with the one that writes to `sink`.
 ///
-/// Runs before the runtime's limits are installed, like the rest of setup.
+/// Runs before the runtime's limits are installed, like the rest of setup, and needs the `string`
+/// and `table` libraries, which [`RuntimeBuilder::build`](crate::RuntimeBuilder::build) has checked
+/// are there.
 pub(crate) fn install(lua: &Lua, sink: Sink) -> mlua::Result<()> {
     let write = lua.create_function(move |_, text: LuaString| {
         let mut sink = lock(&sink);
@@ -124,6 +128,6 @@ pub(crate) fn install(lua: &Lua, sink: Sink) -> mlua::Result<()> {
         .load(PRINT)
         .set_name("=[avarice-rt print]")
         .set_mode(ChunkMode::Text)
-        .call((write, parameters))?;
+        .call((write, parameters, ansi::build(lua)?))?;
     lua.globals().raw_set("print", print)
 }

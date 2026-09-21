@@ -26,29 +26,36 @@
 //!
 //! # Output
 //!
-//! Both profiles replace `print` with one that renders tables structurally. It writes to the
-//! runtime's write sink, which is standard output until [`RuntimeBuilder::write_sink`] or
-//! [`Runtime::set_write_sink`] says otherwise, and flushes after every call.
+//! Both profiles replace `print` with one that renders tables structurally, and highlights what
+//! it shows in a table with ANSI colour. It writes to the runtime's write sink, which is standard
+//! output until [`RuntimeBuilder::write_sink`] or [`Runtime::set_write_sink`] says otherwise, and
+//! flushes after every call.
+//!
+//! The colour is always there: nothing in the runtime asks whether the reader can see it, so a
+//! sink receives escape sequences, and a sink that cannot show them has to remove them. `avrt`
+//! does. `print` needs the `string` and `table` libraries, and [`RuntimeBuilder::build`] refuses a
+//! runtime that lacks either.
 //!
 //! # Profiles
 //!
 //! A [`Profile`] is a set of defaults, not a constraint. [`Profile::Sandbox`] withholds `io`,
 //! `os`, `package` and `debug`, caps memory, and refuses binary chunks; [`Profile::Trusted`]
 //! opens everything a safe Lua state can have and registers every stdlib module that is compiled
-//! in (`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation` and `ansi`; see
-//! [`StdModules`]); [`Profile::Sandbox`] registers only the pure ones, `stores` and `ansi`, which
-//! are Lua with no Rust behind them. [`RuntimeBuilder`] can override anything either one sets, and
-//! doing so never affects the profile another runtime is built from.
+//! in (`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation`; see
+//! [`StdModules`]); [`Profile::Sandbox`] registers only the pure one, `stores`, which is Lua with
+//! no Rust behind it. Both register `ansi`, a core module that no build can leave out, because
+//! `print` uses it. [`RuntimeBuilder`] can override anything either one sets, and doing so never
+//! affects the profile another runtime is built from.
 //!
 //! # Features
 //!
 //! Each stdlib module is behind a Cargo feature of its own, `stdlib-http`, `stdlib-fs`,
-//! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
-//! `stdlib-validation` and `stdlib-ansi`, and `stdlib` turns all nine on. `default` has `stdlib`
-//! and `cli`, so an embedder wanting a smaller build depends on avarice-rt with
-//! `default-features = false` and names the modules it wants. A feature decides whether a module is *compiled in*, which is a matter of
-//! build size and time and not of confinement: a profile still decides what a runtime *registers*.
-//! [`StdModules::ALL`] is the set that is compiled in, and [`RuntimeBuilder::build`] refuses a
+//! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores` and
+//! `stdlib-validation`, and `stdlib` turns all eight on. `default` has `stdlib` and `cli`, so an
+//! embedder wanting a smaller build depends on avarice-rt with `default-features = false` and
+//! names the modules it wants. A feature decides whether a module is *compiled in*, which is a
+//! matter of build size and time and not of confinement: a profile still decides what a runtime
+//! *registers*. [`StdModules::ALL`] is the set that is compiled in, and [`RuntimeBuilder::build`] refuses a
 //! selection that includes a module that is not.
 //!
 //! # Modules
@@ -83,6 +90,7 @@
 //! latch once tripped, so a `pcall` cannot swallow them. A [`CancelHandle`] is `Send`, and
 //! can stop a runtime from another thread, whether it is running Lua or waiting on something.
 
+mod ansi;
 mod error;
 mod limits;
 mod lock;

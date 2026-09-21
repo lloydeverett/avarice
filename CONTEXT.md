@@ -43,7 +43,7 @@ never affects the profile any other runtime is built from.
 The profile for Lua code the author does not vouch for. Withholds the standard
 libraries through which Lua can reach outside its own computation — `io`, `os`,
 `package`, `debug` — caps memory, and refuses binary chunks. Registers no **stdlib
-module** except the **pure** ones.
+module** except the **pure** ones, and every **core module**.
 
 Sandbox mode describes what avarice-rt itself puts in the runtime. It is not a
 guarantee about a runtime an embedder has since reconfigured or added **host
@@ -70,8 +70,8 @@ has is decided in Rust at construction; Lua code never causes one to load.
 ## Stdlib module
 
 A **host module** that avarice-rt ships, rather than one an embedder wrote.
-`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
-and `ansi`.
+`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
+`validation`.
 
 Stdlib modules are host modules like any other, and carry no privilege an
 embedder's own module lacks. What distinguishes them is only that a **profile**
@@ -86,11 +86,21 @@ the one before.
 Named for Lua's standard library by analogy, and separate from it: the standard
 library is Lua's own, opened by `mlua`, and reachable without `require`.
 
+## Core module
+
+A **host module** the core registers in every runtime, whatever the **profile**,
+and that no build can leave out. `ansi` is the only one.
+
+Unlike a **stdlib module** it is not chosen by a profile or by a build, so a
+runtime always has it. Being a host module, it carries no privilege an
+embedder's own module lacks.
+
 ## Pure module
 
-A **stdlib module** written entirely in Lua, with no Rust code behind it. It
-only computes over the values it is given, so it reaches nothing outside the Lua
-state: no network, no filesystem, no environment.
+A **host module** written entirely in Lua, with no Rust code behind it,
+whichever crate it lives in: `stores` and `ansi`. It only computes over the
+values it is given, so it reaches nothing outside the Lua state: no network, no
+filesystem, no environment.
 
 Because it is only Lua, every limit a runtime puts on Lua applies to it — the
 memory cap, the time limit — which cannot be said of a module with Rust behind
@@ -152,6 +162,16 @@ choice to the embedder.
 
 Where `print` sends its output. Owned by the runtime, and replaceable by the
 embedder — writing to the host's standard output is the default, not the rule.
+
+## Highlighting
+
+The colour `print` gives the parts of a value it shows: the strings, keys and
+commas of a table, a function's name and parameters, and so on.
+
+It is always on. Nothing in the runtime asks whether the reader can see colour,
+so what reaches the **write sink** carries it. Whether it reaches a reader is the
+destination's concern: `avrt` removes it for a destination that cannot take it,
+and an **embedder**'s sink receives it as written.
 
 ## Embedder
 

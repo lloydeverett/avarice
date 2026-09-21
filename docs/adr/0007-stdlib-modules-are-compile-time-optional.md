@@ -117,3 +117,11 @@ against registered, and the spec's line saying there is no feature flag points h
 says eight modules, or that `stdlib` turns on eight features, it is nine, and the matrix in
 `scripts/check-features.sh` is eleven builds and not ten: no modules, all of them, and each of the
 nine alone. Nothing else above changes, and the sandbox rule is the one recorded in the decision.
+
+## Amendment, 2026-09-21: `ansi` leaves, and it is eight again
+
+[ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md) moves `ansi` into the core, where it
+is registered in every runtime and no feature selects it. `stdlib` turns on eight features again,
+`stdlib-ansi` is gone, and the matrix in `scripts/check-features.sh` is ten builds: no modules,
+all of them, and each of the eight alone. The sandbox rule stands, and `stores` is now the only
+pure stdlib module; `ansi` is a pure *core* module, registered by the core whatever the profile.

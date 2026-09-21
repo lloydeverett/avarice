@@ -7,7 +7,8 @@ status: accepted
 Both profiles replace Lua's `print` with one that renders tables structurally
 rather than as `table: 0x...`. That replacement is written in Lua, over a small
 Rust function that writes bytes to the runtime's **write sink**. (The amendments at the end win
-where they differ: the second adds a second Rust function.)
+where they differ: the second adds a second Rust function, and the third changes what a function
+looks like, highlights the output and requires `string` and `table`.)
 
 A reader would otherwise expect the opposite. Every other capability here is a
 **host function** in Rust, Rust is faster, and the code this is adapted from —
@@ -121,8 +122,7 @@ top level and inside a table, so that printing a module lists what each of its f
 - Nothing is said about types or optional parameters, because Lua has neither. A function
   `f(a, b)` whose `b` may be left off prints both names.
 - It is a value's parameters that are shown. A function used as a table key prints as `tostring`
-  does, and so does every function in a runtime built without the `string` or `table` library,
-  whose `print` is the fallback that only prints scalars and addresses.
+  does.
 - A function is printed this way only if its string form is the plain one, the same test a table
   gets, so a function that has a string form of its own keeps it.
 - Names are shown as the function has them. A binary chunk, which only trusted mode can load,
@@ -130,3 +130,20 @@ top level and inside a table, so that printing a module lists what each of its f
   more than that.
 - A function whose debug information was stripped (`string.dump(f, true)`, loadable only where a
   binary chunk is) has no names, and each is shown as `?`.
+
+## Amendment, 2026-09-21: the layout, the colour and the libraries it needs
+
+[ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md) changes three things above; where
+they differ, it wins.
+
+- **A function prints as `function (a, b) [0x55d0]`**, with its address last and in brackets, and a
+  function not written in Lua as `function [0x55d0]`. The text above that says `function:
+  0x55d0(a, b, ...)`, and that a function which is not written in Lua "prints as `tostring` does",
+  is superseded. A function used as a key still prints as `tostring` gives it, `?` for a name that
+  was stripped is unchanged, and a function with a string form of its own still keeps it.
+- **`print` is highlighted**, always, with the codes of the `ansi` core module, which `print.lua`
+  is handed as a third argument.
+- **`string` and `table` are required.** The fallback `print` for a runtime built without them is
+  gone, and `RuntimeBuilder::build` refuses such a runtime instead.
+
+The 30 000-deep test, the cycle marking, the key order and every limit above are unchanged.

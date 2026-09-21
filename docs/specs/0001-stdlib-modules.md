@@ -21,6 +21,9 @@ status: ready-for-agent
 > an original module, makes nine. Where the sections below say sandbox registers no stdlib
 > module, or count eight, [ADR 0007](../adr/0007-stdlib-modules-are-compile-time-optional.md) and
 > [ADR 0008](../adr/0008-ansi-is-original-and-pure.md) win.
+>
+> **Amended 2026-09-21, once more.** `ansi` is a core module, not a stdlib one, so it is eight
+> again: [ADR 0011](../adr/0011-print-highlights-and-ansi-is-a-core-module.md) wins.
 
 Expose runtime capability to Lua as eight **stdlib modules**, adapted from
 [Astra](https://github.com/ArkForgeLabs/Astra) under Apache-2.0, registered in

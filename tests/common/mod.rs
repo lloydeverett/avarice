@@ -92,3 +92,19 @@ pub fn compiled_in() -> Vec<&'static str> {
         .map(StdModule::name)
         .collect()
 }
+
+/// `text` without its colour: every `ESC [ … m` removed.
+pub fn plain(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            assert_eq!(chars.next(), Some('['), "not a colour sequence in {text:?}");
+            let last = chars.by_ref().find(|c| !(c.is_ascii_digit() || *c == ';'));
+            assert_eq!(last, Some('m'), "not a colour sequence in {text:?}");
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

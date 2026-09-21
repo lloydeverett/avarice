@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by [ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md)
 ---
 
 # `ansi` is an original module in the Astra-derived crate, and is pure

@@ -3,6 +3,10 @@
 //! The sink is redirected to a buffer and read back, so nothing here spawns a process or captures
 //! stdout. The one thing that has to be a process — how the default sink interleaves with `io`'s
 //! buffering — is in `tests/cli.rs`.
+//!
+//! `print` highlights what it shows (ADR 0011), and always does. Most of what follows is about the
+//! layout, so `printed` hands back the text with the colour removed; `raw` is what the sink was
+//! given, and the tests under "Highlighting" say what colour goes where.
 
 mod common;
 
@@ -13,7 +17,7 @@ use std::time::Duration;
 
 use avarice_rt::mlua::StdLib;
 use avarice_rt::{was_timed_out, Error, Profile, Runtime, DEFAULT_SANDBOX_MEMORY_LIMIT};
-use common::Buffer;
+use common::{plain, Buffer};
 
 /// A runtime whose `print` writes to the returned buffer.
 fn printing(profile: Profile) -> (Runtime, Buffer) {
@@ -25,11 +29,16 @@ fn printing(profile: Profile) -> (Runtime, Buffer) {
     (rt, buffer)
 }
 
-/// Runs `source` on a fresh runtime and returns what it printed.
-fn printed(profile: Profile, source: &str) -> String {
+/// Runs `source` on a fresh runtime and returns what it printed, as the sink was given it.
+fn raw(profile: Profile, source: &str) -> String {
     let (rt, buffer) = printing(profile);
     rt.block_on(rt.exec(source, "=test")).unwrap();
     buffer.contents()
+}
+
+/// Runs `source` on a fresh runtime and returns what it printed, without its colour.
+fn printed(profile: Profile, source: &str) -> String {
+    plain(&raw(profile, source))
 }
 
 const BOTH: [Profile; 2] = [Profile::Sandbox, Profile::Trusted];
@@ -72,7 +81,7 @@ fn scalars_format_exactly_as_tostring_does() {
                 "=test",
             ))
             .unwrap();
-        assert_eq!(buffer.contents(), expected);
+        assert_eq!(plain(&buffer.contents()), expected);
     }
 }
 
@@ -86,40 +95,54 @@ fn a_string_is_printed_raw_at_the_top_level_and_quoted_inside_a_table() {
 }
 
 #[test]
-fn functions_and_other_non_tables_print_as_tostring_does() {
-    let text = printed(Profile::Sandbox, "print(print, coroutine.create(print))");
-    let mut parts = text.trim_end().split('\t');
-    assert!(parts.next().unwrap().starts_with("function: "), "{text}");
-    assert!(parts.next().unwrap().starts_with("thread: "), "{text}");
+fn threads_and_other_non_tables_print_as_tostring_does() {
+    let text = printed(Profile::Sandbox, "print(coroutine.create(print))");
+    assert!(text.starts_with("thread: "), "{text}");
 }
 
 // -- Functions ---------------------------------------------------------------------------------
 
-/// What follows the address in a printed function: `(a, b)` for a Lua function, and nothing for
-/// one that is not written in Lua. Takes the function as `print` wrote it, which may still have a
-/// newline or, inside a table, a comma after it. Fails if `text` is not a function.
-fn after_address(text: &str) -> &str {
+/// The parameters in a printed function, `Some("a, b")` for `function (a, b) [0x55d0]`, and
+/// `None` for `function [0x55d0]`, which is how a function not written in Lua prints. Takes the
+/// function as `print` wrote it, plain, which may still have a newline or, inside a table, a comma
+/// after it. Fails if `text` is not a function.
+fn parameters(text: &str) -> Option<String> {
     let text = text.trim_end_matches(['\n', ',']);
     let rest = text
-        .strip_prefix("function: 0x")
+        .strip_prefix("function ")
         .unwrap_or_else(|| panic!("not a function line: {text:?}"));
-    let digits = rest.chars().take_while(char::is_ascii_hexdigit).count();
-    assert!(digits > 0, "no address in {text:?}");
-    &rest[digits..]
+    let (names, address) = match rest.strip_prefix('(') {
+        Some(rest) => {
+            let (names, address) = rest
+                .split_once(") ")
+                .unwrap_or_else(|| panic!("unclosed parameters in {text:?}"));
+            (Some(names.to_owned()), address)
+        }
+        None => (None, rest),
+    };
+    let digits = address
+        .strip_prefix("[0x")
+        .and_then(|a| a.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("no bracketed address in {text:?}"));
+    assert!(
+        !digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit()),
+        "{text:?}"
+    );
+    names
 }
 
 #[test]
-fn a_lua_function_prints_its_parameters_after_its_address() {
+fn a_lua_function_prints_its_parameters_then_its_address() {
     for profile in BOTH {
         for (source, expected) in [
-            ("print(function(a, b) end)", "(a, b)"),
-            ("print(function() end)", "()"),
-            ("print(function(...) end)", "(...)"),
-            ("print(function(a, b, ...) end)", "(a, b, ...)"),
+            ("print(function(a, b) end)", "a, b"),
+            ("print(function() end)", ""),
+            ("print(function(...) end)", "..."),
+            ("print(function(a, b, ...) end)", "a, b, ..."),
         ] {
             assert_eq!(
-                after_address(&printed(profile, source)),
-                expected,
+                parameters(&printed(profile, source)).as_deref(),
+                Some(expected),
                 "{source}"
             );
         }
@@ -132,45 +155,50 @@ fn a_method_shows_its_self() {
         Profile::Sandbox,
         "local o = {} function o:area(scale) end print(o.area)",
     );
-    assert_eq!(after_address(&text), "(self, scale)");
+    assert_eq!(parameters(&text).as_deref(), Some("self, scale"));
+}
+
+#[test]
+fn a_function_not_written_in_lua_has_no_parens_rather_than_claim_no_parameters() {
+    // Nothing is known about its parameters, and `()` would claim it takes none. `string.format`
+    // is one of Lua's own C functions.
+    let text = printed(Profile::Sandbox, "print(string.format)");
+    assert!(text.starts_with("function [0x"), "{text}");
+    assert_eq!(parameters(&text), None);
 }
 
 #[cfg(feature = "stdlib-validation")]
 #[test]
-fn a_function_not_written_in_lua_prints_as_tostring_does() {
-    // Nothing is known about its parameters, and `()` would claim it takes none. `string.format`
-    // is one of Lua's own C functions; a method on a Rust userdata is the same to Lua.
+fn a_method_on_a_rust_userdata_is_not_written_in_lua_either() {
     let text = printed(
         Profile::Trusted,
-        r#"print(string.format, require("validation").regex("a").is_match)"#,
+        r#"print(require("validation").regex("a").is_match)"#,
     );
-    let mut functions = text.trim_end().split('\t');
-    assert_eq!(after_address(functions.next().unwrap()), "");
-    assert_eq!(after_address(functions.next().unwrap()), "");
+    assert_eq!(parameters(&text), None);
 }
 
 #[test]
-fn a_function_inside_a_table_prints_its_parameters_too() {
+fn a_function_inside_a_table_has_the_same_layout() {
     let text = printed(
         Profile::Sandbox,
         "print({ add = function(a, b) end, format = string.format })",
     );
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines.len(), 4, "{text}");
-    let field = |line: &str, name: &str| -> String {
+    let field = |line: &str, name: &str| -> Option<String> {
         let value = line
             .trim()
             .strip_prefix(&format!("{name} = "))
             .unwrap_or_else(|| panic!("not a `{name}` field: {line:?}"));
-        after_address(value).to_owned()
+        parameters(value)
     };
-    assert_eq!(field(lines[1], "add"), "(a, b)");
-    assert_eq!(field(lines[2], "format"), "");
+    assert_eq!(field(lines[1], "add").as_deref(), Some("a, b"));
+    assert_eq!(field(lines[2], "format"), None);
 }
 
 #[test]
 fn tostring_is_not_changed() {
-    // Only `print` shows parameters, so a script that parses or compares `tostring(f)` is
+    // Only `print` lays a function out, so a script that parses or compares `tostring(f)` is
     // unaffected.
     let text = printed(
         Profile::Sandbox,
@@ -190,14 +218,14 @@ fn a_function_with_no_parameter_names_shows_question_marks() {
         print(stripped)
         "#,
     );
-    assert_eq!(after_address(&text), "(?, ?, ...)");
+    assert_eq!(parameters(&text).as_deref(), Some("?, ?, ..."));
 }
 
 #[cfg(feature = "stdlib-validation")]
 #[test]
 fn a_stdlib_function_prints_the_names_its_lua_layer_gave_it() {
     let text = printed(Profile::Trusted, r#"print(require("validation").regex)"#);
-    assert_eq!(after_address(&text), "(expression)");
+    assert_eq!(parameters(&text).as_deref(), Some("expression"));
 }
 
 #[test]
@@ -208,7 +236,7 @@ fn printing_a_function_works_from_inside_a_coroutine() {
         Profile::Sandbox,
         "coroutine.wrap(function() print(function(inside) end) end)()",
     );
-    assert_eq!(after_address(&text), "(inside)");
+    assert_eq!(parameters(&text).as_deref(), Some("inside"));
 }
 
 #[test]
@@ -220,7 +248,7 @@ fn a_function_in_a_self_containing_table_leaves_the_cycle_mark_alone() {
         "local t = { f = function(x) end } t.self = t print(t)",
     );
     assert!(text.contains("<cycle: table: 0x"), "{text}");
-    assert!(text.contains("(x),"), "{text}");
+    assert!(text.contains("f = function (x) [0x"), "{text}");
 }
 
 // -- Tables ------------------------------------------------------------------------------------
@@ -477,7 +505,7 @@ fn each_print_is_flushed_before_it_returns() {
     rt.block_on(rt.exec("print('a')", "=test")).unwrap();
     assert_eq!(buffer.contents(), "a\n");
     rt.block_on(rt.exec("print({ 1 })", "=test")).unwrap();
-    assert_eq!(buffer.contents(), "a\n{\n  1,\n}\n");
+    assert_eq!(plain(&buffer.contents()), "a\n{\n  1,\n}\n");
 }
 
 #[test]
@@ -556,30 +584,243 @@ fn a_script_redefining_tostring_does_not_change_how_print_formats() {
 }
 
 #[test]
-fn a_runtime_without_the_string_or_table_library_still_prints() {
+fn a_runtime_without_the_string_or_table_library_is_refused() {
+    // `print` is written in Lua over both (ADR 0005), and assumes them: the builder says so rather
+    // than hand back a `print` that quietly does less.
+    for (builder, missing) in [
+        (
+            Runtime::builder(Profile::Sandbox).std_libs(StdLib::NONE),
+            "string",
+        ),
+        (
+            Runtime::builder(Profile::Sandbox).without_std_libs(StdLib::STRING),
+            "string",
+        ),
+        (
+            Runtime::builder(Profile::Sandbox).without_std_libs(StdLib::TABLE),
+            "table",
+        ),
+        (
+            Runtime::builder(Profile::Trusted).without_std_libs(StdLib::TABLE),
+            "table",
+        ),
+    ] {
+        let Err(Error::Config(message)) = builder.build() else {
+            panic!("a runtime without the {missing} library should be refused");
+        };
+        assert!(
+            message.contains(&format!("the {missing} library is required")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn a_runtime_with_string_and_table_and_nothing_else_prints() {
+    // The two libraries are all `print` asks for.
     let buffer = Buffer::new();
     let rt = Runtime::builder(Profile::Sandbox)
-        .std_libs(StdLib::NONE)
+        .std_libs(StdLib::STRING | StdLib::TABLE)
         .write_sink(buffer.clone())
         .build()
         .unwrap();
-    rt.block_on(rt.exec("print(1, 'two', true, nil)", "=test"))
+    rt.block_on(rt.exec("print(1, { 2 }, function(a) end)", "=test"))
         .unwrap();
-    assert_eq!(buffer.contents(), "1\ttwo\ttrue\tnil\n");
+    assert!(plain(&buffer.contents()).starts_with("1\t{\n  2,\n}"));
+}
 
-    // Tables fall back to what stock `print` shows.
-    rt.block_on(rt.exec("print({})", "=test")).unwrap();
-    assert!(
-        buffer.contents().contains("table: 0x"),
-        "{}",
-        buffer.contents()
+// -- Highlighting ------------------------------------------------------------------------------
+
+const RESET: &str = "\x1b[0m";
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const MAGENTA: &str = "\x1b[35m";
+const CYAN: &str = "\x1b[36m";
+const DIM: &str = "\x1b[2m";
+
+/// `text` in `code`, reset after it: one token, as `print` writes them.
+fn token(code: &str, text: &str) -> String {
+    format!("{code}{text}{RESET}")
+}
+
+fn comma() -> String {
+    token(CYAN, ",")
+}
+
+#[test]
+fn a_table_is_highlighted_in_both_profiles() {
+    let expected = format!(
+        "{{\n  {s}{c}\n  {k} = 1{c}\n}}\n",
+        s = token(GREEN, "\"x\""),
+        k = token(YELLOW, "a"),
+        c = comma(),
     );
+    for profile in BOTH {
+        assert_eq!(raw(profile, r#"print({ "x", a = 1 })"#), expected);
+    }
+}
 
-    // And a function is left as `tostring` shows it: parameters are for a print that can lay
-    // them out.
-    let before = buffer.contents().len();
-    rt.block_on(rt.exec("print(function(a) end)", "=test"))
-        .unwrap();
-    let text = buffer.contents()[before..].to_owned();
-    assert_eq!(after_address(&text), "");
+#[test]
+fn a_string_in_a_table_is_green_and_the_comma_after_it_is_cyan() {
+    let text = raw(Profile::Sandbox, r#"print({ "a" })"#);
+    assert_eq!(
+        text,
+        format!("{{\n  {}{}\n}}\n", token(GREEN, "\"a\""), comma())
+    );
+}
+
+#[test]
+fn every_entry_gets_a_cyan_comma_after_it_the_last_included() {
+    let text = raw(Profile::Sandbox, "print({ 1, 2, a = 3 })");
+    assert_eq!(text.matches(&comma()).count(), 3, "{text:?}");
+}
+
+#[test]
+fn a_key_is_yellow_as_a_whole_brackets_and_quotes_included() {
+    let text = raw(
+        Profile::Sandbox,
+        r#"print({ ["with space"] = "v", [2.5] = 1 })"#,
+    );
+    // The quoted string inside a bracketed key is part of the key, so it is not green.
+    assert!(
+        text.contains(&token(YELLOW, "[\"with space\"]")),
+        "{text:?}"
+    );
+    assert!(text.contains(&token(YELLOW, "[2.5]")), "{text:?}");
+    assert_eq!(text.matches(GREEN).count(), 1, "{text:?}");
+}
+
+#[test]
+fn a_key_that_is_a_function_is_yellow_and_reads_as_tostring_does() {
+    let text = raw(Profile::Sandbox, "print({ [print] = 1 })");
+    let key = text.lines().nth(1).unwrap().trim_start();
+    assert!(
+        key.starts_with(&format!("{YELLOW}[function: 0x")),
+        "{key:?}"
+    );
+    assert!(key.contains(&format!("]{RESET} = 1")), "{key:?}");
+}
+
+#[test]
+fn true_false_and_nil_are_magenta_at_the_top_level_and_in_a_table() {
+    assert_eq!(
+        raw(Profile::Sandbox, "print(true, false, nil)"),
+        format!(
+            "{}\t{}\t{}\n",
+            token(MAGENTA, "true"),
+            token(MAGENTA, "false"),
+            token(MAGENTA, "nil")
+        )
+    );
+    let text = raw(Profile::Sandbox, "print({ a = true })");
+    assert!(
+        text.contains(&format!("= {}", token(MAGENTA, "true"))),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn a_top_level_string_and_a_number_carry_no_colour() {
+    assert_eq!(
+        raw(Profile::Sandbox, r#"print("message", 1, 2.5)"#),
+        "message\t1\t2.5\n"
+    );
+    // Only the key and the two commas are tokens; the numbers are not.
+    assert_eq!(
+        raw(Profile::Sandbox, "print({ 1, a = 2.5 })"),
+        format!(
+            "{{\n  1{c}\n  {k} = 2.5{c}\n}}\n",
+            k = token(YELLOW, "a"),
+            c = comma()
+        )
+    );
+}
+
+#[test]
+fn a_function_is_red_its_parameters_plain_with_cyan_commas_and_its_address_dim() {
+    let text = raw(Profile::Sandbox, "print(function(foo, bar) end)");
+    let prefix = format!("{} (foo{} bar) {DIM}[0x", token(RED, "function"), comma());
+    assert!(text.starts_with(&prefix), "{text:?}");
+    assert!(text.ends_with(&format!("]{RESET}\n")), "{text:?}");
+}
+
+#[test]
+fn a_function_that_is_not_written_in_lua_is_red_and_dim_with_no_parens() {
+    let text = raw(Profile::Sandbox, "print(string.format)");
+    assert!(
+        text.starts_with(&format!("{} {DIM}[0x", token(RED, "function"))),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn a_function_in_a_table_is_highlighted_as_one_at_the_top() {
+    let text = raw(Profile::Sandbox, "print({ f = function(a) end })");
+    assert!(
+        text.contains(&format!("{} (a) {DIM}[0x", token(RED, "function"))),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn a_cycle_marker_is_dim_as_a_whole() {
+    let text = raw(Profile::Sandbox, "local t = {} t.me = t print(t)");
+    let start = text.find(&format!("{DIM}<cycle: table: 0x")).expect(&text);
+    let marker = &text[start..];
+    let end = marker.find(RESET).unwrap();
+    assert!(marker[..end].ends_with('>'), "{text:?}");
+}
+
+#[test]
+fn what_is_not_a_token_of_a_table_carries_no_colour() {
+    // Braces, `=`, indentation, and text a value gives for itself.
+    let text = raw(
+        Profile::Sandbox,
+        r#"print(setmetatable({}, { __tostring = function() return "point!" end }), { {} })"#,
+    );
+    assert_eq!(text, format!("point!\t{{\n  {{}}{}\n}}\n", comma()));
+    let thread = raw(Profile::Sandbox, "print(coroutine.create(print))");
+    assert!(!thread.contains('\x1b'), "{thread:?}");
+}
+
+#[test]
+fn every_coloured_token_ends_with_a_full_reset() {
+    let text = raw(
+        Profile::Sandbox,
+        r#"local t = { "s", k = true, f = function(a) end } t.me = t print(t)"#,
+    );
+    // Split at each escape: what follows the first is a colour, then a reset, then a colour, and
+    // so on, so a token is never left open and never closed twice.
+    let sequences: Vec<_> = text.split("\x1b[").skip(1).collect();
+    assert!(!sequences.is_empty());
+    for (i, sequence) in sequences.iter().enumerate() {
+        assert_eq!(sequence.starts_with("0m"), i % 2 == 1, "{text:?}");
+    }
+    assert_eq!(sequences.len() % 2, 0, "{text:?}");
+}
+
+#[test]
+fn a_script_editing_ansi_cannot_change_how_print_highlights() {
+    // `print` took its codes when the runtime was built, from a table of its own.
+    let before = raw(Profile::Sandbox, r#"print({ "x", a = 1 })"#);
+    let after = raw(
+        Profile::Sandbox,
+        r#"
+        local ansi = require("ansi")
+        ansi.fg.green, ansi.fg.cyan, ansi.fg.yellow, ansi.reset = "G", "C", "Y", "R"
+        print({ "x", a = 1 })
+        "#,
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
+fn a_script_that_replaces_ansi_before_requiring_it_changes_nothing_either() {
+    let before = raw(Profile::Sandbox, r#"print({ "x" })"#);
+    let after = raw(
+        Profile::Sandbox,
+        r#"package = nil ansi = { fg = { green = "G" }, reset = "R" } print({ "x" })"#,
+    );
+    assert_eq!(before, after);
 }

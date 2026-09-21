@@ -5,12 +5,12 @@
 //! globals under `astra_internal__*` names, and a Lua file, embedded with `include_str!`, that
 //! wraps them into the module table and returns it. Both are Astra's, so `load` does no more
 //! than Astra's own `register_components` and `require` do between them, once per module and
-//! only when the module is first required, with one exception: see [`defines_globals`]. Two
-//! modules, `stores` and `ansi`, have no Rust half at all: they are **pure**, and that is what
-//! sandbox mode registers (ADR 0007).
+//! only when the module is first required, with one exception: see [`defines_globals`]. One
+//! module, `stores`, has no Rust half at all: it is **pure**, and that is what sandbox mode
+//! registers (ADR 0007).
 //!
 //! Every module is behind a Cargo feature that compiles it in (ADR 0007). The types here have all
-//! nine modules in every build, so what an embedder matches on does not vary with features; what
+//! eight modules in every build, so what an embedder matches on does not vary with features; what
 //! varies is which of them are *compiled in*, and asking for one that is not is an error rather
 //! than a silent omission.
 
@@ -43,9 +43,6 @@ pub enum StdModule {
     Stores,
     /// Schema validators, and regular expressions.
     Validation,
-    /// ANSI escape codes for styling terminal text. Original to avarice-rt, not Astra's, and
-    /// **pure**: Lua only, with no Rust behind it (ADR 0008).
-    Ansi,
 }
 
 /// What is known about one module. Every fact about a module that is not code lives in [`TABLE`],
@@ -70,7 +67,7 @@ struct Entry {
 /// One row per module, compiled in or not, in the order [`StdModules::modules`] yields them. A
 /// module's row is at the index of its discriminant, which `the_table_is_in_declaration_order`
 /// holds to.
-const TABLE: [Entry; 9] = [
+const TABLE: [Entry; 8] = [
     Entry {
         module: StdModule::Http,
         name: "http",
@@ -135,14 +132,6 @@ const TABLE: [Entry; 9] = [
         compiled_in: cfg!(feature = "stdlib-validation"),
         pure: false,
     },
-    Entry {
-        module: StdModule::Ansi,
-        name: "ansi",
-        feature: "stdlib-ansi",
-        flag: StdModules::ANSI,
-        compiled_in: cfg!(feature = "stdlib-ansi"),
-        pure: true,
-    },
 ];
 
 const COMPILED_IN_COUNT: usize = {
@@ -175,7 +164,7 @@ const COMPILED_IN: [StdModule; COMPILED_IN_COUNT] = {
 impl StdModule {
     /// The modules compiled into this build, in the order [`StdModules::modules`] yields them.
     ///
-    /// A build that turns a module's feature off has fewer than nine, so this is a slice and not
+    /// A build that turns a module's feature off has fewer than eight, so this is a slice and not
     /// a fixed array.
     pub const ALL: &'static [StdModule] = &COMPILED_IN;
 
@@ -226,8 +215,6 @@ bitflags! {
         const STORES = 1 << 6;
         /// [`StdModule::Validation`].
         const VALIDATION = 1 << 7;
-        /// [`StdModule::Ansi`].
-        const ANSI = 1 << 8;
     }
 }
 
@@ -385,10 +372,6 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static st
         // Astra's `stores` has no Rust half: it is Lua all the way down, and so it is pure.
         #[cfg(feature = "stdlib-stores")]
         StdModule::Stores => Ok(include_str!("../lua/stores.lua")),
-        // `ansi` is not Astra's, and has no Rust half either: it is pure (ADR 0008). Give it one
-        // and it must stop saying so in `TABLE`, and sandbox mode stops registering it.
-        #[cfg(feature = "stdlib-ansi")]
-        StdModule::Ansi => Ok(include_str!("../lua/ansi.lua")),
         // The regex primitive is set by Astra's `utils` Rust half, alongside the tasks, so
         // `validation` sets it too rather than lean on `utils` having been built first. Setting
         // it twice is harmless.
@@ -457,8 +440,7 @@ mod tests {
                 "datetime",
                 "utils",
                 "stores",
-                "validation",
-                "ansi"
+                "validation"
             ]
         );
     }
@@ -512,15 +494,14 @@ mod tests {
         assert_eq!(StdModules::UTILS.bits(), 1 << 5);
         assert_eq!(StdModules::STORES.bits(), 1 << 6);
         assert_eq!(StdModules::VALIDATION.bits(), 1 << 7);
-        assert_eq!(StdModules::ANSI.bits(), 1 << 8);
     }
 
     #[test]
-    fn the_pure_modules_are_stores_and_ansi() {
-        // A tripwire, not a second list to keep in step: giving either a Rust half is a decision
-        // (ADR 0007, ADR 0008), so the test that says which are pure has to be changed with it.
+    fn the_pure_module_is_stores() {
+        // A tripwire, not a second list to keep in step: giving it a Rust half is a decision
+        // (ADR 0007), so the test that says which are pure has to be changed with it.
         let pure: Vec<_> = TABLE.iter().filter(|e| e.pure).map(|e| e.name).collect();
-        assert_eq!(pure, ["stores", "ansi"]);
+        assert_eq!(pure, ["stores"]);
     }
 
     #[test]
@@ -550,7 +531,7 @@ mod tests {
     fn set_algebra_adds_and_subtracts() {
         let without_http = StdModules::all() - StdModules::HTTP;
         assert!(!without_http.contains(StdModules::HTTP));
-        assert_eq!(without_http.modules().count(), 8);
+        assert_eq!(without_http.modules().count(), 7);
         assert_eq!(without_http | StdModules::HTTP, StdModules::all());
         assert_eq!(StdModules::all() & !StdModules::all(), StdModules::NONE);
     }
