@@ -157,7 +157,7 @@ And `avrt` grows a Ctrl-C handler, closing the gap the README admits to.
 
 The workspace gains `crates/avarice-rt-stdlib`, and the root `Cargo.toml`
 becomes a workspace manifest with the existing package in place. The stdlib
-crate carries `LICENSE` (Apache-2.0), `NOTICE` naming ArkForge Labs, and a
+crate carries `LICENSE` (Apache-2.0), `NOTICE` naming ArkForge LLC, and a
 `README.md` explaining the derivation and why `datetime` alone has no Astra
 header.
 
@@ -300,7 +300,7 @@ Every derived file opens with:
 
 ```rust
 // Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/crypto.rs
-// Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
 // See LICENSE and NOTICE in this crate's root.
 //
 // Changes from the original:

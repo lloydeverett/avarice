@@ -1,5 +1,5 @@
 -- Derived from Astra <https://github.com/ArkForgeLabs/Astra>, astra/lua/http.lua
--- Copyright (c) ArkForge Labs, licensed under the Apache License 2.0.
+-- Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
 -- See LICENSE and NOTICE in this crate's root.
 --
 -- Changes from the original:

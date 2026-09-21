@@ -8,7 +8,7 @@ status: accepted
 > otherwise, or mentions `jiff`, the amendment at the end wins.
 
 The **stdlib modules** are adapted from [Astra](https://github.com/ArkForgeLabs/Astra)
-by ArkForge Labs, which is Apache-2.0. They live in `avarice-rt-stdlib`, a
+by ArkForge LLC, which is Apache-2.0. They live in `avarice-rt-stdlib`, a
 separate crate in this repository, so that the derived code and its licence
 obligations sit in one unit.
 
@@ -41,7 +41,7 @@ a hundred and fifty. This was chosen for simplicity over dependency hygiene, and
 reversing it later is a breaking change to every embedder's `Cargo.toml`.
 
 Astra ships no `NOTICE` file, so no `NOTICE` obligations are inherited; the one
-in the stdlib crate is ours, naming ArkForge Labs. Only §4(a)–(d) apply, which
+in the stdlib crate is ours, naming ArkForge LLC. Only §4(a)–(d) apply, which
 the crate's `LICENSE` and per-file headers discharge.
 
 Every derived file carries a header naming the Astra file it came from and a

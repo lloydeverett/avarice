@@ -5,6 +5,10 @@ from version 0.51.2, commit `885586cca0ef065ac80d6a7c702d05e60fbdbb47`, at the s
 (Astra's `astra/lua/` is `lua/` here). `LICENSE` is the canonical Apache-2.0 text rather than
 Astra's copy, which differs from it in section 8 and in the appendix.
 
+The copyright line in `NOTICE` and in each header, `Copyright 2024 ArkForge LLC`, is the one
+Astra's `LICENSE` appendix carries (`Copyright [2024] [ArkForge LLC]`, with the template brackets
+left in). Astra's source files and `Cargo.toml` state no copyright holder of their own.
+
 The rule is that these files stay Astra's. A file that is byte-for-byte Astra's has no header, so
 that it stays that way. A file that has to differ opens with a header naming its Astra file and
 listing every change, and the only changes made are **removals** of what is not taken and the

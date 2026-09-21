@@ -3,7 +3,7 @@
 The **stdlib modules** of avarice-rt: `http`, `fs`, `crypto`, `serde`, `datetime`, `utils` and
 `stores`, as `mlua` values for the `avarice-rt` core to register.
 
-They are [Astra](https://github.com/ArkForgeLabs/Astra)'s, by ArkForge Labs, licensed under the
+They are [Astra](https://github.com/ArkForgeLabs/Astra)'s, by ArkForge LLC, licensed under the
 Apache License 2.0, kept as close to Astra's own files as they can be. This crate exists so that
 the derived code and its licence obligations sit in one unit: the Apache-2.0 boundary is this
 directory. The rest of the repository carries no licence, because it has no obligation to.
@@ -20,7 +20,7 @@ Astra's, which had to change, and what was left out. The short version:
 - A file that differs opens with a header naming the Astra file it came from and listing what
   changed. The list is never empty and is limited to removals and the respelling of an mlua path.
 - `LICENSE` is the Apache License 2.0. `NOTICE` is ours: Astra distributes no `NOTICE` file, so
-  none is inherited, and this one names ArkForge Labs as the source.
+  none is inherited, and this one names ArkForge LLC as the source.
 
 `src/lib.rs` and `src/modules.rs` are not derived and have no header.
 
