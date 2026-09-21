@@ -18,23 +18,48 @@
 //     `AstraBufferMut`, or `(in use)` in place of the length while a `read` or `write` holds the
 //     buffer. The contents are left out on purpose: a buffer can be any size. Nothing Astra does
 //     is altered: this is an addition.
+//   - Put each module declaration behind the Cargo feature that compiles it in (ADR 0007), and the
+//     shared items below (`AstraBuffer` and `AstraBufferMut`, `macros`, `is_table_json` and
+//     `is_table_byte_array`) behind `_astra_buffers`, which `stdlib-http` and `stdlib-fs` turn on.
+//     `astra_serde` and `utils` are behind `_astra_serde` and `_astra_utils`, which the modules
+//     that borrow from them (`http`, `validation`) turn on without registering `serde` or `utils`.
+//     A build that has only some of these leaves part of a file unused (`astra_serde` under `http`
+//     alone, `utils` under `validation` alone, and one of the two buffer types and `is_table_json`
+//     under `fs` alone), so the `dead_code` lint is allowed there. Nothing Astra does is altered:
+//     these are `#[cfg]`, `#[cfg_attr]` and `#[allow]` attributes.
 //   - Everything else is unchanged.
 
+#[cfg(feature = "_astra_buffers")]
 use mlua::{ExternalError, FromLua, LuaSerdeExt};
 
+// `astra_serde` is compiled for `http` as well as for `serde`, and `utils` for `validation` as well
+// as for `utils`; see the header.
+#[cfg(feature = "_astra_serde")]
+#[cfg_attr(not(feature = "stdlib-serde"), allow(dead_code))]
 pub mod astra_serde;
+#[cfg(feature = "stdlib-crypto")]
 pub mod crypto;
+#[cfg(feature = "stdlib-datetime")]
 pub mod datetime;
+#[cfg(feature = "stdlib-fs")]
 pub mod file_system;
+#[cfg(feature = "stdlib-http")]
 pub mod http;
+#[cfg(feature = "_astra_utils")]
+#[cfg_attr(not(feature = "stdlib-utils"), allow(dead_code))]
 pub mod utils;
 
+#[cfg(feature = "_astra_buffers")]
 macro_rules! astra_buffer_types {
     ($name:ident, $buffer_type:ty) => {
+        // `http` uses `AstraBuffer` and `fs` uses `AstraBufferMut`, so a build with one of the two
+        // leaves the other unused.
+        #[allow(dead_code)]
         #[derive(Debug, Clone, FromLua)]
         pub struct $name(std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         macros::impl_deref!($name, std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         impl $name {
+            #[allow(dead_code)]
             pub fn new(bytes: $buffer_type) -> Self {
                 Self(std::sync::Arc::new(tokio::sync::Mutex::new(bytes)))
             }
@@ -75,9 +100,12 @@ macro_rules! astra_buffer_types {
     };
 }
 
+#[cfg(feature = "_astra_buffers")]
 astra_buffer_types!(AstraBuffer, bytes::Bytes);
+#[cfg(feature = "_astra_buffers")]
 astra_buffer_types!(AstraBufferMut, bytes::BytesMut);
 
+#[cfg(feature = "_astra_buffers")]
 #[allow(unused)]
 pub mod macros {
     macro_rules! impl_deref {
@@ -118,6 +146,8 @@ pub mod macros {
     pub(crate) use impl_deref_field;
 }
 
+#[cfg(feature = "_astra_buffers")]
+#[cfg_attr(not(feature = "stdlib-http"), allow(dead_code))]
 fn is_table_json(table: &mlua::Table) -> mlua::Result<bool> {
     let mut has_string_key = false;
     let mut has_non_sequential_integer_key = false;
@@ -140,6 +170,7 @@ fn is_table_json(table: &mlua::Table) -> mlua::Result<bool> {
     Ok(has_string_key || has_non_sequential_integer_key)
 }
 
+#[cfg(feature = "_astra_buffers")]
 pub(crate) fn is_table_byte_array(table: &mlua::Table) -> mlua::Result<bool> {
     let mut i = 1;
     for pair in table.pairs::<i64, i64>() {

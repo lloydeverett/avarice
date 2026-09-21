@@ -5,6 +5,8 @@
 //! it loads and runs here, that the regex primitive is there when this is the only module, and
 //! that a file which defines its functions as globals does not leak them into the runtime.
 
+#![cfg(feature = "stdlib-validation")]
+
 use avarice_rt::mlua::FromLuaMulti;
 use avarice_rt::{Profile, Runtime, StdModules};
 

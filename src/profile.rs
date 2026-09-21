@@ -64,10 +64,12 @@ impl Profile {
         }
     }
 
-    /// The stdlib modules this profile registers: all of them for trusted mode, none for the
-    /// sandbox.
+    /// The stdlib modules this profile registers: every one that is compiled in for trusted mode,
+    /// none for the sandbox.
     ///
-    /// Registered lazily, so a module costs nothing until a program requires it.
+    /// All of them are compiled in unless the build turned some off with Cargo features (see
+    /// [`StdModules::ALL`]). Registered lazily, so a module costs nothing until a program
+    /// requires it.
     pub fn std_modules(self) -> StdModules {
         match self {
             Profile::Sandbox => StdModules::NONE,

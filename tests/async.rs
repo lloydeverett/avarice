@@ -9,12 +9,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use avarice_rt::{was_timed_out, Error, Profile, Runtime, StdModules};
+#[cfg(feature = "stdlib-utils")]
+use avarice_rt::{was_timed_out, Error};
+use avarice_rt::{Profile, Runtime};
 
 fn trusted() -> Runtime {
     Runtime::new(Profile::Trusted).unwrap()
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn a_chunk_can_await_an_async_stdlib_function() {
     // `await` is an async method on a task handle, so this only works if the chunk is being run
@@ -34,6 +37,7 @@ fn a_chunk_can_await_an_async_stdlib_function() {
     assert!(done);
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn the_executor_has_a_timer() {
     // A task that sleeps needs tokio's time driver, which `enable_all` turns on.
@@ -54,6 +58,7 @@ fn the_executor_has_a_timer() {
     assert!(started.elapsed() >= Duration::from_millis(50));
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn await_works_under_pcall() {
     // Lua 5.4's `pcall` is yieldable, so an await inside one must not fail with "attempt to
@@ -86,6 +91,7 @@ fn block_on_drives_any_future_to_completion() {
     assert_eq!(slept, "woke");
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn a_task_spawned_during_the_call_runs_during_the_call() {
     let rt = trusted();
@@ -107,6 +113,7 @@ fn a_task_spawned_during_the_call_runs_during_the_call() {
     assert!(hit);
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn a_task_is_not_driven_between_calls() {
     // The executor is only running while `block_on` is. This is what a REPL that drains tasks
@@ -147,6 +154,7 @@ fn block_on_inside_another_tokio_runtime_panics_with_tokios_own_message() {
     );
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn dropping_a_runtime_does_not_wait_for_its_tasks() {
     let rt = trusted();
@@ -203,12 +211,13 @@ fn dropping_a_runtime_drops_the_tasks_still_on_its_executor() {
     );
 }
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn a_time_limit_is_still_armed_after_an_await() {
     // The clock runs while the chunk is awaiting, so a chunk that waits out its budget is stopped
     // as soon as it executes anything again. ADR 0004 accepts this.
     let rt = Runtime::builder(Profile::Sandbox)
-        .with_std_modules(StdModules::UTILS)
+        .with_std_modules(avarice_rt::StdModules::UTILS)
         .time_limit(Duration::from_millis(50))
         .check_interval(1_000)
         .build()

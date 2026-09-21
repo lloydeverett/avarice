@@ -32,6 +32,7 @@ The vocabulary used throughout — profile, host module, module store, embedder 
 - [The `avrt` command](#the-avrt-command)
 - [Embedding](#embedding)
 - [Profiles](#profiles)
+  - [Choosing stdlib modules](#choosing-stdlib-modules)
 - [Modules](#modules)
 - [`print`](#print)
 - [Limits](#limits)
@@ -129,7 +130,9 @@ terminal until Ctrl-C, which makes an interval, in the REPL, a foreground comman
 avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false }
 ```
 
-`default-features = false` drops clap and reedline, which only the `avrt` binary needs.
+`default-features = false` drops clap and reedline, which only the `avrt` binary needs, and it
+drops the stdlib modules too: they are all compiled in by default, and `default-features = false`
+leaves you the ones you name. See [Choosing stdlib modules](#choosing-stdlib-modules).
 
 Running a chunk is asynchronous, because a stdlib module may await while Lua waits for it:
 `Runtime::exec` and `Runtime::eval` return futures, and `Runtime::block_on` drives one on the
@@ -156,7 +159,7 @@ one sets, and doing so never affects the profile another runtime is built from.
 | `string` `table` `math` `utf8` `coroutine` | yes | yes     |
 | `io`, `os`            | no                       | yes                  |
 | `dofile`, `loadfile`  | no                       | yes                  |
-| Stdlib modules        | none                     | all eight            |
+| Stdlib modules        | none                     | every one compiled in (all eight by default) |
 | `package`             | never                    | never                |
 | `debug`               | `traceback` only         | `traceback` only     |
 | Binary chunks         | refused                  | allowed              |
@@ -192,7 +195,8 @@ print(stdlib()[1])      --> http
 ```
 
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
-`with_std_modules`:
+`with_std_modules`. This is a choice made for each runtime, at run time; the next section is the
+choice made once, for the whole build.
 
 ```rust
 use avarice_rt::{Profile, Runtime, StdModules};
@@ -201,6 +205,37 @@ let rt = Runtime::builder(Profile::Trusted)
     .without_std_modules(StdModules::HTTP)
     .build()?;
 ```
+
+### Choosing stdlib modules
+
+Each stdlib module is behind a Cargo feature that compiles it in: `stdlib-http`, `stdlib-fs`,
+`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores` and
+`stdlib-validation`. `stdlib` turns on all eight and is a default feature, so an embedder who
+changes nothing gets nothing different. One who wants a smaller dependency tree and faster builds
+names the modules instead:
+
+```toml
+[dependencies]
+avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false, features = ["stdlib-crypto", "stdlib-serde"] }
+```
+
+A feature decides what is **compiled in**; a profile still decides what a runtime **registers**.
+`Profile::Trusted` registers every module that is compiled in, `Profile::Sandbox` registers none,
+and a module that is not compiled in cannot be registered by either or by the embedder. The
+feature is not a confinement: Cargo features add up across everything in the dependency graph, so
+another crate may turn a module on for you. Keep a module out of a sandbox by not registering it.
+
+`StdModule` and `StdModules` have every variant and flag in every build, so code that names
+`StdModules::HTTP` compiles either way. `StdModules::ALL` is the set that is compiled in. Asking
+`RuntimeBuilder::build` for a module that is not compiled in is an error that names the feature it
+wants; taking one away with `without_std_modules` does nothing, and is not an error.
+
+Some modules borrow another's Rust, and take it whole, because Astra's files are kept as Astra
+wrote them. `http` compiles Astra's `serde` code (all its formats) and `validation` compiles its
+`utils` code (tasks and `uuid`). Neither registers the module it borrows from: `stdlib-http` alone
+gives `require("http")` and nothing else. So `http` does not make the dependency tree as small as
+`crypto` does. `scripts/check-features.sh` builds and tests the no-module build, the full build
+and each module on its own; see [ADR 0007](docs/adr/0007-stdlib-modules-are-compile-time-optional.md).
 
 `Profile::Trusted` is trusted, not harmless: `os.exit` ends the host process, `io` reads and
 writes whatever the host user can, and the stdlib modules reach the network and the filesystem.
@@ -349,7 +384,8 @@ compiler is needed but a system Lua is not.
 ```console
 $ cargo build --release      # the avrt binary and the library
 $ cargo test                 # unit and integration tests
-$ cargo build --no-default-features   # library only, no clap or reedline
+$ cargo build --no-default-features   # library only, no clap or reedline, and no stdlib modules
+$ scripts/check-features.sh           # tests with no modules, all of them, and each on its own
 ```
 
 ## Licence

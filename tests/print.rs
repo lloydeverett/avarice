@@ -135,6 +135,7 @@ fn a_method_shows_its_self() {
     assert_eq!(after_address(&text), "(self, scale)");
 }
 
+#[cfg(feature = "stdlib-validation")]
 #[test]
 fn a_function_not_written_in_lua_prints_as_tostring_does() {
     // Nothing is known about its parameters, and `()` would claim it takes none. `string.format`
@@ -192,6 +193,7 @@ fn a_function_with_no_parameter_names_shows_question_marks() {
     assert_eq!(after_address(&text), "(?, ?, ...)");
 }
 
+#[cfg(feature = "stdlib-validation")]
 #[test]
 fn a_stdlib_function_prints_the_names_its_lua_layer_gave_it() {
     let text = printed(Profile::Trusted, r#"print(require("validation").regex)"#);

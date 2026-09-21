@@ -451,18 +451,26 @@ impl RuntimeBuilder {
     /// A profile is a set of defaults, so this can add a module to a sandbox as readily as it
     /// can take one from trusted mode. Nothing here is refused the way [`StdLib::PACKAGE`] is:
     /// a stdlib module carries no privilege an embedder's own host module lacks.
+    ///
+    /// A module that is not compiled in (see [`StdModules::ALL`]) cannot be registered, and
+    /// [`build`](Self::build) returns an error naming the Cargo feature it needs.
     pub fn std_modules(mut self, modules: StdModules) -> Self {
         self.std_modules = modules;
         self
     }
 
     /// Adds stdlib modules to the set the runtime registers.
+    ///
+    /// Adding one that is not compiled in is an error at [`build`](Self::build), as for
+    /// [`std_modules`](Self::std_modules).
     pub fn with_std_modules(mut self, modules: StdModules) -> Self {
         self.std_modules |= modules;
         self
     }
 
     /// Removes stdlib modules from the set the runtime registers.
+    ///
+    /// Removing one that is not compiled in does nothing, since it asks for less.
     pub fn without_std_modules(mut self, modules: StdModules) -> Self {
         self.std_modules &= !modules;
         self
@@ -570,6 +578,28 @@ impl RuntimeBuilder {
                  to take away. Register the module from Rust instead"
                     .to_string(),
             ));
+        }
+        let missing = self.std_modules.not_compiled_in();
+        if !missing.is_empty() {
+            // Refused rather than dropped, as `package` is: a runtime that quietly lacks a module
+            // it was asked for disagrees with the code that asked (ADR 0007).
+            let names: Vec<_> = missing
+                .modules()
+                .map(|m| format!("'{}'", m.name()))
+                .collect();
+            let features: Vec<_> = missing
+                .modules()
+                .map(|m| format!("`{}`", m.feature()))
+                .collect();
+            return Err(Error::Config(format!(
+                "the stdlib module{} {} {} not compiled in: build avarice-rt with the {} \
+                 feature{} (`stdlib` turns them all on)",
+                if names.len() == 1 { "" } else { "s" },
+                names.join(", "),
+                if names.len() == 1 { "is" } else { "are" },
+                features.join(", "),
+                if names.len() == 1 { "" } else { "s" },
+            )));
         }
         let lua = Lua::new_with(self.std_libs, LuaOptions::default())?;
 

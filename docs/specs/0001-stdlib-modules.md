@@ -165,14 +165,17 @@ crate carries `LICENSE` (Apache-2.0) and a `README.md` explaining the
 derivation. (Amended: there is no `NOTICE`, Astra having none; see the last
 amendment to ADR 0006.)
 
-`avarice-rt` depends on it unconditionally, with no feature flag, per ADR 0006.
+`avarice-rt` depends on it unconditionally. (Amended: each module is behind a Cargo feature that
+compiles it in, `stdlib` turns on all eight and is a default, and `StdModules::ALL` is the set that
+is compiled in; see [ADR 0007](../adr/0007-stdlib-modules-are-compile-time-optional.md), which
+reverses the "no feature flag" of ADR 0006.)
 
 ### The seam between the two crates
 
 One narrow surface, so the core never learns what a module contains:
 
 - `StdModule` — an enum, one variant per module, each knowing its own `require` name.
-- `StdModules` — a flags type over `StdModule`, with `ALL` and `NONE`, iterable into its set variants.
+- `StdModules` — a flags type over `StdModule`, with `ALL` (every module compiled in) and `NONE`, iterable into its set variants.
 - `avarice_rt_stdlib::loader(StdModule) -> impl Fn(&Lua) -> mlua::Result<Value> + 'static` — the module's value, built on demand.
 
 `RuntimeBuilder::build` iterates the selected `StdModules` and hands each

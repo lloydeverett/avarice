@@ -51,8 +51,8 @@ modules** to.
 ## Trusted mode
 
 The profile for Lua code the author vouches for. The full standard library is
-available, `package` and `debug` excepted, and every **stdlib module** is
-registered.
+available, `package` and `debug` excepted, and every **stdlib module** that is
+**compiled in** is registered.
 
 Trusted does not mean harmless: `os.exit` ends the host process, `io` reaches
 whatever the host user can, and the stdlib modules reach the network and the
@@ -73,8 +73,24 @@ A **host module** that avarice-rt ships, rather than one an embedder wrote.
 
 Stdlib modules are host modules like any other, and carry no privilege an
 embedder's own module lacks. What distinguishes them is only that a **profile**
-decides whether they are registered: **trusted mode** registers them all,
-**sandbox mode** registers none.
+decides whether they are registered: **trusted mode** registers every one that
+is **compiled in**, **sandbox mode** registers none.
+
+A stdlib module is in one of three states, and "available" names none of them:
+**compiled in** (part of the build), **registered** (a runtime has it, so
+`require` finds it), and loaded (built by the first `require`). Each implies
+the one before.
+
+## Compiled in
+
+A **stdlib module** that is part of an avarice-rt build. Chosen by the
+**embedder** when it builds, once, for every runtime in that program; a module
+that is not compiled in cannot be registered by any **profile** or by the
+embedder at runtime.
+
+All are compiled in unless the embedder opts out. Its purpose is a smaller
+dependency tree and faster builds, not confinement: **sandbox mode** withholds
+capability by not registering, and does not rely on a module being compiled out.
 
 Named for Lua's standard library by analogy, and separate from it: the standard
 library is Lua's own, opened by `mlua`, and reachable without `require`.

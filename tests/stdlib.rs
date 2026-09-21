@@ -6,7 +6,10 @@
 
 mod common;
 
-use avarice_rt::{FsStore, Profile, Runtime, StdModules};
+#[cfg(feature = "stdlib-crypto")]
+use avarice_rt::FsStore;
+use avarice_rt::{Profile, Runtime, StdModule, StdModules};
+#[cfg(any(feature = "stdlib-crypto", feature = "stdlib-fs"))]
 use common::TempDir;
 
 const NAMES: [&str; 8] = [
@@ -19,6 +22,17 @@ const NAMES: [&str; 8] = [
     "stores",
     "validation",
 ];
+
+/// The names of the modules this build has, which is what trusted mode registers (ADR 0007). The
+/// tests below that need one module in particular are gated on its feature; the rest hold whatever
+/// is compiled in.
+fn compiled_in() -> Vec<&'static str> {
+    StdModule::ALL
+        .iter()
+        .copied()
+        .map(StdModule::name)
+        .collect()
+}
 
 /// Whether `require(name)` succeeds in `rt`.
 fn requirable(rt: &Runtime, name: &str) -> bool {
@@ -37,10 +51,10 @@ fn reachable(rt: &Runtime) -> Vec<&'static str> {
 // -- Selection ---------------------------------------------------------------------------------
 
 #[test]
-fn trusted_mode_registers_every_stdlib_module() {
+fn trusted_mode_registers_every_stdlib_module_that_is_compiled_in() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
-    assert_eq!(reachable(&rt), NAMES);
-    for name in NAMES {
+    assert_eq!(reachable(&rt), compiled_in());
+    for name in compiled_in() {
         assert!(rt.has_module(name), "{name}");
     }
 }
@@ -71,10 +85,14 @@ fn trusted_minus_one_module_keeps_the_others() {
         .build()
         .unwrap();
     assert!(!rt.has_module("http"));
-    let expected: Vec<_> = NAMES.into_iter().filter(|name| *name != "http").collect();
+    let expected: Vec<_> = compiled_in()
+        .into_iter()
+        .filter(|name| *name != "http")
+        .collect();
     assert_eq!(reachable(&rt), expected);
 }
 
+#[cfg(feature = "stdlib-validation")]
 #[test]
 fn validation_can_be_taken_from_trusted_mode_and_added_to_a_sandbox() {
     let without = Runtime::builder(Profile::Trusted)
@@ -91,6 +109,7 @@ fn validation_can_be_taken_from_trusted_mode_and_added_to_a_sandbox() {
     assert_eq!(reachable(&with), ["validation"]);
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn sandbox_plus_one_module_has_that_one_and_no_other() {
     let rt = Runtime::builder(Profile::Sandbox)
@@ -101,6 +120,7 @@ fn sandbox_plus_one_module_has_that_one_and_no_other() {
     assert_eq!(reachable(&rt), ["fs"]);
 }
 
+#[cfg(all(feature = "stdlib-crypto", feature = "stdlib-stores"))]
 #[test]
 fn std_modules_replaces_the_set() {
     let rt = Runtime::builder(Profile::Trusted)
@@ -117,9 +137,10 @@ fn the_profile_is_unchanged_by_reconfiguring_one_runtime() {
         .build()
         .unwrap();
     let rt = Runtime::new(Profile::Trusted).unwrap();
-    assert_eq!(reachable(&rt), NAMES);
+    assert_eq!(reachable(&rt), compiled_in());
 }
 
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn a_stdlib_module_is_not_built_until_it_is_required() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -140,6 +161,7 @@ fn a_stdlib_module_is_not_built_until_it_is_required() {
     assert!(after, "requiring crypto did not build it");
 }
 
+#[cfg(feature = "stdlib-stores")]
 #[test]
 fn a_stdlib_module_is_built_once() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -149,6 +171,7 @@ fn a_stdlib_module_is_built_once() {
     assert!(same);
 }
 
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn a_stdlib_name_shadows_a_store_module_of_that_name() {
     let dir = TempDir::new();
@@ -175,6 +198,7 @@ fn a_stdlib_name_shadows_a_store_module_of_that_name() {
     assert!(other);
 }
 
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn a_module_that_is_not_registered_leaves_the_stores_module_reachable() {
     let dir = TempDir::new();
@@ -192,6 +216,7 @@ fn a_module_that_is_not_registered_leaves_the_stores_module_reachable() {
 
 // -- stores ------------------------------------------------------------------------------------
 
+#[cfg(feature = "stdlib-stores")]
 #[test]
 fn pubsub_delivers_to_subscribers_of_a_topic() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -213,6 +238,7 @@ fn pubsub_delivers_to_subscribers_of_a_topic() {
     assert_eq!(got, "greetings:hello");
 }
 
+#[cfg(feature = "stdlib-stores")]
 #[test]
 fn pubsub_subscribe_takes_a_topic_and_a_callback() {
     // Astra's documentation describes a three-argument form, with an observable in the middle.
@@ -236,6 +262,7 @@ fn pubsub_subscribe_takes_a_topic_and_a_callback() {
     assert_eq!(got, 5);
 }
 
+#[cfg(feature = "stdlib-stores")]
 #[test]
 fn an_observable_notifies_its_observers() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -259,6 +286,7 @@ fn an_observable_notifies_its_observers() {
 
 // -- crypto ------------------------------------------------------------------------------------
 
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn hashes_match_the_published_vectors_for_abc() {
     // FIPS 180-4 and FIPS 202 example values for the message "abc".
@@ -294,6 +322,7 @@ fn hashes_match_the_published_vectors_for_abc() {
     }
 }
 
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn base64_round_trips_text_in_both_alphabets() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -312,6 +341,7 @@ fn base64_round_trips_text_in_both_alphabets() {
     assert!(ok);
 }
 
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn decoding_malformed_base64_is_an_error_a_script_can_pcall() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -326,6 +356,7 @@ fn decoding_malformed_base64_is_an_error_a_script_can_pcall() {
 
 // -- serde -------------------------------------------------------------------------------------
 
+#[cfg(feature = "stdlib-serde")]
 #[test]
 fn json_round_trips_a_table() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -343,6 +374,7 @@ fn json_round_trips_a_table() {
     assert!(ok);
 }
 
+#[cfg(feature = "stdlib-serde")]
 #[test]
 fn decoding_malformed_json_is_an_error_a_script_can_pcall() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -357,6 +389,7 @@ fn decoding_malformed_json_is_an_error_a_script_can_pcall() {
 
 // -- datetime ----------------------------------------------------------------------------------
 
+#[cfg(feature = "stdlib-datetime")]
 #[test]
 fn datetime_parses_and_formats_an_instant() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -369,6 +402,7 @@ fn datetime_parses_and_formats_an_instant() {
     assert_eq!(got, "2024-01-02T03:04:05+00:00");
 }
 
+#[cfg(feature = "stdlib-datetime")]
 #[test]
 fn datetime_builds_from_civil_fields() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -383,6 +417,7 @@ fn datetime_builds_from_civil_fields() {
 
 // -- Reaching the rest -------------------------------------------------------------------------
 
+#[cfg(feature = "stdlib-utils")]
 #[test]
 fn uuid_and_env_get_work() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -410,7 +445,7 @@ fn listed(rt: &Runtime) -> Vec<String> {
 #[test]
 fn stdlib_lists_the_names_require_takes() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
-    assert_eq!(listed(&rt), NAMES);
+    assert_eq!(listed(&rt), compiled_in());
 }
 
 #[test]
@@ -421,9 +456,16 @@ fn stdlib_lists_what_this_runtime_has_and_nothing_else() {
         .without_std_modules(StdModules::HTTP)
         .build()
         .unwrap();
-    let expected: Vec<_> = NAMES.into_iter().filter(|name| *name != "http").collect();
+    let expected: Vec<_> = compiled_in()
+        .into_iter()
+        .filter(|name| *name != "http")
+        .collect();
     assert_eq!(listed(&rt), expected);
+}
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-validation"))]
+#[test]
+fn stdlib_lists_the_modules_added_to_a_sandbox() {
     let rt = Runtime::builder(Profile::Sandbox)
         .with_std_modules(StdModules::FS | StdModules::VALIDATION)
         .build()
@@ -454,9 +496,17 @@ fn stdlib_does_not_build_any_module() {
 #[test]
 fn stdlib_hands_out_a_fresh_list_each_call() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
+    let names = compiled_in();
+    let first = names
+        .first()
+        .map_or("nil".to_string(), |name| format!("{name:?}"));
     let independent: bool = rt
         .block_on(rt.eval(
-            "local a = stdlib() a[1] = 'changed' table.remove(a) return stdlib()[1] == 'http' and #stdlib() == 8",
+            format!(
+                "local a = stdlib() a[1] = 'changed' table.remove(a) \
+                 return stdlib()[1] == {first} and #stdlib() == {}",
+                names.len()
+            ),
             "=test",
         ))
         .unwrap();
@@ -468,6 +518,7 @@ fn stdlib_hands_out_a_fresh_list_each_call() {
 // A userdata's contents live in Rust and Lua cannot enumerate them, so what `print` shows for one
 // is what its `__tostring` says. These check what `fs`'s do, through `print`.
 
+#[cfg(feature = "stdlib-fs")]
 /// What a trusted runtime prints for `source`, which is given `fs` and `dir`, as a Lua string.
 fn printed_in_fs(dir: &TempDir, source: &str) -> String {
     let buffer = common::Buffer::new();
@@ -481,6 +532,7 @@ fn printed_in_fs(dir: &TempDir, source: &str) -> String {
     buffer.contents()
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn a_dir_entry_prints_its_type_name_and_path() {
     let dir = TempDir::new();
@@ -489,6 +541,7 @@ fn a_dir_entry_prints_its_type_name_and_path() {
     assert_eq!(printed, format!("AstraDirEntry({})\n", file.display()));
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn tostring_of_a_dir_entry_is_what_print_shows() {
     let dir = TempDir::new();
@@ -497,6 +550,7 @@ fn tostring_of_a_dir_entry_is_what_print_shows() {
     assert_eq!(text, format!("AstraDirEntry({})\n", file.display()));
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn a_directory_listing_shows_each_entry_rather_than_its_address() {
     let dir = TempDir::new();
@@ -518,6 +572,7 @@ fn a_directory_listing_shows_each_entry_rather_than_its_address() {
     );
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn an_entry_type_prints_what_kind_of_entry_it_is() {
     let dir = TempDir::new();
@@ -531,6 +586,7 @@ fn an_entry_type_prints_what_kind_of_entry_it_is() {
     assert_eq!(printed, "AstraEntryType(file)\nAstraEntryType(dir)\n");
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 #[cfg(unix)]
 fn a_symlink_prints_as_a_symlink() {
@@ -546,6 +602,7 @@ fn a_symlink_prints_as_a_symlink() {
     assert_eq!(printed, "AstraEntryType(symlink)\n");
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 #[cfg(unix)]
 fn a_dir_entry_whose_name_is_not_utf8_still_prints() {
@@ -560,6 +617,7 @@ fn a_dir_entry_whose_name_is_not_utf8_still_prints() {
     assert!(printed.contains("caf\u{fffd}"), "{printed}");
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn a_file_prints_its_path() {
     let dir = TempDir::new();
@@ -568,6 +626,7 @@ fn a_file_prints_its_path() {
     assert_eq!(printed, format!("AstraFile({})\n", file.display()));
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn metadata_prints_its_type_and_length() {
     let dir = TempDir::new();
@@ -585,6 +644,7 @@ fn metadata_prints_its_type_and_length() {
     assert!(second.starts_with("AstraMetadata(dir, len "), "{second}");
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn file_permissions_print_whether_they_are_readonly() {
     let dir = TempDir::new();
@@ -604,6 +664,7 @@ fn file_permissions_print_whether_they_are_readonly() {
     assert!(!std::fs::metadata(file).unwrap().permissions().readonly());
 }
 
+#[cfg(feature = "stdlib-fs")]
 #[test]
 fn a_buffer_prints_its_length_and_never_its_contents() {
     let dir = TempDir::new();
@@ -619,6 +680,7 @@ fn a_buffer_prints_its_length_and_never_its_contents() {
     assert_eq!(printed, "AstraBufferMut(len 0)\nAstraBufferMut(len 11)\n");
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-validation"))]
 #[test]
 fn a_regex_prints_its_pattern() {
     let dir = TempDir::new();
@@ -626,6 +688,7 @@ fn a_regex_prints_its_pattern() {
     assert_eq!(printed, "AstraRegex(/(\\d+)-x/)\n");
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-http"))]
 /// Serves `response` once, on a port of its own, and returns the URL to ask for.
 fn serve_once(response: &'static str) -> String {
     use std::io::{Read, Write};
@@ -647,6 +710,7 @@ fn serve_once(response: &'static str) -> String {
     url
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-http"))]
 #[test]
 fn an_http_request_prints_its_method_and_url() {
     let dir = TempDir::new();
@@ -665,6 +729,7 @@ fn an_http_request_prints_its_method_and_url() {
     );
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-http"))]
 #[test]
 fn an_http_request_does_not_print_its_headers_or_body() {
     // A request is printed to find out which one it is, and a header is where a token lives.
@@ -682,6 +747,7 @@ fn an_http_request_does_not_print_its_headers_or_body() {
     assert!(printed.starts_with("HTTPClientRequest(POST "), "{printed}");
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-http"))]
 #[test]
 fn an_http_response_prints_its_status_and_url_and_its_body_prints_its_length() {
     let url = serve_once(
@@ -703,6 +769,7 @@ fn an_http_response_prints_its_status_and_url_and_its_body_prints_its_length() {
     assert!(!printed.contains("SECRET"), "{printed}");
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-utils"))]
 #[test]
 fn a_task_handle_prints_where_the_task_has_got_to() {
     let dir = TempDir::new();
@@ -726,6 +793,7 @@ fn a_task_handle_prints_where_the_task_has_got_to() {
     );
 }
 
+#[cfg(all(feature = "stdlib-fs", feature = "stdlib-utils"))]
 #[test]
 fn printing_a_task_handle_that_is_being_awaited_does_not_raise() {
     // `await` holds the handle for as long as it waits, so anything else that reads it meanwhile

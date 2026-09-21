@@ -24,20 +24,47 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
+default = ["cli", "stdlib"]
 # The `avrt` command-line program. Embedders should depend on avarice-rt with
 # `default-features = false` to avoid pulling in clap and reedline. `tokio/signal` is what
 # catches Ctrl-C.
 cli = ["dep:clap", "dep:reedline", "tokio/signal"]
 
+# The stdlib modules, one feature each, forwarded to the stdlib crate under the same name (ADR
+# 0007). A feature decides whether a module is compiled in; which a runtime registers is the
+# profile's business. An embedder that wants a few of them depends on avarice-rt with
+# `default-features = false` and names those.
+stdlib = [
+  "stdlib-http",
+  "stdlib-fs",
+  "stdlib-crypto",
+  "stdlib-serde",
+  "stdlib-datetime",
+  "stdlib-utils",
+  "stdlib-stores",
+  "stdlib-validation",
+]
+# `net` is the tokio driver reqwest needs, so it follows `http`.
+stdlib-http = ["avarice-rt-stdlib/stdlib-http", "tokio/net"]
+stdlib-fs = ["avarice-rt-stdlib/stdlib-fs"]
+stdlib-crypto = ["avarice-rt-stdlib/stdlib-crypto"]
+stdlib-serde = ["avarice-rt-stdlib/stdlib-serde"]
+stdlib-datetime = ["avarice-rt-stdlib/stdlib-datetime"]
+stdlib-utils = ["avarice-rt-stdlib/stdlib-utils"]
+stdlib-stores = ["avarice-rt-stdlib/stdlib-stores"]
+stdlib-validation = ["avarice-rt-stdlib/stdlib-validation"]
+
 [dependencies]
 # `async` for `exec_async` and friends; the stdlib crate adds `send` on top, by unification.
 mlua = { workspace = true, features = ["async"] }
-# The core owns the executor (ADR 0004). `net` and `time` are the drivers the stdlib's http and
-# task timers need, so the runtime is built with them rather than relying on another crate's
-# features arriving by unification. `sync` is for waking a waiting chunk when it is cancelled.
-tokio = { version = "1.52.3", features = ["net", "rt", "sync", "time"] }
-avarice-rt-stdlib = { path = "crates/avarice-rt-stdlib" }
+# The core owns the executor (ADR 0004). `time` is the driver the stdlib's task timers need, so the
+# runtime is built with it rather than relying on another crate's features arriving by
+# unification; `net` is the one http needs, and `stdlib-http` adds it. `sync` is for waking a
+# waiting chunk when it is cancelled.
+tokio = { version = "1.52.3", features = ["rt", "sync", "time"] }
+# Its defaults are off so that the features above are the whole selection. mlua's `send` still
+# arrives through it, in every build, which the core's `Send + Sync` loader bound relies on.
+avarice-rt-stdlib = { path = "crates/avarice-rt-stdlib", default-features = false }
 thiserror = "2.0"
 clap = { version = "4.6", features = ["derive"], optional = true }
 reedline = { version = "0.51", optional = true }

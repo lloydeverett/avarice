@@ -39,6 +39,24 @@ the Lua layers `templates.lua`, `database.lua` and `test.lua`; the WebSocket cli
 satisfy mlua 0.12's `Sync` bound on userdata under the `send` feature; and Astra's `main.rs`,
 `commands/` and `build.rs`.
 
+## Features
+
+Each module is behind a Cargo feature named `stdlib-<module>`, and `stdlib` turns on all eight; it
+is this crate's default, and `avarice-rt` turns the defaults off and forwards the same names, so a
+feature means the same on both. A module's dependencies are `optional`, behind its feature
+([ADR 0007](../../docs/adr/0007-stdlib-modules-are-compile-time-optional.md)).
+
+Astra's files are not split, so a module that needs another's Rust takes the whole file. Three
+features that start with an underscore, `_astra_serde`, `_astra_utils` and `_astra_buffers`, are
+not part of the API: they compile that file, and the dependencies it needs, without registering the
+module it belongs to. `http` turns on `_astra_serde` (for `sanetize_lua_input`) and `_astra_buffers`
+(for `AstraBuffer`), `fs` turns on `_astra_buffers`, and `validation` turns on `_astra_utils` (for
+`AstraRegex`). Every gate is an attribute in `components/mod.rs`, which is the only Astra file that
+changed for it, and its header lists them; no other file has a `#[cfg]` added.
+
+`StdModule` has every variant in every build, and `StdModules::ALL` is the modules compiled in.
+`loader` for one that is not returns an error naming the feature, and does not panic.
+
 ## How a module is built
 
 Astra's own shape: a Rust half, `src/components/<module>.rs`, whose `register_to_lua(lua)` sets

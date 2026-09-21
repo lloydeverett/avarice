@@ -1,6 +1,8 @@
 //! What the sandbox profile does and does not hand to Lua.
 
-use avarice_rt::{was_out_of_memory, Profile, Runtime, StdModule, DEFAULT_SANDBOX_MEMORY_LIMIT};
+use avarice_rt::{
+    was_out_of_memory, Profile, Runtime, StdModule, StdModules, DEFAULT_SANDBOX_MEMORY_LIMIT,
+};
 
 fn sandbox() -> Runtime {
     Runtime::new(Profile::Sandbox).expect("sandbox runtime")
@@ -242,7 +244,8 @@ fn opening_the_debug_library_is_refused_rather_than_ignored() {
 #[test]
 fn reaches_no_stdlib_module_and_so_neither_the_network_nor_the_filesystem_through_one() {
     let rt = sandbox();
-    for name in StdModule::ALL.map(StdModule::name) {
+    // Every module, including any this build does not have: none may be reachable.
+    for name in StdModules::all().modules().map(StdModule::name) {
         let absent = rt
             .block_on(rt.eval::<bool>(
                 &format!("local ok = pcall(require, '{name}') return not ok"),

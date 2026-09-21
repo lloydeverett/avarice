@@ -4,6 +4,8 @@
 //! The tasks here are the stdlib's own (`utils.spawn_*`), whose handles live inside Lua; the
 //! runtime has no list of them, so everything below is about what it can tell from the executor.
 
+#![cfg(feature = "stdlib-utils")]
+
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

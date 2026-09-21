@@ -19,5 +19,5 @@ Recorded in [ADR 0006](../../adr/0006-stdlib-derived-from-astra.md).
 - [x] It carries the full Apache-2.0 text as `LICENSE`, and, at the time, a `NOTICE` naming ArkForge LLC. Astra ships no `NOTICE`, so nothing was inherited; the `NOTICE` has since been deleted (last amendment to ADR 0006).
 - [x] Its `README` explains what the crate is derived from, the per-file header contract, and — superseded — why `datetime` alone carries no Astra header. Under the amendment `datetime` is Astra's like the rest, so there is no such inconsistency to explain; the README describes where each file came from instead.
 - [x] The repository root remains unlicensed. Only this crate has an obligation.
-- [x] `avarice-rt` depends on it unconditionally, with no feature flag. This is deliberate and its cost is recorded in ADR 0006: every embedder links the stdlib's dependencies whether or not any Lua calls them.
+- [x] `avarice-rt` depends on it unconditionally, with no feature flag. This was deliberate and its cost is recorded in ADR 0006 (reversed by ADR 0007, which puts each module behind a feature): every embedder links the stdlib's dependencies whether or not any Lua calls them.
 - [x] `cargo build` and `cargo test` are green at the workspace root.

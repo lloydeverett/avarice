@@ -33,7 +33,9 @@ task model that needs `mlua`'s `send`. None of that survives contact with
 [ADR 0004](0004-async-first-on-tokio.md).
 
 **Making the dependency optional, behind a feature** was recommended and
-rejected by the author. The consequence is recorded below.
+rejected by the author. The consequence is recorded below. (Reversed by
+[ADR 0007](0007-stdlib-modules-are-compile-time-optional.md), which puts each module behind its own
+feature.)
 
 ## Consequences
 
