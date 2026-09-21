@@ -4,6 +4,8 @@ status: accepted
 
 # `avrt` strips escape codes from its output when it is not a colour terminal
 
+> **Amended 2026-09-21; the amendment at the end wins.** `anstream` is replaced by a filter of
+> `avrt`'s own, which drops every escape sequence other than colour on a colour terminal too.
 `avrt` writes what a program prints through [`anstream`](https://docs.rs/anstream), which passes
 ANSI escape codes to a colour terminal and removes them everywhere else: a pipe, a file, a terminal
 with `TERM=dumb`, or any destination while `NO_COLOR` is set. Apart from the REPL's prompt, `avrt`
@@ -100,3 +102,21 @@ the next. `ansi`'s codes are always complete strings, so a program has to work t
 
 **The stdlib's own diagnostics are not covered.** `avarice-rt-stdlib` has a few `println!` calls
 of its own. That is library code, outside `avrt`, and is left alone.
+
+## Amendment, 2026-09-21: `anstream` is replaced, and more is filtered
+
+[ADR 0010](0010-avrt-filters-terminal-escapes-itself.md) replaces `anstream` with a filter built on
+`anstyle-parse`, and it is where the mechanism is described. What it changes here:
+
+- **With colour on, `print` no longer passes every byte through.** Only text and colour do. Every
+  other escape sequence, and every control character other than ASCII whitespace, is dropped on a
+  colour terminal as it is on a pipe. The "`print` is a text function" decision above now holds in
+  both modes.
+- **The single-character introducers are dropped.** `anstream` kept a UTF-8 encoded C1 control such
+  as U+009B with colour off.
+- **An unterminated escape sequence no longer carries over.** The filter forgets at each flush,
+  which `print` does after every call.
+- **The dependency is `anstyle-parse` and `anstyle-query`**, optional behind `cli` on the terms
+  above. `anstream` stays in the tree through clap.
+
+What this ADR decides about the environment, the REPL's prompt, `io.write` and the flush stands.

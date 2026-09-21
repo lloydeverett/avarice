@@ -1,18 +1,19 @@
 //! `avrt`: the command-line interpreter.
 
+mod escape;
 mod interrupt;
 mod output;
 mod repl;
 
 use std::future::Future;
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anstream::{eprintln, println};
 use avarice_rt::mlua::{Table, Variadic};
 use avarice_rt::{was_cancelled, CancelHandle, Error, FsStore, Profile, Runtime};
 use clap::Parser;
+use output::{eprintln, println};
 
 /// Exit code for a Lua error, matching stock `lua`.
 const EXIT_LUA_ERROR: u8 = 1;
@@ -309,8 +310,7 @@ fn print_version() {
 /// appends the traceback to the error message itself, so it is already part of what is printed
 /// here.
 fn report(err: &CliError) {
-    let mut stderr = anstream::stderr().lock();
-    let _ = writeln!(stderr, "avrt: {}", message_of(err));
+    eprintln!("avrt: {}", message_of(err));
 }
 
 /// Strips the wrapper mlua puts around a Lua error, leaving what the script would have seen.

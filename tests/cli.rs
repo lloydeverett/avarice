@@ -574,7 +574,7 @@ mod colour {
 
     #[test]
     fn print_is_text_so_control_bytes_are_dropped_when_colour_is_off() {
-        // ADR 0009: `print` is a text function. A NUL is not text, so the filter drops it;
+        // ADRs 0009 and 0010: `print` is a text function. A NUL is not text, so the filter drops it;
         // `io.write` is how a program writes bytes it means to be taken literally.
         let output = avrt_with(&[], &["-e", r#"print("a\0b")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
@@ -586,10 +586,61 @@ mod colour {
     }
 
     #[test]
-    fn print_passes_control_bytes_through_when_colour_is_forced() {
-        let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print("a\0b")"#]);
+    fn print_drops_control_bytes_even_when_colour_is_forced() {
+        // Forcing colour lets colour through and nothing else (ADR 0010).
+        let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print("a\0b\7c")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
-        assert_eq!(output.stdout, b"a\0b\n");
+        assert_eq!(output.stdout, b"abc\n");
+    }
+
+    #[test]
+    fn only_colour_survives_when_colour_is_forced() {
+        // Erase the screen, set the window title, and colour: of the three only the last is kept.
+        let output = avrt_with(
+            &[("CLICOLOR_FORCE", "1")],
+            &["-e", r#"print("a\27[2Jb\27]0;title\7c\27[31md")"#],
+        );
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), format!("abc{RED}d\n"));
+    }
+
+    #[test]
+    fn other_escape_sequences_are_dropped_when_colour_is_off() {
+        let output = avrt_with(&[], &["-e", r#"print("a\27[2Jb\27]0;title\7c\27[31md")"#]);
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), "abcd\n");
+    }
+
+    #[test]
+    fn the_single_character_form_of_csi_is_dropped() {
+        // U+009B is CSI as one character, and a terminal in UTF-8 mode may honour it. Nothing that
+        // strips only the 7-bit form keeps a colour off the terminal under `NO_COLOR`.
+        for env in [&[][..], &[("NO_COLOR", "1")], &[("CLICOLOR_FORCE", "1")]] {
+            let output = avrt_with(env, &["-e", r#"print("a\u{9b}31mb")"#]);
+            assert!(output.status.success(), "{}", stderr_of(&output));
+            assert_eq!(output.stdout, b"a31mb\n", "{env:?}");
+        }
+    }
+
+    #[test]
+    fn a_string_cut_in_the_middle_of_a_character_keeps_what_follows() {
+        // `sub` cuts by bytes, so a program can hand `print` half a character. The newline that
+        // follows it is not lost with it.
+        for env in [&[][..], &[("CLICOLOR_FORCE", "1")]] {
+            let output = avrt_with(env, &["-e", r#"print(("é"):sub(1, 1)) print("next")"#]);
+            assert!(output.status.success(), "{}", stderr_of(&output));
+            assert_eq!(stdout_of(&output), "\u{fffd}\nnext\n", "{env:?}");
+        }
+    }
+
+    #[test]
+    fn an_unfinished_escape_does_not_swallow_the_next_print() {
+        let output = avrt_with(
+            &[("CLICOLOR_FORCE", "1")],
+            &["-e", r#"print("a\27[") print("\27[31mb")"#],
+        );
+        assert!(output.status.success(), "{}", stderr_of(&output));
+        assert_eq!(stdout_of(&output), format!("a\n{RED}b\n"));
     }
 
     #[test]

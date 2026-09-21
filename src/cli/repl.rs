@@ -3,7 +3,6 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use anstream::{eprintln, println, AutoStream, ColorChoice};
 use avarice_rt::mlua::{self, Function, MultiValue};
 use avarice_rt::{Error, Runtime};
 use reedline::{
@@ -11,6 +10,8 @@ use reedline::{
     Reedline, Signal, SimpleMatchHighlighter,
 };
 
+use super::escape::takes_colour;
+use super::output::{eprintln, println};
 use super::{run_and_settle_tasks, CliError};
 
 /// How many entries the history file keeps.
@@ -62,7 +63,7 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
     // Reedline paints to standard error, so that is the stream whose colour it follows. It reads
     // no environment variable itself, and its default highlighter colours typed text, so both are
     // set explicitly (ADR 0009). An empty `SimpleMatchHighlighter` leaves the text unstyled.
-    let colour = AutoStream::choice(&std::io::stderr()) != ColorChoice::Never;
+    let colour = takes_colour(&std::io::stderr());
     let mut editor = Reedline::create()
         .with_ansi_colors(colour)
         .with_highlighter(Box::new(SimpleMatchHighlighter::default()));
