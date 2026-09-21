@@ -156,7 +156,7 @@ one sets, and doing so never affects the profile another runtime is built from.
 | `string` `table` `math` `utf8` `coroutine` | yes | yes     |
 | `io`, `os`            | no                       | yes                  |
 | `dofile`, `loadfile`  | no                       | yes                  |
-| Stdlib modules        | none                     | all seven            |
+| Stdlib modules        | none                     | all eight            |
 | `package`             | never                    | never                |
 | `debug`               | `traceback` only         | `traceback` only     |
 | Binary chunks         | refused                  | allowed              |
@@ -177,7 +177,8 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 `xpcall(f, debug.traceback)` idiom and needs no library open. Code that feature-detects on
 `debug.getinfo` will correctly find it missing.
 
-**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils` and `stores`, derived
+**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
+`validation`, derived
 from [Astra](https://github.com/ArkForgeLabs/Astra) and kept in their own Apache-2.0 crate,
 [`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They are registered as lazy host
 modules, so `require("crypto")` builds `crypto` and a program that never asks for it costs nothing.

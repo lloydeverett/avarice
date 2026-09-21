@@ -17,7 +17,8 @@ they block.
 | [09](09-utils-tasks-regex-env.md) | `utils` — tasks, regular expressions, `env.get` | 01, 04 |
 | [10](10-http.md) | `http` | 01, 04 |
 | [11](11-avrt-task-lifecycle-and-ctrl-c.md) | `avrt` task lifecycle, and Ctrl-C | 09 |
-| [12](12-readme-and-crate-documentation.md) | README and crate documentation | 05–10 |
+| [12](12-readme-and-crate-documentation.md) | README and crate documentation | 05–10, 13 |
+| [13](13-validation.md) | `validation` | 04 |
 
 Three tickets have no blockers and can start in any order: the async conversion,
 the workspace split, and `print`. They touch different things.
@@ -32,7 +33,7 @@ own. It is a wide refactor with no useful expand–contract, because keeping the
 synchronous entry points alongside the async ones is exactly the trap
 [ADR 0004](../../adr/0004-async-first-on-tokio.md) rejects.
 
-**Amended 2026-09-20; 01, 03 and 11 done 2026-09-21.** Tickets 01, 02, 03 and 04 are done in their verbatim-sources form; the rest of
+**Amended 2026-09-20; 01, 03, 11 and 13 done 2026-09-21.** Tickets 01, 02, 03 and 04 are done in their verbatim-sources form; the rest of
 this breakdown is unchanged in order but its checklists still describe adapted modules, and each of
 05–10 needs rereading against the amendments to
 [ADR 0004](../../adr/0004-async-first-on-tokio.md) and

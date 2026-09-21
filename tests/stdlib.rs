@@ -9,8 +9,15 @@ mod common;
 use avarice_rt::{FsStore, Profile, Runtime, StdModules};
 use common::TempDir;
 
-const NAMES: [&str; 7] = [
-    "http", "fs", "crypto", "serde", "datetime", "utils", "stores",
+const NAMES: [&str; 8] = [
+    "http",
+    "fs",
+    "crypto",
+    "serde",
+    "datetime",
+    "utils",
+    "stores",
+    "validation",
 ];
 
 /// Whether `require(name)` succeeds in `rt`.
@@ -58,7 +65,7 @@ fn sandbox_mode_registers_none_and_says_module_not_found() {
 }
 
 #[test]
-fn trusted_minus_one_module_keeps_the_other_six() {
+fn trusted_minus_one_module_keeps_the_others() {
     let rt = Runtime::builder(Profile::Trusted)
         .without_std_modules(StdModules::HTTP)
         .build()

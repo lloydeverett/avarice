@@ -29,6 +29,7 @@ exactly what was changed in that file, whatever its header says.
 | `lua/serde.lua` | `astra/lua/serde.lua` | identical | `e1d023731ee707a7d1e80909ce01ee67d47a74930ad80c46dbf85baa3d6f9bf1` |
 | `lua/stores.lua` | `astra/lua/stores.lua` | identical | `28108eb1c9bebd2de54189ee82302ef5aca9f747f35b4379f0a6727c00564cd8` |
 | `lua/utils.lua` | `astra/lua/utils.lua` | modified | `61801211213b7b56062c3eece7fc6e71db3b09cc05f2bbfceb5286394b5fa806` |
+| `lua/validation.lua` | `astra/lua/validation.lua` | identical | `42329fab7097c6a7292a47a529164a9b448938295bcf0fe63f7b76fe35e5bf4f` |
 | `src/components/astra_serde.rs` | `src/components/astra_serde.rs` | modified | `0132e3242f5bb70fef0a830b84d6feb1f69a3355772383e443e37e99f8d4c31a` |
 | `src/components/crypto.rs` | `src/components/crypto.rs` | identical | `3556a1926310f4ad8674919e607aa119986457f919cd82c8f6f3e3902d73966c` |
 | `src/components/datetime.rs` | `src/components/datetime.rs` | identical | `18de84ed88c4534c7a0c73b650071593db4be7a7a374fdf0a5eea0f1ea5eddf4` |
@@ -51,9 +52,8 @@ diff -q crates/avarice-rt-stdlib/src/components/crypto.rs ~/Astra/src/components
 Astra components not present here, and why:
 
 - `src/components/http/server/`, `templates.rs`, `database.rs`, `import.rs` and the Lua layers
-  `templates.lua`, `database.lua`, `validation.lua` and `test.lua`: the HTTP server, templating,
-  the database, Astra's own `require`, validation and its test harness. The spec's list of what
-  is out of scope.
+  `templates.lua`, `database.lua` and `test.lua`: the HTTP server, templating, the database,
+  Astra's own `require` and its test harness. The spec's list of what is out of scope.
 - `src/components/http/client/websocket.rs`: the WebSocket client. `AstraWebSocket` does not
   satisfy mlua 0.12's `Sync` bound on userdata under the `send` feature, which `utils.rs` needs.
 - Astra's `main.rs`, `commands/` and `build.rs`: the `astra` program itself.
@@ -64,3 +64,13 @@ Astra components not present here, and why:
 what Astra's `register_components` and `import` do between them: call the module's
 `register_to_lua`, then run its Lua file, which reads the primitives off the Lua globals under
 their `astra_internal__` names. Those names are Astra's and are not renamed.
+
+Two things `modules::load` does for `validation`, neither of which touches Astra's file. Its regex
+primitive is registered by Astra's `utils` Rust half, alongside the tasks, so `load` registers it
+for `validation` as well and the module does not depend on `utils` having been built first. And
+the file defines `number`, `struct`, `regex` and a dozen more as *global* functions, which Astra
+gets away with because a program using it means to have them; here they would appear in every
+program's globals as soon as anything required the module. `load` therefore runs it against a
+table of its own that reads through to the real globals, so what the file defines stays inside
+it. This is the one place a stdlib module is loaded differently from Astra's own way of loading it,
+and it is a change to where the file's definitions go, not to what they do.

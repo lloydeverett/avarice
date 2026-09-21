@@ -11,8 +11,9 @@ status: ready-for-agent
 > them — the `avarice_internal__` rename, `datetime` written on `jiff`, JSON as the only serde
 > format, `spawn_local`, a `LocalSet` beside the tokio runtime (dropped on 2026-09-21: with `send`
 > on nothing needs one, and it would make `Runtime` `!Send`), `Runtime` staying `!Send`, `crypto.hmac` and `crypto.uuid` (Astra has
-> neither; its `uuid` is `utils.uuid`), a `regex` in `utils` (Astra exposes it only through
-> `validation`, which is not taken), and key/value in `stores` (Astra's has observables and pubsub
+> neither; its `uuid` is `utils.uuid`), a `regex` in `utils` (Astra exposes it through
+> `validation`, which was not taken and now is: a **`validation` module** makes eight, and the
+> regex is `require("validation").regex`), and key/value in `stores` (Astra's has observables and pubsub
 > only) — the amendments win.
 
 Expose runtime capability to Lua as seven **stdlib modules**, adapted from
@@ -422,9 +423,9 @@ which needs a terminal and is verified by hand.
 
 ## Out of Scope
 
-**Astra modules not taken:** the HTTP server, templating, database, validation,
-and websockets. `regex` is taken out of Astra's `validation` and lands in `utils`
-rather than bringing the module with it.
+**Astra modules not taken:** the HTTP server, templating, database and websockets.
+*(Validation was on this list, with `regex` to be lifted out of it into `utils`. On
+2026-09-21 it was taken whole instead; see the second amendment to ADR 0006.)*
 
 **Serde formats other than JSON.** The module is still called `serde`: it names
 what it does, not how many formats it does it in.

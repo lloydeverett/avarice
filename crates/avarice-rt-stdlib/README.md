@@ -1,7 +1,7 @@
 # avarice-rt-stdlib
 
 The **stdlib modules** of avarice-rt: `http`, `fs`, `crypto`, `serde`, `datetime`, `utils` and
-`stores`, as `mlua` values for the `avarice-rt` core to register.
+`stores` and `validation`, as `mlua` values for the `avarice-rt` core to register.
 
 They are [Astra](https://github.com/ArkForgeLabs/Astra)'s, by ArkForge LLC, licensed under the
 Apache License 2.0, kept as close to Astra's own files as they can be. This crate exists so that

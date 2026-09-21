@@ -8,7 +8,7 @@
 //! only when the module is first required.
 
 use bitflags::bitflags;
-use mlua::{Lua, Value};
+use mlua::{Lua, Table, Value};
 
 use crate::components::{astra_serde, crypto, datetime, file_system, http, utils};
 
@@ -33,11 +33,13 @@ pub enum StdModule {
     Utils,
     /// Observables and pubsub.
     Stores,
+    /// Schema validators, and regular expressions.
+    Validation,
 }
 
 impl StdModule {
     /// Every module, in the order [`StdModules::modules`] yields them.
-    pub const ALL: [StdModule; 7] = [
+    pub const ALL: [StdModule; 8] = [
         StdModule::Http,
         StdModule::Fs,
         StdModule::Crypto,
@@ -45,6 +47,7 @@ impl StdModule {
         StdModule::Datetime,
         StdModule::Utils,
         StdModule::Stores,
+        StdModule::Validation,
     ];
 
     /// The name Lua passes to `require` to get this module.
@@ -57,6 +60,7 @@ impl StdModule {
             StdModule::Datetime => "datetime",
             StdModule::Utils => "utils",
             StdModule::Stores => "stores",
+            StdModule::Validation => "validation",
         }
     }
 }
@@ -82,6 +86,8 @@ bitflags! {
         const UTILS = 1 << 5;
         /// [`StdModule::Stores`].
         const STORES = 1 << 6;
+        /// [`StdModule::Validation`].
+        const VALIDATION = 1 << 7;
     }
 }
 
@@ -110,6 +116,7 @@ impl From<StdModule> for StdModules {
             StdModule::Datetime => StdModules::DATETIME,
             StdModule::Utils => StdModules::UTILS,
             StdModule::Stores => StdModules::STORES,
+            StdModule::Validation => StdModules::VALIDATION,
         }
     }
 }
@@ -152,13 +159,38 @@ pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
         }
         // Astra's `stores` has no Rust half: it is Lua all the way down.
         StdModule::Stores => include_str!("../lua/stores.lua"),
+        // The regex primitive is set by Astra's `utils` Rust half, alongside the tasks, so
+        // `validation` sets it too rather than lean on `utils` having been built first. Setting
+        // it twice is harmless.
+        StdModule::Validation => {
+            utils::AstraRegex::register_to_lua(lua)?;
+            include_str!("../lua/validation.lua")
+        }
     };
     // Named so a traceback through a stdlib module says where it came from. Text only: the
     // sources are embedded, and a chunk that is not text is not one of ours.
-    lua.load(source)
+    let chunk = lua
+        .load(source)
         .set_name(format!("=[avarice-rt stdlib {}]", module.name()))
-        .set_mode(mlua::chunk::ChunkMode::Text)
-        .eval()
+        .set_mode(mlua::chunk::ChunkMode::Text);
+    match module {
+        // Astra's `validation.lua` declares `number`, `struct`, `regex` and a dozen more as
+        // *global* functions, so run as a plain chunk it would put them in every program's
+        // globals as soon as anything required it, and would break the day a program reused one
+        // of those names. Running it against a table of its own keeps the file as it is.
+        StdModule::Validation => chunk.set_environment(private_globals(lua)?).eval(),
+        _ => chunk.eval(),
+    }
+}
+
+/// A table for a chunk to treat as its globals: it reads through to the real ones, but what the
+/// chunk defines stays in the table, and out of the program's.
+fn private_globals(lua: &Lua) -> mlua::Result<Table> {
+    let env = lua.create_table()?;
+    let read_through = lua.create_table()?;
+    read_through.set("__index", lua.globals())?;
+    env.set_metatable(Some(read_through))?;
+    Ok(env)
 }
 
 #[cfg(test)]
@@ -171,14 +203,21 @@ mod tests {
         assert_eq!(
             names,
             [
-                "http", "fs", "crypto", "serde", "datetime", "utils", "stores"
+                "http",
+                "fs",
+                "crypto",
+                "serde",
+                "datetime",
+                "utils",
+                "stores",
+                "validation"
             ]
         );
     }
 
     #[test]
     fn all_is_every_module_and_none_is_no_module() {
-        assert_eq!(StdModules::ALL.modules().count(), 7);
+        assert_eq!(StdModules::ALL.modules().count(), 8);
         assert_eq!(StdModules::NONE.modules().count(), 0);
         for module in StdModule::ALL {
             assert!(StdModules::ALL.contains(module.into()));
@@ -202,11 +241,11 @@ mod tests {
 
     #[test]
     fn modules_yields_the_set_variants_in_a_fixed_order() {
-        let set = StdModules::STORES | StdModules::HTTP | StdModules::CRYPTO;
+        let set = StdModules::VALIDATION | StdModules::HTTP | StdModules::CRYPTO;
         let modules: Vec<_> = set.modules().collect();
         assert_eq!(
             modules,
-            [StdModule::Http, StdModule::Crypto, StdModule::Stores]
+            [StdModule::Http, StdModule::Crypto, StdModule::Validation]
         );
     }
 
@@ -214,7 +253,7 @@ mod tests {
     fn set_algebra_adds_and_subtracts() {
         let without_http = StdModules::ALL - StdModules::HTTP;
         assert!(!without_http.contains(StdModules::HTTP));
-        assert_eq!(without_http.modules().count(), 6);
+        assert_eq!(without_http.modules().count(), 7);
         assert_eq!(without_http | StdModules::HTTP, StdModules::ALL);
         assert_eq!(StdModules::ALL & !StdModules::ALL, StdModules::NONE);
     }

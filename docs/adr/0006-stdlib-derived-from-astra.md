@@ -4,8 +4,9 @@ status: accepted
 
 # The stdlib is derived from Astra, and lives in its own Apache-2.0 crate
 
-> Amended 2026-09-20: the sources are Astra's own, not adapted. Where the text below says
-> otherwise, or mentions `jiff`, the amendment at the end wins.
+> Amended 2026-09-20: the sources are Astra's own, not adapted. Amended 2026-09-21: `validation`
+> is taken after all. Where the text below says otherwise, or mentions `jiff`, or says validation
+> is not taken, the amendments at the end win.
 
 The **stdlib modules** are adapted from [Astra](https://github.com/ArkForgeLabs/Astra)
 by ArkForge LLC, which is Apache-2.0. They live in `avarice-rt-stdlib`, a
@@ -87,3 +88,34 @@ Consequences, where they differ from the decision above:
   `toml`, `chrono` and `reqwest` join `sha2`, `sha3`, `base64`, `regex`, `uuid` and `glob`.
 - **The crate's edition is 2024 and `rust-version` is 1.94**, as Astra's, because its sources use
   let-chains. The workspace's `rust-version` follows.
+
+## Amendment, 2026-09-21: `validation` is taken
+
+The decision above lists validation among the parts not taken, and the first amendment carried
+that forward. That left regular expressions with no way to reach Lua: Astra's `utils.rs` holds the
+Rust half of `regex`, so it arrived with the tasks, but the Lua wrapper that exposes it is in
+`validation.lua`. The alternatives were adding a `regex` function to Astra's `utils.lua`, which is
+a change to a file that is otherwise removals only, or taking `validation.lua` whole. Taking it
+whole keeps every Astra file as Astra has it, and was chosen.
+
+So there are now **eight** stdlib modules, and `validation` is the eighth: `StdModule::Validation`,
+`StdModules::VALIDATION`, `require("validation")`, registered by trusted mode like the others.
+`lua/validation.lua` is byte-identical to Astra's and carries no header. It brings Astra's schema
+validators (`types.struct`, `array`, `union`, `range`, `pattern`, `build` and the rest) as well as
+`regex`, and the regex is `require("validation").regex`, not `utils.regex` as the spec first
+planned.
+
+Two things follow from how the file is written, and are handled in `modules::load`, which is ours,
+rather than in the file:
+
+- **Its regex primitive is registered by the `utils` Rust half**, so `validation` registers it
+  too. It does not depend on `utils` having been required.
+- **It defines its functions as globals.** Run as a plain chunk, that puts `number`, `struct`,
+  `regex` and a dozen more into every program's globals the moment anything requires the module,
+  and breaks it the day a program reuses one of those names. It is run against a table of its own
+  that reads through to the real globals, so those definitions stay inside it.
+
+Not decided here: `regex` is the `regex` crate, which is safe against pathological patterns in
+time but allocates outside Lua's memory cap. That is true of every stdlib module's Rust half, and
+is a reason the sandbox profile registers none of them, so an embedder who adds `validation` to a
+sandbox is choosing that.
