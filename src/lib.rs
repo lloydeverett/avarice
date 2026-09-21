@@ -35,17 +35,18 @@
 //! A [`Profile`] is a set of defaults, not a constraint. [`Profile::Sandbox`] withholds `io`,
 //! `os`, `package` and `debug`, caps memory, and refuses binary chunks; [`Profile::Trusted`]
 //! opens everything a safe Lua state can have and registers every stdlib module that is compiled
-//! in (`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation`; see
-//! [`StdModules`]). [`RuntimeBuilder`] can override anything either one sets, and doing so never
-//! affects the profile another runtime is built from.
+//! in (`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation` and `ansi`; see
+//! [`StdModules`]); [`Profile::Sandbox`] registers only the pure ones, `stores` and `ansi`, which
+//! are Lua with no Rust behind them. [`RuntimeBuilder`] can override anything either one sets, and
+//! doing so never affects the profile another runtime is built from.
 //!
 //! # Features
 //!
 //! Each stdlib module is behind a Cargo feature of its own, `stdlib-http`, `stdlib-fs`,
-//! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores` and
-//! `stdlib-validation`, and `stdlib` turns all eight on. `default` has `stdlib` and `cli`, so an
-//! embedder wanting a smaller build depends on avarice-rt with `default-features = false` and names
-//! the modules it wants. A feature decides whether a module is *compiled in*, which is a matter of
+//! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
+//! `stdlib-validation` and `stdlib-ansi`, and `stdlib` turns all nine on. `default` has `stdlib`
+//! and `cli`, so an embedder wanting a smaller build depends on avarice-rt with
+//! `default-features = false` and names the modules it wants. A feature decides whether a module is *compiled in*, which is a matter of
 //! build size and time and not of confinement: a profile still decides what a runtime *registers*.
 //! [`StdModules::ALL`] is the set that is compiled in, and [`RuntimeBuilder::build`] refuses a
 //! selection that includes a module that is not.

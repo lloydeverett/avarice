@@ -68,7 +68,7 @@ fn taking_away_a_module_that_is_not_compiled_in_asks_for_less_and_is_not_an_erro
 }
 
 #[test]
-fn a_sandbox_asks_for_no_module_and_so_builds_in_every_build() {
+fn a_sandbox_asks_only_for_the_pure_modules_and_so_builds_in_every_build() {
     Runtime::new(Profile::Sandbox).unwrap();
 }
 
@@ -93,11 +93,13 @@ fn trusted_mode_registers_exactly_the_modules_that_are_compiled_in() {
 }
 
 #[test]
-fn sandbox_mode_reaches_no_module_however_many_are_compiled_in() {
+fn sandbox_mode_reaches_the_pure_modules_that_are_compiled_in_and_no_other() {
     let rt = Runtime::new(Profile::Sandbox).unwrap();
-    assert!(listed(&rt).is_empty());
+    let pure: Vec<_> = StdModules::PURE.modules().map(StdModule::name).collect();
+    assert_eq!(listed(&rt), pure);
     for module in StdModules::all().modules() {
-        assert!(!rt.has_module(module.name()), "{module:?}");
-        assert!(!requirable(&rt, module.name()), "{module:?}");
+        let expected = StdModules::PURE.contains(module.into());
+        assert_eq!(rt.has_module(module.name()), expected, "{module:?}");
+        assert_eq!(requirable(&rt, module.name()), expected, "{module:?}");
     }
 }

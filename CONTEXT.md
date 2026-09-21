@@ -42,7 +42,8 @@ never affects the profile any other runtime is built from.
 
 The profile for Lua code the author does not vouch for. Withholds the standard
 libraries through which Lua can reach outside its own computation — `io`, `os`,
-`package`, `debug` — caps memory, and refuses binary chunks.
+`package`, `debug` — caps memory, and refuses binary chunks. Registers no **stdlib
+module** except the **pure** ones.
 
 Sandbox mode describes what avarice-rt itself puts in the runtime. It is not a
 guarantee about a runtime an embedder has since reconfigured or added **host
@@ -69,12 +70,13 @@ has is decided in Rust at construction; Lua code never causes one to load.
 ## Stdlib module
 
 A **host module** that avarice-rt ships, rather than one an embedder wrote.
-`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation`.
+`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
+and `ansi`.
 
 Stdlib modules are host modules like any other, and carry no privilege an
 embedder's own module lacks. What distinguishes them is only that a **profile**
 decides whether they are registered: **trusted mode** registers every one that
-is **compiled in**, **sandbox mode** registers none.
+is **compiled in**, **sandbox mode** registers only the **pure** ones.
 
 A stdlib module is in one of three states, and "available" names none of them:
 **compiled in** (part of the build), **registered** (a runtime has it, so
@@ -83,6 +85,18 @@ the one before.
 
 Named for Lua's standard library by analogy, and separate from it: the standard
 library is Lua's own, opened by `mlua`, and reachable without `require`.
+
+## Pure module
+
+A **stdlib module** written entirely in Lua, with no Rust code behind it. It
+only computes over the values it is given, so it reaches nothing outside the Lua
+state: no network, no filesystem, no environment.
+
+Because it is only Lua, every limit a runtime puts on Lua applies to it — the
+memory cap, the time limit — which cannot be said of a module with Rust behind
+it.
+
+Purity is a fact about how a module is written, not about what it is for.
 
 ## Compiled in
 

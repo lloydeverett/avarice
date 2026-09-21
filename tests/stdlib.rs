@@ -13,7 +13,7 @@ use avarice_rt::{Profile, Runtime, StdModules};
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
-const NAMES: [&str; 8] = [
+const NAMES: [&str; 9] = [
     "http",
     "fs",
     "crypto",
@@ -22,7 +22,22 @@ const NAMES: [&str; 8] = [
     "utils",
     "stores",
     "validation",
+    "ansi",
 ];
+
+/// The names of the pure modules that are compiled in: what a sandbox registers (ADR 0007).
+fn pure_names() -> Vec<&'static str> {
+    StdModules::PURE.modules().map(|m| m.name()).collect()
+}
+
+/// What a sandbox with `extra` added to it registers: the pure modules and those, in `NAMES` order.
+fn sandbox_plus(extra: &[&str]) -> Vec<&'static str> {
+    let pure = pure_names();
+    NAMES
+        .into_iter()
+        .filter(|name| pure.contains(name) || extra.contains(name))
+        .collect()
+}
 
 /// The names of `NAMES` that `rt` can `require`.
 fn reachable(rt: &Runtime) -> Vec<&'static str> {
@@ -44,10 +59,12 @@ fn trusted_mode_registers_every_stdlib_module_that_is_compiled_in() {
 }
 
 #[test]
-fn sandbox_mode_registers_none_and_says_module_not_found() {
+fn sandbox_mode_registers_the_pure_modules_and_says_module_not_found_for_the_rest() {
     let rt = Runtime::new(Profile::Sandbox).unwrap();
-    assert!(reachable(&rt).is_empty());
-    for name in NAMES {
+    let pure = pure_names();
+    assert_eq!(reachable(&rt), pure);
+    assert_eq!(listed(&rt), pure);
+    for name in NAMES.into_iter().filter(|name| !pure.contains(name)) {
         assert!(!rt.has_module(name), "{name}");
         let message: String = rt
             .block_on(rt.eval(
@@ -90,7 +107,7 @@ fn validation_can_be_taken_from_trusted_mode_and_added_to_a_sandbox() {
         .with_std_modules(StdModules::VALIDATION)
         .build()
         .unwrap();
-    assert_eq!(reachable(&with), ["validation"]);
+    assert_eq!(reachable(&with), sandbox_plus(&["validation"]));
 }
 
 #[cfg(feature = "stdlib-fs")]
@@ -101,7 +118,7 @@ fn sandbox_plus_one_module_has_that_one_and_no_other() {
         .build()
         .unwrap();
     assert!(rt.has_module("fs"));
-    assert_eq!(reachable(&rt), ["fs"]);
+    assert_eq!(reachable(&rt), sandbox_plus(&["fs"]));
 }
 
 #[cfg(all(feature = "stdlib-crypto", feature = "stdlib-stores"))]
@@ -429,7 +446,10 @@ fn stdlib_lists_the_names_require_takes() {
 
 #[test]
 fn stdlib_lists_what_this_runtime_has_and_nothing_else() {
-    assert!(listed(&Runtime::new(Profile::Sandbox).unwrap()).is_empty());
+    assert_eq!(
+        listed(&Runtime::new(Profile::Sandbox).unwrap()),
+        pure_names()
+    );
 
     let rt = Runtime::builder(Profile::Trusted)
         .without_std_modules(StdModules::HTTP)
@@ -449,7 +469,7 @@ fn stdlib_lists_the_modules_added_to_a_sandbox() {
         .with_std_modules(StdModules::FS | StdModules::VALIDATION)
         .build()
         .unwrap();
-    assert_eq!(listed(&rt), ["fs", "validation"]);
+    assert_eq!(listed(&rt), sandbox_plus(&["fs", "validation"]));
 }
 
 #[test]

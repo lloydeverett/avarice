@@ -50,7 +50,8 @@ place.
 
 A time limit now arms across awaits, so a chunk blocked on a slow HTTP response
 burns its wall-clock budget without executing Lua. This is accepted: the limits
-exist for untrusted code, and untrusted code gets no stdlib modules.
+exist for untrusted code, and untrusted code gets no stdlib module with Rust behind it (only the
+pure ones, which are Lua; see ADR 0007).
 
 `avrt` waits for every outstanding task before exiting. Its REPL drains tasks to
 completion between prompts, so `spawn_interval` holds the terminal until Ctrl+C

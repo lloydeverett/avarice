@@ -8,8 +8,8 @@ Each **stdlib module** is behind a Cargo feature, so an embedder that wants only
 `serde` does not build reqwest, a TLS stack and the rest for a `http` it will never register. A
 feature decides whether a module is **compiled in**. It does not decide whether a runtime has it:
 that is still the **profile**'s job, and trusted mode registers every module that is compiled in
-while sandbox mode registers none. All eight are on by default, so an embedder that changes nothing
-sees nothing change.
+while sandbox mode registers only the **pure** ones: those written entirely in Lua, with no Rust
+behind them. All eight are on by default, so an embedder that changes nothing sees nothing change.
 
 This reverses the rejection recorded in [ADR 0006](0006-stdlib-derived-from-astra.md), which chose
 an unconditional dependency for simplicity and named reversing it as a breaking change to every
@@ -47,6 +47,13 @@ turns on code from `utils.rs` without registering `utils`.
   above, the full list of changes to the public API is `StdModule::ALL`, the meaning of
   `StdModules::ALL`, the error from `build`, and these five additions. `StdModules::all()`, the
   method bitflags generates, still returns every flag, compiled in or not.
+- **Sandbox registers the pure modules, and no others.** A **pure module** is written entirely in
+  Lua, so it reaches nothing outside the Lua state and runs under every limit the runtime puts on
+  Lua: the memory cap and the time limit. [ADR 0006](0006-stdlib-derived-from-astra.md) records why
+  a module with Rust behind it cannot promise that. Purity is declared once per module, in the
+  stdlib crate, beside its name and feature, and `StdModules::PURE` is the pure modules that are
+  compiled in, as `StdModules::ALL` is all of them. `Profile::Sandbox` starts from `PURE` where it
+  started from `NONE`.
 
 ## Considered options
 
@@ -66,7 +73,20 @@ variants at all.
 does not quietly disagree with what was asked for. A `Profile` or a builder that names `http` in a
 build without it is a mistake worth reporting.
 
+**Sandbox registering no module at all** was the rule until a module with nothing to withhold
+existed. It withholds nothing from `stores` and would withhold nothing from `ansi`, and it costs a
+sandboxed program the use of code it could have written itself. The rule is now that sandbox
+withholds what has Rust behind it, which is where the capability is and where Lua's limits stop
+applying.
+
 ## Consequences
+
+**Sandbox is not empty.** `stores`, which is Lua all the way down, is registered in a sandbox from
+this decision, and so is any pure module added later; `stdlib()` in a sandbox lists them. A test
+that asserts a module is unreachable in a sandbox asserts it for the modules that are not pure, and
+asserts the reverse for those that are. A pure module says so where it is defined, in the stdlib
+crate's README and in the runtime's documentation, so that giving one a Rust half is a visible
+decision: it moves the module out of the sandbox.
 
 **The verbatim rule gains one kind of change.** A file cannot be split to isolate a module's half of
 it, so a feature gates the *file*, by a `#[cfg]` on its `mod` declaration in `components/mod.rs`.
@@ -84,9 +104,16 @@ follows `stdlib-http`, and the stdlib crate's tokio `fs` follows `stdlib-fs`; th
 `rt`, `sync` and `time`, which it uses itself.
 
 **Tests and the matrix.** A test that needs a module is gated on its feature, and the sandbox
-tests still assert that nothing is reachable. `scripts/check-features.sh` runs `cargo test` over
+tests still assert that no module that is not pure is reachable. `scripts/check-features.sh` runs `cargo test` over
 ten builds: no modules, all of them, and each module alone. Each module alone is what finds a
 dependency put behind the wrong feature. There is no CI, so the script is the check.
 
 **Documentation.** The README's build section, the `Profile` docs and `lib.rs` describe compiled in
 against registered, and the spec's line saying there is no feature flag points here.
+
+## Amendment, 2026-09-21: `ansi` makes nine
+
+[ADR 0008](0008-ansi-is-original-and-pure.md) adds a ninth module, `ansi`, so where the text above
+says eight modules, or that `stdlib` turns on eight features, it is nine, and the matrix in
+`scripts/check-features.sh` is eleven builds and not ten: no modules, all of them, and each of the
+nine alone. Nothing else above changes, and the sandbox rule is the one recorded in the decision.

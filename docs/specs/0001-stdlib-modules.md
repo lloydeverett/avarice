@@ -16,6 +16,11 @@ status: ready-for-agent
 > `validation`, which was not taken and now is: a **`validation` module** makes eight, and the
 > regex is `require("validation").regex`), and key/value in `stores` (Astra's has observables and pubsub
 > only) — the amendments win.
+>
+> **Amended 2026-09-21, again.** Sandbox mode registers the **pure** modules, not none, and `ansi`,
+> an original module, makes nine. Where the sections below say sandbox registers no stdlib
+> module, or count eight, [ADR 0007](../adr/0007-stdlib-modules-are-compile-time-optional.md) and
+> [ADR 0008](../adr/0008-ansi-is-original-and-pure.md) win.
 
 Expose runtime capability to Lua as eight **stdlib modules**, adapted from
 [Astra](https://github.com/ArkForgeLabs/Astra) under Apache-2.0, registered in
@@ -65,8 +70,8 @@ Eight **stdlib modules**, reachable by `require`:
 | `stores`   | In-memory key/value, pubsub and observable stores            |
 | `validation` | Schema validators, and regular expressions                 |
 
-**Trusted mode** registers every module that is compiled in (all eight unless a build turned some
-off; see ADR 0007); **sandbox mode** registers none. An
+**Trusted mode** registers every module that is compiled in (all nine unless a build turned some
+off; see ADR 0007); **sandbox mode** registers only the pure ones (`stores`, and now `ansi`; see ADR 0007). An
 embedder who wants trusted-minus-`http` says so on the builder, in the same
 shape they already use to subtract a standard library:
 
@@ -126,7 +131,7 @@ And `avrt` grows a Ctrl-C handler, closing the gap the README admits to.
 ### Choosing what is exposed
 
 27. As an embedder, I want trusted mode to register every stdlib module by default, so that the profile means what it says without a list of opt-ins.
-28. As an embedder, I want sandbox mode to register none of them, so that untrusted code cannot reach the network or the filesystem through a module I forgot to withhold.
+28. As an embedder, I want sandbox mode to register none of them that has Rust behind it, so that untrusted code cannot reach the network or the filesystem through a module I forgot to withhold. (Amended: it registers the pure ones.)
 29. As an embedder, I want to take trusted mode and subtract a module, so that I can hand out most of the stdlib without handing out `http`.
 30. As an embedder, I want to add a stdlib module to a sandbox runtime deliberately, so that a profile stays a set of defaults rather than a constraint.
 31. As an embedder, I want the selection API to look like the one for standard libraries, so that I only learn the shape once.
@@ -192,7 +197,7 @@ it from one place.
 
 Mirrors the existing standard-library API exactly:
 
-- `Profile::std_modules() -> StdModules` — `ALL` for trusted, `NONE` for sandbox.
+- `Profile::std_modules() -> StdModules` — `ALL` for trusted, `PURE` for sandbox. (Amended: it was `NONE`.)
 - `RuntimeBuilder::std_modules(StdModules)` — replace the set.
 - `RuntimeBuilder::with_std_modules(StdModules)` — add to it.
 - `RuntimeBuilder::without_std_modules(StdModules)` — subtract from it.
@@ -252,7 +257,7 @@ covers the buffer it builds.
 - The sink is flushed per `print` call, so output interleaves correctly with anything else writing to the same stream.
 
 `print` is not a stdlib module and does not live in the stdlib crate: it is core,
-because sandbox mode has it and sandbox mode has no stdlib modules.
+because sandbox mode has it, and sandbox mode has no stdlib module with Rust behind it.
 
 ### `avrt`
 
@@ -262,7 +267,7 @@ because sandbox mode has it and sandbox mode has no stdlib modules.
 - A Ctrl-C handler is installed over `tokio::signal::ctrl_c`, selected against the running evaluation. It trips the runtime's `CancelHandle`, which aborts the evaluation and every task, and prints `avrt: aborting N running task(s)` to stderr. *(As built, 2026-09-21: not selected against the evaluation but run on a thread of its own, because a chunk that never awaits would never let the executor read the signal. The handle wakes a waiting chunk and stops a running one itself; see the third amendment to ADR 0004. It prints nothing when no task was running, and exits 130.)*
 - Since `avrt` now configures a `CancelHandle` unconditionally, the limit hook is always installed. The comment in `cli/mod.rs` explaining why it deliberately did not is removed along with the behaviour.
 - `Ctrl-D` at a prompt exits cleanly, unchanged.
-- `--sandbox` gets no stdlib modules, which needs no new flag: it follows from the profile.
+- `--sandbox` gets no stdlib module that is not pure, which needs no new flag: it follows from the profile.
 
 ### Dependencies
 
@@ -379,9 +384,9 @@ error. `fs` runs under `TempDir`.
 configuration:
 
 - Trusted mode: every module that is compiled in (all eight, by default) `require`s successfully.
-- Sandbox mode: all eight fail to `require`, with the runtime's "module not found" message.
-- `without_std_modules(HTTP)` on trusted: `http` is gone, the other seven remain.
-- `with_std_modules(FS)` on sandbox: `fs` is present, the other seven are not.
+- Sandbox mode: every module that is not pure fails to `require`, with the runtime's "module not found" message. (Amended: it was all eight.)
+- `without_std_modules(HTTP)` on trusted: `http` is gone, the other eight remain.
+- `with_std_modules(FS)` on sandbox: `fs` is present beside the pure modules, and no other is.
 - A stdlib module is not built until required — asserted by giving the runtime a store containing a module with the same name and observing which one `require` returns, and by `has_module`.
 - A stdlib name shadows a store module of that name.
 
@@ -405,7 +410,7 @@ so it is the one that must not be quietly deleted when it gets slow.
 
 **`tests/sandbox.rs`** — extended, not replaced.
 
-The existing assertions stand. Added: no stdlib module is reachable, and neither
+The existing assertions stand. Added: no stdlib module that is not pure is reachable, and neither
 is the network or the filesystem through one.
 
 **`tests/limits.rs`** — extended.
@@ -416,7 +421,7 @@ spawned it.
 **`tests/cli.rs`** — extended.
 
 `avrt` waits for outstanding tasks before exiting; `--sandbox` gets no stdlib
-modules; a stdlib module works from a script.
+module that is not pure; a stdlib module works from a script.
 
 **Unit tests** stay where they are, for things with no Lua-visible surface:
 `StdModules` set algebra beside its definition, as `Profile::std_libs` is tested

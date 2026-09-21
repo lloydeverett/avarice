@@ -242,10 +242,14 @@ fn opening_the_debug_library_is_refused_rather_than_ignored() {
 }
 
 #[test]
-fn reaches_no_stdlib_module_and_so_neither_the_network_nor_the_filesystem_through_one() {
+fn reaches_no_stdlib_module_that_is_not_pure_and_so_neither_the_network_nor_the_filesystem() {
     let rt = sandbox();
-    // Every module, including any this build does not have: none may be reachable.
-    for name in StdModules::all().modules().map(StdModule::name) {
+    // Every module that is not pure, including any this build does not have: none may be
+    // reachable.
+    for name in (StdModules::all() - StdModules::PURE)
+        .modules()
+        .map(StdModule::name)
+    {
         let absent = rt
             .block_on(rt.eval::<bool>(
                 &format!("local ok = pcall(require, '{name}') return not ok"),
@@ -255,12 +259,38 @@ fn reaches_no_stdlib_module_and_so_neither_the_network_nor_the_filesystem_throug
         assert!(absent, "{name} should not be reachable");
     }
     // Nor have their primitives leaked into the state without a module to carry them.
-    let leaked = rt.block_on(rt
-        .eval::<bool>(
-            "for k in pairs(_G) do if tostring(k):find('^astra_internal__') then return true end end \
+    let leaked = rt
+        .block_on(rt.eval::<bool>(
+            "for k in pairs(_G) do \
+                 if tostring(k):find('^astra_internal__') then return true end \
+             end \
              return false",
             "=test",
         ))
         .unwrap();
     assert!(!leaked, "a stdlib primitive is present in a sandbox");
+}
+
+#[test]
+fn reaches_the_pure_stdlib_modules_and_they_have_no_rust_behind_them() {
+    let rt = sandbox();
+    for name in StdModules::PURE.modules().map(StdModule::name) {
+        let built = rt
+            .block_on(rt.eval::<bool>(&format!("return pcall(require, '{name}')"), "=test"))
+            .unwrap();
+        assert!(built, "{name} is pure, so a sandbox should have it");
+    }
+    // A module with Rust behind it sets its primitives as globals when it is built. A pure
+    // module has none to set, and that is what puts it inside the memory cap and the time limit
+    // (ADR 0007), so building every pure module must have added no primitive to the state.
+    let primitives = rt
+        .block_on(rt.eval::<bool>(
+            "for k in pairs(_G) do \
+                 if tostring(k):find('^astra_internal__') then return true end \
+             end \
+             return false",
+            "=test",
+        ))
+        .unwrap();
+    assert!(!primitives, "a pure module has a Rust half");
 }

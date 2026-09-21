@@ -705,10 +705,11 @@ fn install_require(lua: &Lua, modules: Arc<Modules>, binary_chunks: bool) -> Res
 /// Installs `stdlib`, which lists the stdlib modules this runtime registered, by the names
 /// `require` takes them under.
 ///
-/// The list is fixed here, when the runtime is built, and says what *this* runtime has: none in
-/// the sandbox profile, and no more than an embedder left in. It answers from the selection rather
-/// than from what has been required, so asking builds nothing. Each call returns a table of its
-/// own, so a script that edits the one it was given does not change the next answer.
+/// The list is fixed here, when the runtime is built, and says what *this* runtime has: only the
+/// pure modules in the sandbox profile, and no more than an embedder left in. It answers from the
+/// selection rather than from what has been required, so asking builds nothing. Each call returns
+/// a table of its own, so a script that edits the one it was given does not change the next
+/// answer.
 fn install_stdlib_list(lua: &Lua, modules: StdModules) -> Result<()> {
     let names: Vec<&'static str> = modules.modules().map(|module| module.name()).collect();
     let stdlib =

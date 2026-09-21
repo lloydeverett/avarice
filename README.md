@@ -159,7 +159,7 @@ one sets, and doing so never affects the profile another runtime is built from.
 | `string` `table` `math` `utf8` `coroutine` | yes | yes     |
 | `io`, `os`            | no                       | yes                  |
 | `dofile`, `loadfile`  | no                       | yes                  |
-| Stdlib modules        | none                     | every one compiled in (all eight by default) |
+| Stdlib modules        | the pure ones            | every one compiled in (all nine by default) |
 | `package`             | never                    | never                |
 | `debug`               | `traceback` only         | `traceback` only     |
 | Binary chunks         | refused                  | allowed              |
@@ -180,19 +180,26 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 `xpcall(f, debug.traceback)` idiom and needs no library open. Code that feature-detects on
 `debug.getinfo` will correctly find it missing.
 
-**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
-`validation`, derived from [Astra](https://github.com/ArkForgeLabs/Astra) and kept in their own
-Apache-2.0 crate,
+**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`,
+`validation` and `ansi`. All but `ansi` are derived from [Astra](https://github.com/ArkForgeLabs/Astra);
+`ansi` is original. They are kept in their own Apache-2.0 crate,
 [`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They are registered as lazy host
 modules, so `require("crypto")` builds `crypto` and a program that never asks for it costs nothing.
 A program can ask which it has: `stdlib()` returns a list of the names to pass to `require`, in a
-fixed order. It says what this runtime registered, so it is empty in a sandbox and short one
-module when an embedder took one out, and it builds nothing.
+fixed order. It says what this runtime registered, so in a sandbox it lists only the pure modules, and it is
+short one module when an embedder took one out. It builds nothing.
 
 ```lua
-print(#stdlib())        --> 8, in trusted mode
+print(#stdlib())        --> 9, in trusted mode
 print(stdlib()[1])      --> http
 ```
+
+Two of the modules, `stores` and `ansi`, are **pure**: written entirely in Lua, with no Rust behind
+them. A pure module reaches nothing outside the Lua state, so the memory cap and the time limit
+govern it like any Lua a program writes, and a sandbox registers it. `ansi` is a table of ANSI
+escape codes (`ansi.bold .. ansi.fg.red .. "error" .. ansi.reset`) and a few colour functions
+(`ansi.fg.rgb(255, 128, 0)`, `ansi.bg.hex("#003366")`, `ansi.fg.color256(202)`). It does not check
+whether the output is a terminal or whether `NO_COLOR` is set; that is for the program to decide.
 
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
 `with_std_modules`. This is a choice made for each runtime, at run time; the next section is the
@@ -209,8 +216,8 @@ let rt = Runtime::builder(Profile::Trusted)
 ### Choosing stdlib modules
 
 Each stdlib module is behind a Cargo feature that compiles it in: `stdlib-http`, `stdlib-fs`,
-`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores` and
-`stdlib-validation`. `stdlib` turns on all eight and is a default feature, so an embedder who
+`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
+`stdlib-validation` and `stdlib-ansi`. `stdlib` turns on all nine and is a default feature, so an embedder who
 changes nothing gets nothing different. One who wants a smaller dependency tree and faster builds
 names the modules instead:
 
@@ -220,8 +227,8 @@ avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-featu
 ```
 
 A feature decides what is **compiled in**; a profile still decides what a runtime **registers**.
-`Profile::Trusted` registers every module that is compiled in, `Profile::Sandbox` registers none,
-and a module that is not compiled in cannot be registered by either or by the embedder. The
+`Profile::Trusted` registers every module that is compiled in, `Profile::Sandbox` registers only the pure
+modules, and a module that is not compiled in cannot be registered by either or by the embedder. The
 feature is not a confinement: Cargo features add up across everything in the dependency graph, so
 another crate may turn a module on for you. Keep a module out of a sandbox by not registering it.
 
@@ -240,7 +247,7 @@ and each module on its own; see [ADR 0007](docs/adr/0007-stdlib-modules-are-comp
 `Profile::Trusted` is trusted, not harmless: `os.exit` ends the host process, `io` reads and
 writes whatever the host user can, and the stdlib modules reach the network and the filesystem.
 
-Adding a stdlib module to a sandbox also gives up part of what the sandbox promises. The memory
+Adding a stdlib module that is not pure to a sandbox also gives up part of what the sandbox promises. The memory
 cap and the time limit govern Lua; the Rust behind a module is outside both. `validation`'s
 `regex(...):captures(s)`, for one, builds its whole result in Rust, at about 220 bytes for each
 byte of `s`, so a 16 MiB string costs some 3.5 GB in a sandbox that would refuse a 128 MiB Lua

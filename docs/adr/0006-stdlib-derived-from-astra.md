@@ -129,7 +129,8 @@ whole result in Rust before Lua sees any of it, and was measured, in a release b
 peaked at 228 MB, on 4 MiB at 882 MB and on 16 MiB at 3.5 GB, taking 13 seconds, in a sandbox that
 would have refused a 128 MiB Lua allocation. A pattern that is expensive to compile can overrun a
 time limit likewise. This is Astra's code, taken as it is, and it is true of every stdlib module's
-Rust half in some degree. It is why the sandbox profile registers none of them, and why an
+Rust half in some degree. It is why the sandbox profile registers no module that has one (it
+registers the pure ones, which are Lua only; see ADR 0007), and why an
 embedder who adds `validation` to a sandbox is not getting the limits the sandbox otherwise
 promises for anything that reaches it. It is also a reason to look again at whether a module
 should be allowed to run Rust that Lua's limits cannot see; that is not settled here.

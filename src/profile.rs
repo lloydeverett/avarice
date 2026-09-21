@@ -23,7 +23,8 @@ pub enum Profile {
     /// `os`, `package`, `debug` — along with the filesystem functions that hide in the base
     /// library (`dofile`, `loadfile`). Caps memory at
     /// [`DEFAULT_SANDBOX_MEMORY_LIMIT`], and refuses binary chunks, `load`'s `"b"` mode
-    /// included.
+    /// included. Registers no stdlib module that has Rust behind it, and the ones written only in
+    /// Lua (`stores`, `ansi`), which the memory cap and the time limit govern like any other Lua.
     ///
     /// No time limit is set by default: a sandbox that is merely slow is a judgement call only
     /// the embedder can make, so ask for one with
@@ -33,10 +34,10 @@ pub enum Profile {
     /// For Lua code the embedder vouches for.
     ///
     /// Everything the sandbox has plus `io` and `os` and every stdlib module — `http`, `fs`,
-    /// `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation` — with no memory or time
-    /// limit and binary chunks allowed. Note that `os.exit` will end the host process, that the stdlib
-    /// modules reach the network and the filesystem, and that `package` is still absent — Lua
-    /// never loads its own modules here either.
+    /// `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation` and `ansi` — with no memory
+    /// or time limit and binary chunks allowed. Note that `os.exit` will end the host process, that
+    /// the stdlib modules reach the network and the filesystem, and that `package` is still absent
+    /// — Lua never loads its own modules here either.
     Trusted,
 }
 
@@ -65,14 +66,15 @@ impl Profile {
     }
 
     /// The stdlib modules this profile registers: every one that is compiled in for trusted mode,
-    /// none for the sandbox.
+    /// and the pure ones for the sandbox.
     ///
-    /// All of them are compiled in unless the build turned some off with Cargo features (see
-    /// [`StdModules::ALL`]). Registered lazily, so a module costs nothing until a program
-    /// requires it.
+    /// A pure module is written entirely in Lua, with no Rust behind it, so the sandbox's memory
+    /// cap and time limit govern it (see [`StdModules::PURE`]). All modules are compiled in unless
+    /// the build turned some off with Cargo features (see [`StdModules::ALL`]). Registered lazily,
+    /// so a module costs nothing until a program requires it.
     pub fn std_modules(self) -> StdModules {
         match self {
-            Profile::Sandbox => StdModules::NONE,
+            Profile::Sandbox => StdModules::PURE,
             Profile::Trusted => StdModules::ALL,
         }
     }
@@ -125,9 +127,9 @@ mod tests {
     }
 
     #[test]
-    fn trusted_registers_every_stdlib_module_and_sandbox_none() {
+    fn trusted_registers_every_stdlib_module_and_sandbox_the_pure_ones() {
         assert_eq!(Profile::Trusted.std_modules(), StdModules::ALL);
-        assert_eq!(Profile::Sandbox.std_modules(), StdModules::NONE);
+        assert_eq!(Profile::Sandbox.std_modules(), StdModules::PURE);
     }
 
     #[test]

@@ -19,6 +19,7 @@ they block.
 | [11](11-avrt-task-lifecycle-and-ctrl-c.md) | `avrt` task lifecycle, and Ctrl-C | 09 |
 | [12](12-readme-and-crate-documentation.md) | README and crate documentation | 05–10, 13 |
 | [13](13-validation.md) | `validation` | 04 |
+| [14](14-ansi.md) | `ansi` — an original, pure module | 04 |
 
 Three tickets have no blockers and can start in any order: the async conversion,
 the workspace split, and `print`. They touch different things.
