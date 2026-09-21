@@ -16,7 +16,7 @@ status: ready-for-agent
 > regex is `require("validation").regex`), and key/value in `stores` (Astra's has observables and pubsub
 > only) — the amendments win.
 
-Expose runtime capability to Lua as seven **stdlib modules**, adapted from
+Expose runtime capability to Lua as eight **stdlib modules**, adapted from
 [Astra](https://github.com/ArkForgeLabs/Astra) under Apache-2.0, registered in
 **trusted mode** by default and subtractable by the **embedder**.
 
@@ -35,7 +35,7 @@ HTTP request, hash or encode a value, parse JSON, list a directory, match a
 regular expression, or do two things at once. An **embedder** who wants any of
 that writes the **host functions** themselves, in Rust, against mlua — which is
 most of the work avarice-rt exists to save them. Every embedder writes the same
-seven modules, differently, and each one is a fresh opportunity to hand Lua a
+modules, differently, and each one is a fresh opportunity to hand Lua a
 capability they did not mean to.
 
 Two smaller problems travel with it.
@@ -51,7 +51,7 @@ about to have one.
 
 ## Solution
 
-Seven **stdlib modules**, reachable by `require`:
+Eight **stdlib modules**, reachable by `require`:
 
 | Module     | What it is for                                              |
 | ---------- | ----------------------------------------------------------- |
@@ -60,10 +60,11 @@ Seven **stdlib modules**, reachable by `require`:
 | `crypto`   | Hashing, HMAC, base64, UUIDs                                 |
 | `serde`    | JSON encoding and decoding                                   |
 | `datetime` | Instants, civil dates and times, zones, spans, formatting     |
-| `utils`    | **Tasks**, regular expressions, `env.get`                    |
+| `utils`    | **Tasks**, `uuid`, `env.get`                                 |
 | `stores`   | In-memory key/value, pubsub and observable stores            |
+| `validation` | Schema validators, and regular expressions                 |
 
-**Trusted mode** registers all seven; **sandbox mode** registers none. An
+**Trusted mode** registers all eight; **sandbox mode** registers none. An
 embedder who wants trusted-minus-`http` says so on the builder, in the same
 shape they already use to subtract a standard library:
 
@@ -76,7 +77,7 @@ let rt = Runtime::builder(Profile::Trusted)
 A stdlib module carries no privilege an embedder's own **host module** lacks. It
 is registered lazily, so a program that never requires `http` never builds it.
 
-Execution becomes async, because three of the seven are only worth having that
+Execution becomes async, because three of the eight are only worth having that
 way. `Runtime::exec` and `Runtime::eval` return futures; `Runtime::block_on`
 drives them for callers who are not already async. The core owns a current-thread
 tokio runtime with a `LocalSet` on it, and Lua spawns **tasks** onto it.
@@ -370,10 +371,10 @@ error. `fs` runs under `TempDir`.
 **`tests/stdlib.rs`** also covers selection, which is behaviour rather than
 configuration:
 
-- Trusted mode: all seven `require` successfully.
-- Sandbox mode: all seven fail to `require`, with the runtime's "module not found" message.
-- `without_std_modules(HTTP)` on trusted: `http` is gone, the other six remain.
-- `with_std_modules(FS)` on sandbox: `fs` is present, the other six are not.
+- Trusted mode: all eight `require` successfully.
+- Sandbox mode: all eight fail to `require`, with the runtime's "module not found" message.
+- `without_std_modules(HTTP)` on trusted: `http` is gone, the other seven remain.
+- `with_std_modules(FS)` on sandbox: `fs` is present, the other seven are not.
 - A stdlib module is not built until required — asserted by giving the runtime a store containing a module with the same name and observing which one `require` returns, and by `has_module`.
 - A stdlib name shadows a store module of that name.
 

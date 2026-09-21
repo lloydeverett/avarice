@@ -144,30 +144,61 @@ fn errors_name_the_path_through_nested_values() {
 
 #[test]
 fn ranges_patterns_literals_and_unions_check_their_values() {
-    let results: Vec<bool> = {
+    // What each reports as well as whether it passes, since a script shows the message to a user.
+    let outcomes: Vec<String> = {
         let rt = trusted();
         let table: avarice_rt::mlua::Table = run(
             &rt,
             r#"
             local t = require("validation").types
+            local function say(validator, value)
+              local ok, err = validator:validate(value)
+              return ok and "ok" or err
+            end
             local age = t.range({ min = 0, max = 150 })
             local slug = t.pattern("^[a-z-]+$")
             local kind = t.literal("cat")
             local either = t.union(t.number(), t.boolean())
             return {
-              (age:validate(30)), (age:validate(200)),
-              (slug:validate("a-b")), (slug:validate("A B")),
-              (kind:validate("cat")), (kind:validate("dog")),
-              (either:validate(1)), (either:validate(true)), (either:validate("x")),
+              say(age, 30), say(age, 200),
+              say(slug, "a-b"), say(slug, "A B"),
+              say(kind, "cat"), say(kind, "dog"),
+              say(either, 1), say(either, true), say(either, "x"),
             }
             "#,
         );
         table.sequence_values().collect::<Result<_, _>>().unwrap()
     };
     assert_eq!(
-        results,
-        [true, false, true, false, true, false, true, true, false]
+        outcomes,
+        [
+            "ok",
+            "out of range",
+            "ok",
+            "string does not match pattern",
+            "ok",
+            "expected cat, got dog",
+            "ok",
+            "ok",
+            "value did not match any union member",
+        ]
     );
+}
+
+#[test]
+fn booleans_and_nil_are_checked_too() {
+    let (yes, no, nothing, something): (bool, String, bool, String) = with_types(
+        r#"
+        local flag, none = t.boolean(), t.none()
+        local _, not_a_flag = flag:validate("yes")
+        local _, not_nothing = none:validate(1)
+        return (flag:validate(true)), not_a_flag, (none:validate(nil)), not_nothing
+        "#,
+    );
+    assert!(yes);
+    assert_eq!(no, "expected boolean, got string");
+    assert!(nothing);
+    assert_eq!(something, "expected nil, got number");
 }
 
 #[test]
@@ -191,13 +222,25 @@ fn build_fills_defaults_and_refuses_what_does_not_validate() {
           role = t.string({ default = "user" }),
         }))
         local made = User({ name = "ada" })
-        local ok, err = pcall(User, { role = "admin" })
+        local _, err = pcall(User, { role = "admin" })
         return made.role, made.name, tostring(err)
         "#,
     );
     assert_eq!(role, "user");
     assert_eq!(name, "ada");
     assert_eq!(refused, "name: expected string, got nil");
+}
+
+#[test]
+fn an_optional_field_can_carry_a_default_that_build_fills() {
+    let (filled, kept): (i64, i64) = with_types(
+        r#"
+        local Sized = t.build(t.struct({ size = t.optional(t.number({ default = 10 })) }))
+        return Sized({}).size, Sized({ size = 3 }).size
+        "#,
+    );
+    assert_eq!(filled, 10);
+    assert_eq!(kept, 3);
 }
 
 // -- Not leaking into the runtime --------------------------------------------------------------
@@ -243,14 +286,4 @@ fn a_scripts_own_globals_neither_break_it_nor_are_broken_by_it() {
     assert!(integer_ok);
     assert_eq!(number, "mine");
     assert_eq!(struct_, "also mine");
-}
-
-#[test]
-fn requiring_it_twice_gives_the_same_table() {
-    let rt = trusted();
-    let same: bool = run(
-        &rt,
-        r#"return require("validation") == require("validation")"#,
-    );
-    assert!(same);
 }

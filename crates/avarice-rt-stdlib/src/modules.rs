@@ -5,7 +5,7 @@
 //! globals under `astra_internal__*` names, and a Lua file, embedded with `include_str!`, that
 //! wraps them into the module table and returns it. Both are Astra's, so `load` does no more
 //! than Astra's own `register_components` and `require` do between them, once per module and
-//! only when the module is first required.
+//! only when the module is first required, with one exception: see [`defines_globals`].
 
 use bitflags::bitflags;
 use mlua::{Lua, Table, Value};
@@ -173,14 +173,21 @@ pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
         .load(source)
         .set_name(format!("=[avarice-rt stdlib {}]", module.name()))
         .set_mode(mlua::chunk::ChunkMode::Text);
-    match module {
-        // Astra's `validation.lua` declares `number`, `struct`, `regex` and a dozen more as
-        // *global* functions, so run as a plain chunk it would put them in every program's
-        // globals as soon as anything required it, and would break the day a program reused one
-        // of those names. Running it against a table of its own keeps the file as it is.
-        StdModule::Validation => chunk.set_environment(private_globals(lua)?).eval(),
-        _ => chunk.eval(),
+    if defines_globals(module) {
+        chunk.set_environment(private_globals(lua)?).eval()
+    } else {
+        chunk.eval()
     }
+}
+
+/// Whether the module's Lua file declares its functions as *global* ones.
+///
+/// Astra's `validation.lua` does: `number`, `struct`, `regex` and a dozen more. Run as a plain
+/// chunk it would put them in every program's globals as soon as anything required it, and would
+/// break the day a program reused one of those names. Running it against a table of its own keeps
+/// the file as it is. This is the only place a module is loaded other than Astra's way.
+const fn defines_globals(module: StdModule) -> bool {
+    matches!(module, StdModule::Validation)
 }
 
 /// A table for a chunk to treat as its globals: it reads through to the real ones, but what the

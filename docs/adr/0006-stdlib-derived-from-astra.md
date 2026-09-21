@@ -115,7 +115,15 @@ rather than in the file:
   and breaks it the day a program reuses one of those names. It is run against a table of its own
   that reads through to the real globals, so those definitions stay inside it.
 
-Not decided here: `regex` is the `regex` crate, which is safe against pathological patterns in
-time but allocates outside Lua's memory cap. That is true of every stdlib module's Rust half, and
-is a reason the sandbox profile registers none of them, so an embedder who adds `validation` to a
-sandbox is choosing that.
+**What taking it costs, which is more than it first looked.** The `regex` crate matches in linear
+time, but the Rust code around it neither counts against Lua's memory cap nor can be interrupted
+by the time limit, which is a hook that only runs between Lua instructions. `captures` builds its
+whole result in Rust before Lua sees any of it, and was measured, in a release build, at about
+220 bytes of Rust memory for every byte of input: `regex("(.)"):captures(s)` on a 1 MiB string
+peaked at 228 MB, on 4 MiB at 882 MB and on 16 MiB at 3.5 GB, taking 13 seconds, in a sandbox that
+would have refused a 128 MiB Lua allocation. A pattern that is expensive to compile can overrun a
+time limit likewise. This is Astra's code, taken as it is, and it is true of every stdlib module's
+Rust half in some degree. It is why the sandbox profile registers none of them, and why an
+embedder who adds `validation` to a sandbox is not getting the limits the sandbox otherwise
+promises for anything that reaches it. It is also a reason to look again at whether a module
+should be allowed to run Rust that Lua's limits cannot see; that is not settled here.

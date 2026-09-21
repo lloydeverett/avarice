@@ -178,8 +178,8 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 `debug.getinfo` will correctly find it missing.
 
 **Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
-`validation`, derived
-from [Astra](https://github.com/ArkForgeLabs/Astra) and kept in their own Apache-2.0 crate,
+`validation`, derived from [Astra](https://github.com/ArkForgeLabs/Astra) and kept in their own
+Apache-2.0 crate,
 [`crates/avarice-rt-stdlib`](crates/avarice-rt-stdlib/README.md). They are registered as lazy host
 modules, so `require("crypto")` builds `crypto` and a program that never asks for it costs nothing.
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
@@ -195,6 +195,13 @@ let rt = Runtime::builder(Profile::Trusted)
 
 `Profile::Trusted` is trusted, not harmless: `os.exit` ends the host process, `io` reads and
 writes whatever the host user can, and the stdlib modules reach the network and the filesystem.
+
+Adding a stdlib module to a sandbox also gives up part of what the sandbox promises. The memory
+cap and the time limit govern Lua; the Rust behind a module is outside both. `validation`'s
+`regex(...):captures(s)`, for one, builds its whole result in Rust, at about 220 bytes for each
+byte of `s`, so a 16 MiB string costs some 3.5 GB in a sandbox that would refuse a 128 MiB Lua
+allocation, and no time limit can interrupt it. See the second amendment to
+[ADR 0006](docs/adr/0006-stdlib-derived-from-astra.md).
 
 ## Modules
 

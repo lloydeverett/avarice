@@ -13,7 +13,8 @@ The rule is that these files stay Astra's. A file that is byte-for-byte Astra's 
 that it stays that way. A file that has to differ opens with a header naming its Astra file and
 listing every change, and the only changes made are **removals** of what is not taken and the
 smallest respelling needed to compile against a different mlua. Nothing has been altered in how
-anything Astra does works.
+anything Astra does works. The one thing done differently is how `validation.lua` is *loaded*,
+which is this crate's code and not Astra's: see "How `validation` is loaded" below.
 
 The files were committed unedited first (`git show 9260d8d`), so `git diff 9260d8d -- <file>` is
 exactly what was changed in that file, whatever its header says.
@@ -64,6 +65,8 @@ Astra components not present here, and why:
 what Astra's `register_components` and `import` do between them: call the module's
 `register_to_lua`, then run its Lua file, which reads the primitives off the Lua globals under
 their `astra_internal__` names. Those names are Astra's and are not renamed.
+
+## How `validation` is loaded
 
 Two things `modules::load` does for `validation`, neither of which touches Astra's file. Its regex
 primitive is registered by Astra's `utils` Rust half, alongside the tasks, so `load` registers it

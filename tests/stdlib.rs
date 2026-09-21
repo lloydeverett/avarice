@@ -76,6 +76,22 @@ fn trusted_minus_one_module_keeps_the_others() {
 }
 
 #[test]
+fn validation_can_be_taken_from_trusted_mode_and_added_to_a_sandbox() {
+    let without = Runtime::builder(Profile::Trusted)
+        .without_std_modules(StdModules::VALIDATION)
+        .build()
+        .unwrap();
+    assert!(!without.has_module("validation"));
+    assert!(!reachable(&without).contains(&"validation"));
+
+    let with = Runtime::builder(Profile::Sandbox)
+        .with_std_modules(StdModules::VALIDATION)
+        .build()
+        .unwrap();
+    assert_eq!(reachable(&with), ["validation"]);
+}
+
+#[test]
 fn sandbox_plus_one_module_has_that_one_and_no_other() {
     let rt = Runtime::builder(Profile::Sandbox)
         .with_std_modules(StdModules::FS)

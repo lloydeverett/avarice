@@ -1,6 +1,6 @@
 # avarice-rt-stdlib
 
-The **stdlib modules** of avarice-rt: `http`, `fs`, `crypto`, `serde`, `datetime`, `utils` and
+The **stdlib modules** of avarice-rt: `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`,
 `stores` and `validation`, as `mlua` values for the `avarice-rt` core to register.
 
 They are [Astra](https://github.com/ArkForgeLabs/Astra)'s, by ArkForge LLC, licensed under the
@@ -29,7 +29,9 @@ Astra's, which had to change, and what was left out. The short version:
 Astra's own shape: a Rust half, `src/components/<module>.rs`, whose `register_to_lua(lua)` sets
 primitives on the Lua globals as `astra_internal__<name>`, and a Lua file, `lua/<module>.lua`,
 that wraps them into the module table and reads them off `_G` when called. `stores` has no Rust
-half. The Lua source is embedded with `include_str!`; there is no build script.
+half. The Lua source is embedded with `include_str!`; there is no build script. One module is
+loaded differently: `validation.lua` defines its functions as globals, so it runs against a table
+of its own, and registers the regex primitive itself. `UPSTREAM.md` says why.
 
 `loader` maps a `StdModule` to a function that does both, on demand. Modules are registered
 lazily, so nothing here runs until a script first requires the module: in particular the
