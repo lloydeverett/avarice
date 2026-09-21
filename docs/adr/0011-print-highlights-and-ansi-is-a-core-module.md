@@ -54,7 +54,7 @@ has a hole in its bits, and why a runtime without `string` cannot be built.
   gives it, yellow with the rest of the key. `tostring` is unchanged.
 - **`ansi` is a core module.** The core registers it in every runtime, whatever the profile and
   whatever features the build has, by the path any lazy host module takes, so it carries no
-  privilege an embedder's own module lacks. Its source is `src/ansi.lua`. It is no longer a stdlib
+  privilege an embedder's own module lacks. Its source is `src/lua/ansi.lua`. It is no longer a stdlib
   module: `StdModule::Ansi`, `StdModules::ANSI` and the `stdlib-ansi` feature are gone, and
   `stdlib()` lists eight names, which does not include it. `StdModules` stays `u16` and bit 8 is
   left unused, so no other module's bit moves.

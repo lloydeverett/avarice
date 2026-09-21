@@ -7,7 +7,7 @@
 use mlua::chunk::ChunkMode;
 use mlua::{Lua, Table};
 
-const SOURCE: &str = include_str!("ansi.lua");
+const SOURCE: &str = include_str!("lua/ansi.lua");
 
 /// Evaluates `ansi.lua`, and returns the table it builds.
 ///

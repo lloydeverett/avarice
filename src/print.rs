@@ -16,7 +16,7 @@ use mlua::{Function, Lua, LuaString, ffi};
 use crate::ansi;
 use crate::lock::lock;
 
-const PRINT: &str = include_str!("print.lua");
+const PRINT: &str = include_str!("lua/print.lua");
 
 /// The runtime's write sink, shared between the runtime and the function `print` holds.
 pub(crate) type Sink = Arc<Mutex<Box<dyn Write + Send>>>;
