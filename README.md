@@ -107,6 +107,11 @@ avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-featu
 
 `default-features = false` drops clap and reedline, which only the `avrt` binary needs.
 
+Running a chunk is asynchronous, because a stdlib module may await while Lua waits for it:
+`Runtime::exec` and `Runtime::eval` return futures, and `Runtime::block_on` drives one on the
+executor the runtime owns. It panics if called from inside another tokio runtime, so an embedder
+that is already async builds its `Runtime` on a thread of its own.
+
 mlua is a **public dependency**, re-exported as `avarice_rt::mlua`: values, tables and functions
 crossing the boundary are mlua's, so an embedder needs the same version avarice-rt was built
 against.
@@ -265,8 +270,9 @@ The hook triggers on **function calls** as well as on an instruction count. With
 protected call, where `pcall` catches it. The call hook fires as `pcall` is entered, before it
 has established its protection, so the latched error propagates out of the loop instead.
 
-A time limit is per top-level execution, not per runtime, and is armed by `Runtime::exec`,
-`Runtime::eval` or `Runtime::enter`. If you drive Lua through `Runtime::lua` directly, hold an
+A time limit is per top-level execution, not per runtime, and is armed when the future
+`Runtime::exec` or `Runtime::eval` returns is first polled, or by `Runtime::enter`, and keeps running
+while the chunk awaits. If you drive Lua through `Runtime::lua` directly, hold an
 `Execution` guard from `Runtime::enter` for the limit to apply.
 
 ## Building

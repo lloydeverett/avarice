@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::Write;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use avarice_rt_stdlib::StdModules;
@@ -12,6 +12,7 @@ use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 
 use crate::error::{Error, Result};
 use crate::limits::{self, CancelHandle, Execution, Limits, DEFAULT_CHECK_INTERVAL};
+use crate::lock::lock;
 use crate::module::{ModuleName, ModuleStore};
 use crate::print::{self, Sink};
 use crate::profile::Profile;
@@ -22,12 +23,6 @@ const LOADED: &str = "_LOADED";
 // `Send + Sync` because mlua's `send` feature, which the stdlib crate needs for its tasks, makes
 // the `require` function Lua holds `Send`, and `require` reaches the loaders.
 type Loader = Arc<dyn Fn(&Lua) -> mlua::Result<Value> + Send + Sync>;
-
-/// Locks a mutex, carrying on if a panic elsewhere poisoned it. Nothing under these locks is
-/// held across a call into Lua or a loader, so a panic cannot leave one half-updated.
-pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// What `require` resolves against, mutable after the runtime is built.
 #[derive(Default)]

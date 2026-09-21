@@ -74,14 +74,20 @@ above names, and the write sink alone does not remove it: Rust's `stdout` and `i
 buffer are different buffers, so on a pipe `io.write("a") print("b")` came out as `b` then `a`.
 Calling `fflush(NULL)` first puts what `io.write` has written ahead of what `print` is about to.
 It is the core's only `unsafe`, and the reason is that there is nothing safe that reaches C's
-buffer. A test in `tests/cli.rs` fails without it.
+buffer. A test in `tests/cli.rs` fails without it. The cost is that `fflush(NULL)` flushes every
+open C stream, so a file a trusted script has open through `io.open` has its buffer written out
+early too; it is done once per `print` call.
 
 Choices the decision left open:
 
-- A table with a `__tostring` metamethod prints through it, like stock `print`; every other
-  table prints structurally, with raw access, so no `__index`, `__pairs` or `__len` runs.
+- A table that has a string form of its own — a `__tostring` or `__name` in its metatable — prints
+  through it, like stock `print`; every other table prints structurally, with raw access, so no
+  `__index`, `__pairs` or `__len` runs. Which is which is decided by asking `tostring` and seeing
+  whether the answer is more than the address, because that is the only test that also respects a
+  protected metatable (`__metatable`), which `getmetatable` would hide. `__tostring` runs once.
 - Keys come out in a fixed order — array part, then numbers, strings, booleans and the rest — so
-  that a table prints the same way each time.
+  that a table prints the same way each time. The exception is a key that is itself a table or
+  function, which is ordered by address.
 - Only a table containing itself is marked; a table reachable by two paths is printed in full
   both times. That leaves output growth to the memory cap, as this decision intends.
 - There is no depth budget. The 30 000-deep case ends at the memory cap (`not enough memory`)
@@ -91,4 +97,3 @@ Choices the decision left open:
 - A sink that fails makes `print` raise a Lua error. Stock `print` ignores write errors, but it
   also dies of SIGPIPE, which Rust does not; an error is the nearest thing to that which a script
   can see.
-

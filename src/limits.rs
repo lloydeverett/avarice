@@ -1,12 +1,13 @@
 //! Cancellation and wall-clock limits, enforced from a global debug hook.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mlua::{HookTriggers, Lua, VmState};
 
 use crate::error::{Cancelled, TimedOut};
+use crate::lock::lock;
 
 /// How many VM instructions pass between limit checks, unless configured otherwise.
 ///
@@ -73,11 +74,11 @@ struct SyncCell<T>(Mutex<T>);
 
 impl<T: Copy> SyncCell<T> {
     fn get(&self) -> T {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        *lock(&self.0)
     }
 
     fn set(&self, value: T) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = value;
+        *lock(&self.0) = value;
     }
 }
 

@@ -32,7 +32,7 @@ own. It is a wide refactor with no useful expand–contract, because keeping the
 synchronous entry points alongside the async ones is exactly the trap
 [ADR 0004](../../adr/0004-async-first-on-tokio.md) rejects.
 
-**Amended 2026-09-20.** Tickets 02 and 04 are done in their verbatim-sources form; the rest of
+**Amended 2026-09-20; 01 and 03 done 2026-09-21.** Tickets 01, 02, 03 and 04 are done in their verbatim-sources form; the rest of
 this breakdown is unchanged in order but its checklists still describe adapted modules, and each of
 05–10 needs rereading against the amendments to
 [ADR 0004](../../adr/0004-async-first-on-tokio.md) and

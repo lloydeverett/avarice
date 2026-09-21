@@ -68,6 +68,7 @@
 
 mod error;
 mod limits;
+mod lock;
 mod module;
 mod print;
 mod profile;

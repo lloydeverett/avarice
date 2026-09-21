@@ -4,6 +4,10 @@ status: accepted
 
 # Async-first, on a current-thread tokio runtime the core owns
 
+> **Amended 2026-09-20 and 2026-09-21; the amendments at the end win.** `send` is on, so `Runtime`
+> is `Send + Sync` and its lazy-module loaders must be too, and there is no `LocalSet`. The text
+> below is the original decision and still says otherwise in two places.
+
 `Runtime` has no synchronous entry points. `exec` and `eval` are gone, replaced
 by async ones, and the core crate owns a current-thread tokio runtime with a
 `LocalSet` on it. **Stdlib modules** reach the network and the filesystem

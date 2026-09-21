@@ -113,6 +113,13 @@ Lua state lives on, so tasks interleave but never run in parallel and never
 observe a half-finished mutation by another. A task outlives the chunk that
 spawned it.
 
+## Executor
+
+The current-thread tokio runtime a `Runtime` owns. It drives every chunk the
+runtime runs and every task Lua spawns, and it runs only while an embedder is
+driving it with `Runtime::block_on`. The core owns it rather than leaving the
+choice to the embedder.
+
 ## Write sink
 
 Where `print` sends its output. Owned by the runtime, and replaceable by the

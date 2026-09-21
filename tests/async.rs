@@ -5,7 +5,7 @@
 //! hand, because building it is the point.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -166,38 +166,41 @@ fn dropping_a_runtime_does_not_wait_for_its_tasks() {
 }
 
 #[test]
-fn dropping_a_runtime_stops_its_tasks() {
-    // The interval's callback calls into Rust, so the count says whether it is still being run.
-    let ticks = Arc::new(AtomicUsize::new(0));
-    let rt = trusted();
-    let counter = Arc::clone(&ticks);
-    rt.lua()
-        .globals()
-        .set(
-            "tick",
-            rt.lua()
-                .create_function(move |_, ()| {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    Ok(())
-                })
-                .unwrap(),
-        )
-        .unwrap();
-    rt.block_on(async {
-        rt.exec(
-            r#"require("utils").spawn_interval(function() tick() end, 5)"#,
-            "=spawn",
-        )
-        .await
-        .unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    });
-    assert!(ticks.load(Ordering::SeqCst) > 0, "the interval never ran");
+fn dropping_a_runtime_drops_the_tasks_still_on_its_executor() {
+    // The guard is owned by the task's future, so it is dropped when, and only when, the future is.
+    // A task that never completes stays outstanding until the runtime goes, which is the case
+    // that matters: dropping must neither leave it alive nor wait for it.
+    struct Guard(Arc<AtomicBool>);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
 
+    let dropped = Arc::new(AtomicBool::new(false));
+    let rt = trusted();
+    let guard = Guard(Arc::clone(&dropped));
+    rt.block_on(async {
+        tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await
+        });
+        // Let it start, so that it is outstanding rather than merely spawned.
+        tokio::task::yield_now().await;
+    });
+    assert!(!dropped.load(Ordering::SeqCst), "the task ended early");
+
+    let started = Instant::now();
     drop(rt);
-    let at_drop = ticks.load(Ordering::SeqCst);
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(ticks.load(Ordering::SeqCst), at_drop);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "the task outlived its runtime"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "dropping waited {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]

@@ -7,7 +7,7 @@ before runs identically after — but the shape everything else depends on is in
 place.
 
 `Runtime::exec` and `Runtime::eval` return futures. The core owns a
-current-thread tokio runtime with a `LocalSet` on it, and `Runtime::block_on`
+current-thread tokio runtime (originally with a `LocalSet` on it; see the status), and `Runtime::block_on`
 drives a future on it to completion for callers who are not already async.
 
 Recorded in [ADR 0004](../../adr/0004-async-first-on-tokio.md).

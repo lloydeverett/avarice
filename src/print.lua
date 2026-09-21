@@ -12,8 +12,7 @@ local write = ...
 
 -- Kept in locals so that a script redefining a global later does not change how `print` works,
 -- which is also true of stock `print`.
-local tostring, type, select, getmetatable, rawget, next =
-  tostring, type, select, getmetatable, rawget, next
+local tostring, type, select, rawget, next = tostring, type, select, rawget, next
 local string, table = string, table
 
 -- A runtime built without the `string` or `table` library can still print scalars, and prints
@@ -31,8 +30,10 @@ if not (string and table) then
   end
 end
 
-local rep, format, gsub, find = string.rep, string.format, string.gsub, string.find
+local rep, gsub, find = string.rep, string.gsub, string.find
 local concat, sort = table.concat, table.sort
+
+local format = string.format
 
 local INDENT = "  "
 
@@ -42,14 +43,17 @@ repeat return then true until while]]):gmatch("%a+") do
   KEYWORDS[word] = true
 end
 
--- A table is printed structurally unless it says how to print itself, which is what stock `print`
--- honours too.
-local function is_structural(value)
-  if type(value) ~= "table" then
-    return false
+-- What stock `print` would show for `value`, or nil if it is a table that has no string form of
+-- its own, which is the case this file exists to print better. A table has one if its metatable
+-- has `__tostring` or `__name`, and asking `tostring` is the only way to find out that respects a
+-- protected metatable, which `getmetatable` would hide. The check is that the answer is not just
+-- the address, and it runs `__tostring` once, so the caller uses the text rather than asking again.
+local function stock_text(value)
+  local text = tostring(value)
+  if type(value) == "table" and text == "table: " .. format("%p", value) then
+    return nil
   end
-  local metatable = getmetatable(value)
-  return not (type(metatable) == "table" and rawget(metatable, "__tostring") ~= nil)
+  return text
 end
 
 -- A string inside a table, quoted so that the structure stays unambiguous. `%q` writes a newline
@@ -69,18 +73,20 @@ local function key_text(key)
 end
 
 -- Numbers, then strings, then booleans, then everything else, so that a table prints the same way
--- each time. Nothing here compares across types.
-local RANK = { number = 1, string = 2, boolean = 3 }
+-- each time. Nothing here compares across types. The last group, keys that are themselves tables,
+-- functions or the like, is ordered by address, and so is not the same from one run to the next.
+local NUMBER, STRING, BOOLEAN, OTHER = 1, 2, 3, 4
+local RANK = { number = NUMBER, string = STRING, boolean = BOOLEAN }
 
 local function key_less(a, b)
-  local rank_a, rank_b = RANK[type(a)] or 4, RANK[type(b)] or 4
+  local rank_a, rank_b = RANK[type(a)] or OTHER, RANK[type(b)] or OTHER
   if rank_a ~= rank_b then
     return rank_a < rank_b
   end
-  if rank_a <= 2 then
+  if rank_a == NUMBER or rank_a == STRING then
     return a < b
   end
-  if rank_a == 3 then
+  if rank_a == BOOLEAN then
     return (not a) and b
   end
   return tostring(a) < tostring(b)
@@ -93,8 +99,9 @@ local function render(value, depth, ancestors, out)
     out[#out + 1] = quote(value)
     return
   end
-  if not is_structural(value) then
-    out[#out + 1] = tostring(value)
+  local text = stock_text(value)
+  if text then
+    out[#out + 1] = text
     return
   end
   if ancestors[value] then
@@ -145,12 +152,13 @@ return function(...)
   local parts = {}
   for i = 1, n do
     local value = (select(i, ...))
-    if is_structural(value) then
+    local text = stock_text(value)
+    if text then
+      parts[i] = text
+    else
       local out = {}
       render(value, 0, {}, out)
       parts[i] = concat(out)
-    else
-      parts[i] = tostring(value)
     end
   end
   write(concat(parts, "\t") .. "\n")

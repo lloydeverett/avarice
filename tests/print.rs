@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use avarice_rt::mlua::StdLib;
-use avarice_rt::{was_timed_out, Error, Profile, Runtime};
+use avarice_rt::{was_timed_out, Error, Profile, Runtime, DEFAULT_SANDBOX_MEMORY_LIMIT};
 use common::Buffer;
 
 /// A runtime whose `print` writes to the returned buffer.
@@ -199,6 +199,37 @@ fn a_table_that_says_how_to_print_itself_is_printed_that_way() {
 }
 
 #[test]
+fn a_table_with_a_protected_metatable_prints_as_stock_print_would() {
+    // `__metatable` hides the real metatable from `getmetatable`, so the choice between the two
+    // has to come from what `tostring` says.
+    let text = printed(
+        Profile::Sandbox,
+        r#"
+        local with = setmetatable({}, { __metatable = "locked", __tostring = function() return "custom" end })
+        local without = setmetatable({ x = 1 }, { __metatable = "locked" })
+        print(with)
+        print(without)
+        "#,
+    );
+    assert_eq!(text, "custom\n{\n  x = 1,\n}\n");
+}
+
+#[test]
+fn a_tostring_metamethod_runs_once_per_table_printed() {
+    let text = printed(
+        Profile::Sandbox,
+        r#"
+        local calls = 0
+        local counted = setmetatable({}, { __tostring = function() calls = calls + 1 return "c" end })
+        print(counted)
+        print({ counted })
+        print(calls)
+        "#,
+    );
+    assert_eq!(text, "c\n{\n  c,\n}\n2\n");
+}
+
+#[test]
 fn printing_does_not_run_index_or_pairs_metamethods() {
     let text = printed(
         Profile::Sandbox,
@@ -223,8 +254,9 @@ fn the_adr_0005_case_a_thirty_thousand_deep_table_is_an_error_not_an_abort() {
     // inside the sandbox's memory cap; here it must be a Lua error a script can catch, with the
     // process still standing afterwards. Do not delete this test because it is slow.
     let (rt, buffer) = printing(Profile::Sandbox);
-    assert!(
-        rt.memory_limit().is_some(),
+    assert_eq!(
+        rt.memory_limit(),
+        Some(DEFAULT_SANDBOX_MEMORY_LIMIT),
         "the case is about the sandbox's default cap"
     );
 

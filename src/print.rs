@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, LuaString};
 
-use crate::runtime::lock;
+use crate::lock::lock;
 
 const PRINT: &str = include_str!("print.lua");
 
@@ -36,6 +36,11 @@ impl Write for Stdout {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         flush_c_stdio();
         io::stdout().write(bytes)
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        flush_c_stdio();
+        io::stdout().write_all(bytes)
     }
 
     fn flush(&mut self) -> io::Result<()> {
