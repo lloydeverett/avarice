@@ -7,7 +7,7 @@ fn sandbox() -> Runtime {
 }
 
 fn is_nil(rt: &Runtime, expr: &str) -> bool {
-    rt.eval::<bool>(&format!("return ({expr}) == nil"), "=test")
+    rt.block_on(rt.eval::<bool>(&format!("return ({expr}) == nil"), "=test"))
         .unwrap()
 }
 
@@ -17,12 +17,12 @@ fn withholds_the_libraries_that_reach_outside() {
     for global in ["io", "os", "package", "require('package')"] {
         // `package` is absent as a global and unreachable through require.
         let absent = rt
-            .eval::<bool>(
+            .block_on(rt.eval::<bool>(
                 &format!(
                     "local ok, v = pcall(function() return {global} end) return not ok or v == nil"
                 ),
                 "=test",
-            )
+            ))
             .unwrap();
         assert!(absent, "{global} should not be reachable");
     }
@@ -50,13 +50,13 @@ fn keeps_the_libraries_a_script_needs() {
 fn offers_traceback_but_not_the_rest_of_debug() {
     let rt = sandbox();
     let traceback: String = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local ok, tb = xpcall(function() error("boom") end, debug.traceback)
             return tb
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert!(traceback.contains("boom"), "{traceback}");
     assert!(traceback.contains("stack traceback"), "{traceback}");
@@ -72,7 +72,7 @@ fn refuses_binary_chunks() {
     let rt = sandbox();
     // `load` with an explicit binary mode fails rather than being quietly honoured.
     let err: String = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local chunk = string.dump(function() return 1 end)
             local f, err = load(chunk, "=payload", "b")
@@ -80,19 +80,19 @@ fn refuses_binary_chunks() {
             return err
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert!(err.contains("binary"), "{err}");
 
     // And the default mode, which Lua would otherwise let through, is forced to text too.
     let rejected: bool = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local chunk = string.dump(function() return 1 end)
             return load(chunk) == nil
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert!(rejected, "binary chunk accepted through the default mode");
 }
@@ -103,28 +103,33 @@ fn refuses_binary_chunks_handed_straight_to_the_runtime() {
     // statement path may accept bytecode in the sandbox.
     let trusted = Runtime::new(Profile::Trusted).unwrap();
     let bytecode = trusted
-        .eval::<avarice_rt::mlua::LuaString>("return string.dump(function() return 7 end)", "=test")
+        .block_on(trusted.eval::<avarice_rt::mlua::LuaString>(
+            "return string.dump(function() return 7 end)",
+            "=test",
+        ))
         .unwrap()
         .as_bytes()
         .to_vec();
     assert_eq!(bytecode[0], 0x1b, "expected a precompiled chunk");
 
     let rt = sandbox();
-    assert!(rt.eval::<i64>(bytecode.clone(), "=payload").is_err());
-    assert!(rt.exec(bytecode, "=payload").is_err());
+    assert!(rt
+        .block_on(rt.eval::<i64>(bytecode.clone(), "=payload"))
+        .is_err());
+    assert!(rt.block_on(rt.exec(bytecode, "=payload")).is_err());
 }
 
 #[test]
 fn trusted_allows_binary_chunks() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let result: i64 = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local chunk = string.dump(function() return 7 end)
             return load(chunk, "=payload", "b")()
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(result, 7);
 }
@@ -153,7 +158,7 @@ fn memory_limit_stops_a_runaway_allocation() {
         .build()
         .unwrap();
     let err = rt
-        .exec(
+        .block_on(rt.exec(
             r#"
             local t = {}
             while true do
@@ -161,7 +166,7 @@ fn memory_limit_stops_a_runaway_allocation() {
             end
             "#,
             "=test",
-        )
+        ))
         .unwrap_err();
     let avarice_rt::Error::Lua(err) = err else {
         panic!("expected a Lua error, got {err:?}");
@@ -241,20 +246,20 @@ fn reaches_no_stdlib_module_and_so_neither_the_network_nor_the_filesystem_throug
         "http", "fs", "crypto", "serde", "datetime", "utils", "stores",
     ] {
         let absent = rt
-            .eval::<bool>(
+            .block_on(rt.eval::<bool>(
                 &format!("local ok = pcall(require, '{name}') return not ok"),
                 "=test",
-            )
+            ))
             .unwrap();
         assert!(absent, "{name} should not be reachable");
     }
     // Nor have their primitives leaked into the state without a module to carry them.
-    let leaked = rt
+    let leaked = rt.block_on(rt
         .eval::<bool>(
             "for k in pairs(_G) do if tostring(k):find('^astra_internal__') then return true end end \
              return false",
             "=test",
-        )
+        ))
         .unwrap();
     assert!(!leaked, "a stdlib primitive is present in a sandbox");
 }

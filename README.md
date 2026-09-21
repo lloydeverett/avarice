@@ -19,7 +19,7 @@ $ avrt --sandbox script.lua
 use avarice_rt::{Profile, Runtime};
 
 let rt = Runtime::new(Profile::Sandbox)?;
-let answer: i64 = rt.eval("return 6 * 7", "=example")?;
+let answer: i64 = rt.block_on(rt.eval("return 6 * 7", "=example"))?;
 # Ok::<_, avarice_rt::Error>(())
 ```
 

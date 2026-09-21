@@ -15,7 +15,7 @@ const NAMES: [&str; 7] = [
 
 /// Whether `require(name)` succeeds in `rt`.
 fn requirable(rt: &Runtime, name: &str) -> bool {
-    rt.eval::<bool>(format!("return (pcall(require, '{name}'))"), "=test")
+    rt.block_on(rt.eval::<bool>(format!("return (pcall(require, '{name}'))"), "=test"))
         .unwrap()
 }
 
@@ -45,10 +45,10 @@ fn sandbox_mode_registers_none_and_says_module_not_found() {
     for name in NAMES {
         assert!(!rt.has_module(name), "{name}");
         let message: String = rt
-            .eval(
+            .block_on(rt.eval(
                 format!("local ok, err = pcall(require, '{name}') return tostring(err)"),
                 "=test",
-            )
+            ))
             .unwrap();
         assert!(
             message.contains(&format!("module '{name}' not found")),
@@ -103,16 +103,16 @@ fn a_stdlib_module_is_not_built_until_it_is_required() {
     // `crypto`'s Rust half sets its primitives as globals when the module is built, so their
     // absence is what "not built" looks like from Lua.
     let before: bool = rt
-        .eval("return astra_internal__hash == nil", "=test")
+        .block_on(rt.eval("return astra_internal__hash == nil", "=test"))
         .unwrap();
     assert!(before, "crypto was built before it was required");
     assert!(rt.has_module("crypto"));
 
     let after: bool = rt
-        .eval(
+        .block_on(rt.eval(
             "require('crypto') return astra_internal__hash ~= nil",
             "=test",
-        )
+        ))
         .unwrap();
     assert!(after, "requiring crypto did not build it");
 }
@@ -121,7 +121,7 @@ fn a_stdlib_module_is_not_built_until_it_is_required() {
 fn a_stdlib_module_is_built_once() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let same: bool = rt
-        .eval("return require('stores') == require('stores')", "=test")
+        .block_on(rt.eval("return require('stores') == require('stores')", "=test"))
         .unwrap();
     assert!(same);
 }
@@ -137,16 +137,18 @@ fn a_stdlib_name_shadows_a_store_module_of_that_name() {
         .unwrap();
 
     let impostor: bool = rt
-        .eval("return require('crypto').impostor == true", "=test")
+        .block_on(rt.eval("return require('crypto').impostor == true", "=test"))
         .unwrap();
     assert!(!impostor, "the store's crypto won over the stdlib's");
     let hash_is_there: bool = rt
-        .eval("return type(require('crypto').hash) == 'function'", "=test")
+        .block_on(rt.eval("return type(require('crypto').hash) == 'function'", "=test"))
         .unwrap();
     assert!(hash_is_there);
 
     // Only the names the stdlib claims are shadowed.
-    let other: bool = rt.eval("return require('extra').present", "=test").unwrap();
+    let other: bool = rt
+        .block_on(rt.eval("return require('extra').present", "=test"))
+        .unwrap();
     assert!(other);
 }
 
@@ -160,7 +162,7 @@ fn a_module_that_is_not_registered_leaves_the_stores_module_reachable() {
         .build()
         .unwrap();
     let impostor: bool = rt
-        .eval("return require('crypto').impostor == true", "=test")
+        .block_on(rt.eval("return require('crypto').impostor == true", "=test"))
         .unwrap();
     assert!(impostor);
 }
@@ -171,7 +173,7 @@ fn a_module_that_is_not_registered_leaves_the_stores_module_reachable() {
 fn pubsub_delivers_to_subscribers_of_a_topic() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let got: String = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local stores = require("stores")
             local got = {}
@@ -183,7 +185,7 @@ fn pubsub_delivers_to_subscribers_of_a_topic() {
             return table.concat(got, ",")
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(got, "greetings:hello");
 }
@@ -194,7 +196,7 @@ fn pubsub_subscribe_takes_a_topic_and_a_callback() {
     // Its code implements two arguments, and so does ours.
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let got: i64 = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local pubsub = require("stores").pubsub
             local total = 0
@@ -206,7 +208,7 @@ fn pubsub_subscribe_takes_a_topic_and_a_callback() {
             return total
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(got, 5);
 }
@@ -215,7 +217,7 @@ fn pubsub_subscribe_takes_a_topic_and_a_callback() {
 fn an_observable_notifies_its_observers() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let got: String = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local observable = require("stores").observable(1)
             local seen = {}
@@ -227,7 +229,7 @@ fn an_observable_notifies_its_observers() {
             return table.concat(seen, ",")
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(got, "a");
 }
@@ -260,10 +262,10 @@ fn hashes_match_the_published_vectors_for_abc() {
     ];
     for (kind, digest) in vectors {
         let got: String = rt
-            .eval(
+            .block_on(rt.eval(
                 format!("return require('crypto').hash('{kind}', 'abc')"),
                 "=test",
-            )
+            ))
             .unwrap();
         assert_eq!(got, digest, "{kind}");
     }
@@ -273,7 +275,7 @@ fn hashes_match_the_published_vectors_for_abc() {
 fn base64_round_trips_text_in_both_alphabets() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let ok: bool = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local b64 = require("crypto").base64
             local text = "hello, world?>"
@@ -282,7 +284,7 @@ fn base64_round_trips_text_in_both_alphabets() {
                and b64.encode("hello, world") == "aGVsbG8sIHdvcmxk"
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert!(ok);
 }
@@ -291,10 +293,10 @@ fn base64_round_trips_text_in_both_alphabets() {
 fn decoding_malformed_base64_is_an_error_a_script_can_pcall() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let failed: bool = rt
-        .eval(
+        .block_on(rt.eval(
             "local ok = pcall(require('crypto').base64.decode, '!!!') return not ok",
             "=test",
-        )
+        ))
         .unwrap();
     assert!(failed);
 }
@@ -305,7 +307,7 @@ fn decoding_malformed_base64_is_an_error_a_script_can_pcall() {
 fn json_round_trips_a_table() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let ok: bool = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local json = require("serde").json
             local text = json.encode({ name = "x", list = { 1, 2, 3 }, nested = { flag = true } })
@@ -313,7 +315,7 @@ fn json_round_trips_a_table() {
             return back.name == "x" and #back.list == 3 and back.list[3] == 3 and back.nested.flag
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert!(ok);
 }
@@ -322,10 +324,10 @@ fn json_round_trips_a_table() {
 fn decoding_malformed_json_is_an_error_a_script_can_pcall() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let failed: bool = rt
-        .eval(
+        .block_on(rt.eval(
             "local ok = pcall(require('serde').json.decode, '{nope') return not ok",
             "=test",
-        )
+        ))
         .unwrap();
     assert!(failed);
 }
@@ -336,10 +338,10 @@ fn decoding_malformed_json_is_an_error_a_script_can_pcall() {
 fn datetime_parses_and_formats_an_instant() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let got: String = rt
-        .eval(
+        .block_on(rt.eval(
             r#"return tostring(require("datetime").new("2024-01-02T03:04:05Z"))"#,
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(got, "2024-01-02T03:04:05+00:00");
 }
@@ -348,10 +350,10 @@ fn datetime_parses_and_formats_an_instant() {
 fn datetime_builds_from_civil_fields() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let got: String = rt
-        .eval(
+        .block_on(rt.eval(
             r#"return tostring(require("datetime").new(2024, 1, 2, 3, 4, 5))"#,
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(got, "2024-01-02T03:04:05+00:00");
 }
@@ -359,10 +361,10 @@ fn datetime_builds_from_civil_fields() {
 // -- Reaching the rest -------------------------------------------------------------------------
 
 #[test]
-fn the_synchronous_parts_of_utils_work_without_an_executor() {
+fn uuid_and_env_get_work() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let ok: bool = rt
-        .eval(
+        .block_on(rt.eval(
             r#"
             local utils = require("utils")
             return type(utils.uuid()) == "string" and #utils.uuid() == 36
@@ -370,7 +372,7 @@ fn the_synchronous_parts_of_utils_work_without_an_executor() {
                and type(utils.env.get("PATH")) == "string"
             "#,
             "=test",
-        )
+        ))
         .unwrap();
     assert!(ok);
 }

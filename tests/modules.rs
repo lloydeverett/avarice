@@ -27,7 +27,7 @@ fn resolves_a_host_registered_module() {
 
     assert!(rt.has_module("greeting"));
     let out: String = rt
-        .eval("return require('greeting').hello('world')", "=test")
+        .block_on(rt.eval("return require('greeting').hello('world')", "=test"))
         .unwrap();
     assert_eq!(out, "hello, world");
 }
@@ -49,10 +49,10 @@ fn a_lazy_module_loads_once_and_only_when_asked() {
         "loader ran before it was required"
     );
     let value: i64 = rt
-        .eval(
+        .block_on(rt.eval(
             "local a = require('counted') local b = require('counted') return a + b",
             "=test",
-        )
+        ))
         .unwrap();
     assert_eq!(value, 82);
     assert_eq!(
@@ -68,7 +68,7 @@ fn require_hands_back_the_same_value_every_time() {
     rt.register_module("thing", rt.lua().create_table().unwrap())
         .unwrap();
     let same: bool = rt
-        .eval("return require('thing') == require('thing')", "=test")
+        .block_on(rt.eval("return require('thing') == require('thing')", "=test"))
         .unwrap();
     assert!(same);
 }
@@ -77,7 +77,7 @@ fn require_hands_back_the_same_value_every_time() {
 fn require_reaches_the_standard_libraries_lua_already_loaded() {
     let rt = Runtime::new(Profile::Sandbox).unwrap();
     let same: bool = rt
-        .eval("return require('string') == string", "=test")
+        .block_on(rt.eval("return require('string') == string", "=test"))
         .unwrap();
     assert!(same);
 }
@@ -97,12 +97,14 @@ fn resolves_dotted_names_from_the_filesystem_store() {
         .unwrap();
 
     let doubled: i64 = rt
-        .eval("return require('app.util').double(21)", "=test")
+        .block_on(rt.eval("return require('app.util').double(21)", "=test"))
         .unwrap();
     assert_eq!(doubled, 42);
 
     // A directory's `init.lua` stands in for the directory itself.
-    let name: String = rt.eval("return require('app').name", "=test").unwrap();
+    let name: String = rt
+        .block_on(rt.eval("return require('app').name", "=test"))
+        .unwrap();
     assert_eq!(name, "app");
 }
 
@@ -114,7 +116,9 @@ fn a_module_is_told_its_own_name() {
         .store(FsStore::new(dir.path()))
         .build()
         .unwrap();
-    let name: String = rt.eval("return require('echo')", "=test").unwrap();
+    let name: String = rt
+        .block_on(rt.eval("return require('echo')", "=test"))
+        .unwrap();
     assert_eq!(name, "echo");
 }
 
@@ -126,7 +130,9 @@ fn a_module_that_returns_nothing_is_recorded_as_true() {
         .store(FsStore::new(dir.path()))
         .build()
         .unwrap();
-    let value: bool = rt.eval("return require('silent')", "=test").unwrap();
+    let value: bool = rt
+        .block_on(rt.eval("return require('silent')", "=test"))
+        .unwrap();
     assert!(value);
 }
 
@@ -138,7 +144,7 @@ fn errors_in_a_module_reach_the_caller() {
         .store(FsStore::new(dir.path()))
         .build()
         .unwrap();
-    let err = rt.exec("require('bad')", "=test").unwrap_err();
+    let err = rt.block_on(rt.exec("require('bad')", "=test")).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("module exploded"), "{msg}");
     assert!(msg.contains("bad.lua"), "{msg}");
@@ -154,7 +160,10 @@ fn a_require_cycle_is_reported_rather_than_recursing() {
         .build()
         .unwrap();
 
-    let err = rt.exec("require('a')", "=test").unwrap_err().to_string();
+    let err = rt
+        .block_on(rt.exec("require('a')", "=test"))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("cycle"), "{err}");
     assert!(err.contains("a -> b -> a"), "{err}");
 }
@@ -168,16 +177,21 @@ fn a_failed_module_can_be_required_again() {
         .build()
         .unwrap();
 
-    assert!(rt.exec("require('flaky')", "=test").is_err());
+    assert!(rt.block_on(rt.exec("require('flaky')", "=test")).is_err());
     dir.write("flaky.lua", "return 'fixed'");
-    let value: String = rt.eval("return require('flaky')", "=test").unwrap();
+    let value: String = rt
+        .block_on(rt.eval("return require('flaky')", "=test"))
+        .unwrap();
     assert_eq!(value, "fixed");
 }
 
 #[test]
 fn missing_modules_say_where_we_looked() {
     let rt = Runtime::new(Profile::Sandbox).unwrap();
-    let err = rt.exec("require('nope')", "=test").unwrap_err().to_string();
+    let err = rt
+        .block_on(rt.exec("require('nope')", "=test"))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("module 'nope' not found"), "{err}");
     assert!(err.contains("no module store is configured"), "{err}");
 
@@ -186,7 +200,10 @@ fn missing_modules_say_where_we_looked() {
         .store(FsStore::new(dir.path()))
         .build()
         .unwrap();
-    let err = rt.exec("require('nope')", "=test").unwrap_err().to_string();
+    let err = rt
+        .block_on(rt.exec("require('nope')", "=test"))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("filesystem store rooted at"), "{err}");
 }
 
@@ -200,7 +217,7 @@ fn a_module_name_can_never_address_a_file_outside_the_store() {
 
     for attempt in ["../../etc/passwd", "/etc/passwd", "a/../../b", "..", "a b"] {
         let err = rt
-            .exec(format!("require([[{attempt}]])"), "=test")
+            .block_on(rt.exec(format!("require([[{attempt}]])"), "=test"))
             .unwrap_err()
             .to_string();
         assert!(
@@ -233,7 +250,10 @@ fn a_store_failure_is_not_mistaken_for_a_missing_module() {
         .store(BrokenStore)
         .build()
         .unwrap();
-    let err = rt.exec("require('any')", "=test").unwrap_err().to_string();
+    let err = rt
+        .block_on(rt.exec("require('any')", "=test"))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("could not be read"), "{err}");
     assert!(err.contains("the database is on fire"), "{err}");
 }
@@ -262,12 +282,12 @@ fn a_store_need_not_be_a_filesystem() {
         .build()
         .unwrap();
     let answer: i64 = rt
-        .eval("return require('answers').everything", "=test")
+        .block_on(rt.eval("return require('answers').everything", "=test"))
         .unwrap();
     assert_eq!(answer, 42);
 
     let err = rt
-        .exec("require('other')", "=test")
+        .block_on(rt.exec("require('other')", "=test"))
         .unwrap_err()
         .to_string();
     assert!(err.contains("the in-memory store"), "{err}");
@@ -279,16 +299,18 @@ fn the_store_can_be_replaced_after_the_runtime_is_built() {
     dir.write("late.lua", "return 'late'");
 
     let rt = Runtime::new(Profile::Sandbox).unwrap();
-    assert!(rt.exec("require('late')", "=test").is_err());
+    assert!(rt.block_on(rt.exec("require('late')", "=test")).is_err());
 
     rt.set_store(FsStore::new(dir.path()));
-    let value: String = rt.eval("return require('late')", "=test").unwrap();
+    let value: String = rt
+        .block_on(rt.eval("return require('late')", "=test"))
+        .unwrap();
     assert_eq!(value, "late");
 
     rt.clear_store();
     // Already loaded, so still resolvable from the cache.
-    assert!(rt.exec("require('late')", "=test").is_ok());
-    assert!(rt.exec("require('other')", "=test").is_err());
+    assert!(rt.block_on(rt.exec("require('late')", "=test")).is_ok());
+    assert!(rt.block_on(rt.exec("require('other')", "=test")).is_err());
 }
 
 #[test]
@@ -301,7 +323,9 @@ fn a_host_module_wins_over_the_store() {
         .unwrap();
     rt.register_module("conflict", "from the host").unwrap();
 
-    let value: String = rt.eval("return require('conflict')", "=test").unwrap();
+    let value: String = rt
+        .block_on(rt.eval("return require('conflict')", "=test"))
+        .unwrap();
     assert_eq!(value, "from the host");
 }
 
@@ -313,7 +337,7 @@ fn lua_cannot_reach_the_filesystem_through_the_module_system() {
     let globals: Table = rt.lua().globals();
     assert!(globals.get::<Value>("package").unwrap().is_nil());
     let loaded_is_hidden: bool = rt
-        .eval("return _LOADED == nil and _G._LOADED == nil", "=test")
+        .block_on(rt.eval("return _LOADED == nil and _G._LOADED == nil", "=test"))
         .unwrap();
     assert!(loaded_is_hidden, "the module cache should not be a global");
 }

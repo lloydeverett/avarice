@@ -91,6 +91,7 @@ dependencies = [
  "mlua",
  "reedline",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

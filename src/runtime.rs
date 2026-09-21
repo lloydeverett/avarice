@@ -1,6 +1,7 @@
 //! The runtime, and the builder that configures one.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -34,18 +35,32 @@ struct Modules {
     loading: Mutex<Vec<ModuleName>>,
 }
 
-/// A Lua runtime: a Lua state, the libraries a [`Profile`] granted it, and the limits it runs
-/// under.
+/// A Lua runtime: a Lua state, the libraries a [`Profile`] granted it, the limits it runs under,
+/// and the executor that drives it.
+///
+/// There is one way to run a chunk and it is asynchronous, because a stdlib module may await
+/// something — an HTTP response, a timer — while Lua waits for it. [`exec`](Self::exec) and
+/// [`eval`](Self::eval) return futures. The runtime owns a current-thread tokio runtime, and
+/// [`block_on`](Self::block_on) drives a future on it for a caller who is not itself async.
 ///
 /// ```
 /// use avarice_rt::{Profile, Runtime};
 ///
 /// let rt = Runtime::new(Profile::Sandbox)?;
-/// let sum: i64 = rt.eval("1 + 2", "=example")?;
+/// let sum: i64 = rt.block_on(rt.eval("1 + 2", "=example"))?;
 /// assert_eq!(sum, 3);
 /// # Ok::<_, avarice_rt::Error>(())
 /// ```
+///
+/// Calling `block_on` from inside another tokio runtime panics, with tokio's own message. An
+/// embedder that is already async should build the `Runtime` on a thread of its own and talk to
+/// that thread, since one Lua state is not reentrant in any case.
+///
+/// Dropping the runtime drops whatever tasks are still outstanding. Nothing waits for them.
 pub struct Runtime {
+    // Declared first so that it drops first: outstanding tasks hold Lua values, and should be gone
+    // before the state they point into.
+    executor: tokio::runtime::Runtime,
     lua: Lua,
     limits: Arc<Limits>,
     modules: Arc<Modules>,
@@ -71,6 +86,19 @@ impl Runtime {
     /// anything the profile set, and host modules may have been registered since.
     pub fn profile(&self) -> Profile {
         self.profile
+    }
+
+    /// Drives `future` to completion on this runtime's executor, blocking the calling thread.
+    ///
+    /// Tasks that Lua code spawns run whenever the executor does, which is only while a call to
+    /// this is in progress; they are not driven between calls, and they are not waited for when
+    /// `future` finishes.
+    ///
+    /// # Panics
+    ///
+    /// If called from within another tokio runtime. See the type's documentation.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.executor.block_on(future)
     }
 
     /// The underlying Lua state, for everything this API does not wrap.
@@ -100,6 +128,9 @@ impl Runtime {
     /// driving Lua through [`Runtime::lua`]. Nesting is safe: an inner guard does not extend the
     /// outer execution's budget.
     ///
+    /// The clock keeps running while the execution awaits, so time spent waiting on a slow
+    /// response counts against the budget.
+    ///
     /// Fails immediately if the runtime's [`CancelHandle`] is already tripped, so that a chunk
     /// too short to reach a single hook tick cannot slip past a cancel.
     pub fn enter(&self) -> Result<Execution> {
@@ -121,9 +152,12 @@ impl Runtime {
     }
 
     /// Runs a chunk for its side effects.
-    pub fn exec(&self, source: impl AsChunk, name: impl Into<String>) -> Result<()> {
+    ///
+    /// The returned future must be driven by this runtime's executor: pass it to
+    /// [`block_on`](Self::block_on).
+    pub async fn exec(&self, source: impl AsChunk, name: impl Into<String>) -> Result<()> {
         let _exec = self.enter()?;
-        self.load(source, name).exec()?;
+        self.load(source, name).exec_async().await?;
         Ok(())
     }
 
@@ -131,13 +165,16 @@ impl Runtime {
     ///
     /// A chunk that parses as an expression is evaluated as one, so `eval::<i64>("1 + 2")`
     /// works as well as `eval::<()>("x = 1")`.
-    pub fn eval<R: FromLuaMulti>(
+    ///
+    /// The returned future must be driven by this runtime's executor: pass it to
+    /// [`block_on`](Self::block_on).
+    pub async fn eval<R: FromLuaMulti>(
         &self,
         source: impl AsChunk,
         name: impl Into<String>,
     ) -> Result<R> {
         let _exec = self.enter()?;
-        Ok(self.load(source, name).eval()?)
+        Ok(self.load(source, name).eval_async().await?)
     }
 
     /// Makes `value` the module `name`, resolvable by `require` from then on.
@@ -323,9 +360,10 @@ impl RuntimeBuilder {
 
     /// Limits how long one top-level execution may run for.
     ///
-    /// The clock starts when [`Runtime::exec`], [`Runtime::eval`] or [`Runtime::enter`] is
-    /// called and stops when it returns, so the limit is per execution rather than for the
-    /// runtime's lifetime. Installs the limit hook, which costs a little throughput.
+    /// The clock starts when the future [`Runtime::exec`] or [`Runtime::eval`] returns is first
+    /// polled, or when [`Runtime::enter`] is called, and stops when that finishes, so the limit is
+    /// per execution rather than for the runtime's lifetime. It keeps running while the
+    /// execution awaits. Installs the limit hook, which costs a little throughput.
     pub fn time_limit(mut self, limit: Duration) -> Self {
         self.time_limit = Some(limit);
         self
@@ -418,7 +456,13 @@ impl RuntimeBuilder {
             limits::install_hook(&lua, Arc::clone(&limits), self.check_interval)?;
         }
 
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::Config(format!("could not start the tokio runtime: {e}")))?;
+
         let runtime = Runtime {
+            executor,
             lua,
             limits,
             modules,

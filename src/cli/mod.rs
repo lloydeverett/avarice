@@ -125,7 +125,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
     set_arg_table(&rt, &cli.script)?;
 
     for statement in &cli.execute {
-        rt.exec(statement.as_str(), "=(command line)")?;
+        rt.block_on(rt.exec(statement.as_str(), "=(command line)"))?;
     }
 
     let script_args = cli.script.get(1..).unwrap_or_default();
@@ -182,9 +182,11 @@ fn run_program(
     args: &[String],
 ) -> Result<(), CliError> {
     let args: Variadic<String> = args.to_vec().into();
-    let _execution = rt.enter()?;
-    rt.load(source, name).call::<()>(args)?;
-    Ok(())
+    rt.block_on(async {
+        let _execution = rt.enter()?;
+        rt.load(source, name).call_async::<()>(args).await?;
+        Ok(())
+    })
 }
 
 fn strip_shebang(mut source: Vec<u8>) -> Vec<u8> {

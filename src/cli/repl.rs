@@ -83,7 +83,7 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
                 match compile(rt, &buffer) {
                     Ok(chunk) => {
                         buffer.clear();
-                        if let Err(e) = evaluate(rt, chunk) {
+                        if let Err(e) = rt.block_on(evaluate(rt, chunk)) {
                             eprintln!("avrt: {e}");
                         }
                     }
@@ -144,17 +144,17 @@ fn compile(rt: &Runtime, entry: &str) -> Result<Function, CompileError> {
 }
 
 /// Runs an entry and prints whatever it returned, as stock `lua` does.
-fn evaluate(rt: &Runtime, chunk: Function) -> Result<(), Error> {
+async fn evaluate(rt: &Runtime, chunk: Function) -> Result<(), Error> {
     // A previous entry may have been cancelled or timed out; each entry starts fresh.
     if let Some(cancel) = rt.cancel_handle() {
         cancel.reset();
     }
     let _execution = rt.enter()?;
 
-    let values: MultiValue = chunk.call(())?;
+    let values: MultiValue = chunk.call_async(()).await?;
     if !values.is_empty() {
         let print: Function = rt.lua().globals().get("print")?;
-        print.call::<()>(values)?;
+        print.call_async::<()>(values).await?;
     }
     Ok(())
 }
@@ -193,15 +193,18 @@ mod tests {
     fn a_bare_expression_is_compiled_as_one() {
         let rt = runtime();
         let chunk = compile(&rt, "6 * 7").expect("should compile");
-        assert_eq!(chunk.call::<i64>(()).unwrap(), 42);
+        assert_eq!(rt.block_on(chunk.call_async::<i64>(())).unwrap(), 42);
     }
 
     #[test]
     fn a_statement_still_compiles() {
         let rt = runtime();
         let chunk = compile(&rt, "x = 6 * 7").expect("should compile");
-        chunk.call::<()>(()).unwrap();
-        assert_eq!(rt.eval::<i64>("return x", "=test").unwrap(), 42);
+        rt.block_on(chunk.call_async::<()>(())).unwrap();
+        assert_eq!(
+            rt.block_on(rt.eval::<i64>("return x", "=test")).unwrap(),
+            42
+        );
     }
 
     #[test]
@@ -228,8 +231,12 @@ mod tests {
         assert_eq!(classify(&rt, "function f(a)"), "incomplete");
         assert_eq!(classify(&rt, "function f(a)\nreturn a + 1"), "incomplete");
         let chunk = compile(&rt, "function f(a)\nreturn a + 1\nend").expect("should compile");
-        chunk.call::<()>(()).unwrap();
-        assert_eq!(rt.eval::<i64>("return f(41)", "=test").unwrap(), 42);
+        rt.block_on(chunk.call_async::<()>(())).unwrap();
+        assert_eq!(
+            rt.block_on(rt.eval::<i64>("return f(41)", "=test"))
+                .unwrap(),
+            42
+        );
     }
 
     #[test]

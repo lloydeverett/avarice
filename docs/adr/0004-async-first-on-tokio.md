@@ -71,3 +71,16 @@ What the rejection predicted has happened, and is accepted:
 
 Unchanged: the core owns a current-thread tokio runtime, and tasks are green threads on the thread
 that drives it. `send` changes what must be `Send`, not which thread runs Lua.
+
+## Amendment, 2026-09-21: no `LocalSet`
+
+The opening paragraph and ticket 01 put a `LocalSet` beside the tokio runtime, so that tasks could
+be `!Send`. With `send` on that reason is gone: Astra's tasks are `tokio::spawn`ed, Lua futures are
+`Send`, and a plain current-thread runtime drives them all. Keeping a `LocalSet` would make
+`Runtime` `!Send` again — `LocalSet` is not `Send` — and undo the amendment above for no benefit.
+
+So `Runtime` owns a `tokio::runtime::Runtime` built with `new_current_thread` and `enable_all`,
+and `Runtime::block_on` is that runtime's own `block_on`. Everything else here stands: it panics
+with tokio's message when called from inside another runtime, tasks are green threads on the
+thread that drives it, and they run only while something is driving it. `Runtime` declares the
+executor before the Lua state, so that dropping one drops outstanding tasks first.

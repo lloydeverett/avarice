@@ -7,10 +7,18 @@
 //! use avarice_rt::{Profile, Runtime};
 //!
 //! let rt = Runtime::new(Profile::Sandbox)?;
-//! let answer: i64 = rt.eval("return 6 * 7", "=example")?;
+//! let answer: i64 = rt.block_on(rt.eval("return 6 * 7", "=example"))?;
 //! assert_eq!(answer, 42);
 //! # Ok::<_, avarice_rt::Error>(())
 //! ```
+//!
+//! # Running Lua
+//!
+//! There is one way to run a chunk and it is asynchronous, because a stdlib module may await
+//! while Lua waits for it. [`Runtime::exec`] and [`Runtime::eval`] return futures, and the runtime
+//! owns the current-thread tokio executor that drives them; [`Runtime::block_on`] runs a future on
+//! it for a caller who is not async. It panics if called from inside another tokio runtime, so an
+//! embedder that is already async builds its `Runtime` on a thread of its own.
 //!
 //! # Profiles
 //!
