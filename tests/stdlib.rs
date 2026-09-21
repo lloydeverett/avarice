@@ -462,3 +462,281 @@ fn stdlib_hands_out_a_fresh_list_each_call() {
         .unwrap();
     assert!(independent);
 }
+
+// -- Printing what the modules hand back --------------------------------------------------------
+//
+// A userdata's contents live in Rust and Lua cannot enumerate them, so what `print` shows for one
+// is what its `__tostring` says. These check what `fs`'s do, through `print`.
+
+/// What a trusted runtime prints for `source`, which is given `fs` and `dir`, as a Lua string.
+fn printed_in_fs(dir: &TempDir, source: &str) -> String {
+    let buffer = common::Buffer::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .write_sink(buffer.clone())
+        .build()
+        .unwrap();
+    let prelude = format!("local fs, dir = require('fs'), {:?}\n", dir.path());
+    rt.block_on(rt.exec(format!("{prelude}{source}"), "=test"))
+        .unwrap();
+    buffer.contents()
+}
+
+#[test]
+fn a_dir_entry_prints_its_type_name_and_path() {
+    let dir = TempDir::new();
+    let file = dir.write("a.txt", "");
+    let printed = printed_in_fs(&dir, "print(fs.read_dir(dir)[1])");
+    assert_eq!(printed, format!("AstraDirEntry({})\n", file.display()));
+}
+
+#[test]
+fn tostring_of_a_dir_entry_is_what_print_shows() {
+    let dir = TempDir::new();
+    let file = dir.write("a.txt", "");
+    let text = printed_in_fs(&dir, "print(tostring(fs.read_dir(dir)[1]))");
+    assert_eq!(text, format!("AstraDirEntry({})\n", file.display()));
+}
+
+#[test]
+fn a_directory_listing_shows_each_entry_rather_than_its_address() {
+    let dir = TempDir::new();
+    let a = dir.write("a.txt", "");
+    let b = dir.write("sub/b.txt", "");
+    let printed = printed_in_fs(&dir, "print(fs.read_dir(dir))");
+    assert!(!printed.contains("0x"), "{printed}");
+    // `read_dir` gives no order, so each entry is looked for rather than the listing compared.
+    assert!(
+        printed.contains(&format!("AstraDirEntry({}),", a.display())),
+        "{printed}"
+    );
+    assert!(
+        printed.contains(&format!(
+            "AstraDirEntry({}),",
+            b.parent().unwrap().display()
+        )),
+        "{printed}"
+    );
+}
+
+#[test]
+fn an_entry_type_prints_what_kind_of_entry_it_is() {
+    let dir = TempDir::new();
+    dir.write("a.txt", "");
+    dir.write("sub/b.txt", "");
+    let printed = printed_in_fs(
+        &dir,
+        "print(fs.get_metadata(dir .. '/a.txt'):type())
+         print(fs.get_metadata(dir .. '/sub'):type())",
+    );
+    assert_eq!(printed, "AstraEntryType(file)\nAstraEntryType(dir)\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn a_symlink_prints_as_a_symlink() {
+    let dir = TempDir::new();
+    let target = dir.write("target.txt", "");
+    std::os::unix::fs::symlink(&target, dir.path().join("link")).unwrap();
+    let printed = printed_in_fs(
+        &dir,
+        "for _, entry in ipairs(fs.read_dir(dir)) do
+           if entry:file_name() == 'link' then print(entry:type()) end
+         end",
+    );
+    assert_eq!(printed, "AstraEntryType(symlink)\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn a_dir_entry_whose_name_is_not_utf8_still_prints() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new();
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9");
+    std::fs::write(dir.path().join(name), "").unwrap();
+    // `entry:path()` raises for this name. Printing must not: a directory listing is what one
+    // reaches for to find out why something is odd.
+    let printed = printed_in_fs(&dir, "print(fs.read_dir(dir)[1])");
+    assert!(printed.starts_with("AstraDirEntry("), "{printed}");
+    assert!(printed.contains("caf\u{fffd}"), "{printed}");
+}
+
+#[test]
+fn a_file_prints_its_path() {
+    let dir = TempDir::new();
+    let file = dir.write("a.txt", "hello");
+    let printed = printed_in_fs(&dir, "print(fs.open(dir .. '/a.txt'))");
+    assert_eq!(printed, format!("AstraFile({})\n", file.display()));
+}
+
+#[test]
+fn metadata_prints_its_type_and_length() {
+    let dir = TempDir::new();
+    dir.write("a.txt", "hello");
+    dir.write("sub/b.txt", "");
+    let printed = printed_in_fs(
+        &dir,
+        "print(fs.get_metadata(dir .. '/a.txt'))
+         print(fs.get_metadata(dir .. '/sub'))",
+    );
+    let mut lines = printed.lines();
+    assert_eq!(lines.next(), Some("AstraMetadata(file, len 5)"));
+    // A directory's length is the filesystem's to say.
+    let second = lines.next().unwrap();
+    assert!(second.starts_with("AstraMetadata(dir, len "), "{second}");
+}
+
+#[test]
+fn file_permissions_print_whether_they_are_readonly() {
+    let dir = TempDir::new();
+    let file = dir.write("a.txt", "");
+    let printed = printed_in_fs(
+        &dir,
+        "local p = fs.get_metadata(dir .. '/a.txt'):file_permissions()
+         print(p)
+         p:set_readonly(true)
+         print(p)",
+    );
+    assert_eq!(
+        printed,
+        "AstraFilePermissions(read-write)\nAstraFilePermissions(readonly)\n"
+    );
+    // `set_readonly` changes the value in Lua, and never the file.
+    assert!(!std::fs::metadata(file).unwrap().permissions().readonly());
+}
+
+#[test]
+fn a_buffer_prints_its_length_and_never_its_contents() {
+    let dir = TempDir::new();
+    dir.write("a.txt", "hello world");
+    let printed = printed_in_fs(
+        &dir,
+        "local buffer = fs.new_buffer(64)
+         print(buffer)
+         local file = fs.open(dir .. '/a.txt')
+         file:read_buf(buffer)
+         print(buffer)",
+    );
+    assert_eq!(printed, "AstraBufferMut(len 0)\nAstraBufferMut(len 11)\n");
+}
+
+#[test]
+fn a_regex_prints_its_pattern() {
+    let dir = TempDir::new();
+    let printed = printed_in_fs(&dir, "print(require('validation').regex('(\\\\d+)-x'))");
+    assert_eq!(printed, "AstraRegex(/(\\d+)-x/)\n");
+}
+
+/// Serves `response` once, on a port of its own, and returns the URL to ask for.
+fn serve_once(response: &'static str) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/where", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut seen = Vec::new();
+        let mut chunk = [0; 512];
+        while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut chunk).unwrap();
+            if n == 0 {
+                break;
+            }
+            seen.extend_from_slice(&chunk[..n]);
+        }
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    url
+}
+
+#[test]
+fn an_http_request_prints_its_method_and_url() {
+    let dir = TempDir::new();
+    let printed = printed_in_fs(
+        &dir,
+        "local http = require('http')
+         print(http.request('http://example.invalid/x'))
+         print(http.request({ url = 'http://example.invalid/y', method = 'POST' }))
+         print(http.request('http://example.invalid/z'):set_method('PUT'))",
+    );
+    assert_eq!(
+        printed,
+        "HTTPClientRequest(GET http://example.invalid/x)\n\
+         HTTPClientRequest(POST http://example.invalid/y)\n\
+         HTTPClientRequest(PUT http://example.invalid/z)\n"
+    );
+}
+
+#[test]
+fn an_http_request_does_not_print_its_headers_or_body() {
+    // A request is printed to find out which one it is, and a header is where a token lives.
+    let dir = TempDir::new();
+    let printed = printed_in_fs(
+        &dir,
+        "print(require('http').request({
+           url = 'http://example.invalid/',
+           method = 'POST',
+           headers = { Authorization = 'Bearer SECRET-TOKEN' },
+           body = 'SECRET-BODY',
+         }))",
+    );
+    assert!(!printed.contains("SECRET"), "{printed}");
+    assert!(printed.starts_with("HTTPClientRequest(POST "), "{printed}");
+}
+
+#[test]
+fn an_http_response_prints_its_status_and_url_and_its_body_prints_its_length() {
+    let url = serve_once(
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nSet-Cookie: session=SECRET\r\nConnection: close\r\n\r\nhello",
+    );
+    let dir = TempDir::new();
+    let printed = printed_in_fs(
+        &dir,
+        &format!(
+            "local response = require('http').request('{url}'):execute()
+             print(response)
+             print(response:body())"
+        ),
+    );
+    assert_eq!(
+        printed,
+        format!("HTTPClientResponse(200 {url})\nAstraBuffer(len 5)\n")
+    );
+    assert!(!printed.contains("SECRET"), "{printed}");
+}
+
+#[test]
+fn a_task_handle_prints_where_the_task_has_got_to() {
+    let dir = TempDir::new();
+    let printed = printed_in_fs(
+        &dir,
+        "local utils = require('utils')
+         local quick = utils.spawn_task(function() end)
+         print(quick)                      -- spawned, not yet run
+         utils.spawn_timeout(function() end, 30):await()
+         print(quick)                      -- ran while that waited
+         quick:await()
+         print(quick)
+         local long = utils.spawn_timeout(function() end, 1000)
+         long:abort()
+         print(long)",
+    );
+    assert_eq!(
+        printed,
+        "TaskHandler(running)\nTaskHandler(finished)\n\
+         TaskHandler(awaited or aborted)\nTaskHandler(awaited or aborted)\n"
+    );
+}
+
+#[test]
+fn printing_a_task_handle_that_is_being_awaited_does_not_raise() {
+    // `await` holds the handle for as long as it waits, so anything else that reads it meanwhile
+    // finds it taken. Printing is how one finds out what is going on, and must not fail there.
+    let dir = TempDir::new();
+    let printed = printed_in_fs(
+        &dir,
+        "local utils = require('utils')
+         local slow = utils.spawn_timeout(function() end, 200)
+         utils.spawn_task(function() slow:await() end)
+         utils.spawn_timeout(function() print(slow) end, 20):await()",
+    );
+    assert_eq!(printed, "TaskHandler(awaiting)\n");
+}

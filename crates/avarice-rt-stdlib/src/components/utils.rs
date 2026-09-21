@@ -16,9 +16,15 @@
 //     `setenv` from `register_to_lua`.
 //   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
 //     workspace is on, moved it; Astra is on 0.11.
+//   - Added a `__tostring` metamethod to `TaskHandler` and `AstraRegex`, and `MetaMethod` to the
+//     `mlua` import for it. Astra has none, so `tostring` and `print` give a userdata's type name
+//     and its address. Now `tostring` gives `TaskHandler(running)`, `TaskHandler(finished)` for a
+//     task that has run to its end and not been awaited, `TaskHandler(awaited or aborted)`,
+//     `TaskHandler(awaiting)` while an `await` holds the handle, and `AstraRegex(/<pattern>/)`.
+//     Nothing Astra does is altered: these are additions.
 //   - Everything else, including `tokio::spawn` for tasks, is unchanged.
 
-use mlua::{LuaSerdeExt, UserData};
+use mlua::{AnyUserData, LuaSerdeExt, MetaMethod, UserData};
 
 pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
     AstraRegex::register_to_lua(lua)?;
@@ -70,6 +76,19 @@ pub struct TaskHandler<T: Send + 'static> {
 }
 impl<T: Send + 'static> UserData for TaskHandler<T> {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        // A function, not a method, so that it can find the handle taken: `await` holds it
+        // mutably for as long as it waits, and a method would raise a borrow error there.
+        methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
+            let state = match this.borrow::<Self>() {
+                Ok(this) => match &this.handler {
+                    Some(handler) if handler.is_finished() => "finished",
+                    Some(_) => "running",
+                    None => "awaited or aborted",
+                },
+                Err(_) => "awaiting",
+            };
+            Ok(format!("TaskHandler({state})"))
+        });
         methods.add_method_mut("abort", |_, this, ()| {
             let handler = this.handler.take();
             if let Some(handler) = handler {
@@ -191,6 +210,9 @@ impl AstraRegex {
 }
 impl mlua::UserData for AstraRegex {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            Ok(format!("AstraRegex(/{}/)", this.re.as_str()))
+        });
         methods.add_method("captures", |_, this, content: String| {
             let captures = this
                 .re

@@ -5,7 +5,8 @@ status: ready-for-agent
 # The stdlib modules
 
 > **Amended 2026-09-20 and 2026-09-21.** The stdlib crate now holds Astra's sources verbatim, changed only by
-> removal, and mlua's `send` feature is on. See the amendments to
+> removal and, since a later amendment to ADR 0006, by small additions that alter nothing Astra
+> does, and mlua's `send` feature is on. See the amendments to
 > [ADR 0004](../adr/0004-async-first-on-tokio.md) and
 > [ADR 0006](../adr/0006-stdlib-derived-from-astra.md). Where the sections below disagree with
 > them — the `avarice_internal__` rename, `datetime` written on `jiff`, JSON as the only serde

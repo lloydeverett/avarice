@@ -20,9 +20,11 @@ holder and the licence, and has a `Changes from the original:` list:
 
 - A file that is otherwise unchanged says `none`, and below its header it is byte-for-byte
   Astra's: `sed '1,/^$/d' <file>` gives Astra's file exactly.
-- A file that differs lists every change. The changes are removals of what is not taken, and the
-  respelling of `mlua::SerializeOptions` for the mlua this workspace is on. Nothing Astra does has
-  been altered in how it works.
+- A file that differs lists every change. The changes are removals of what is not taken, the
+  respelling of `mlua::SerializeOptions` for the mlua this workspace is on, and a few additions,
+  such as a `__tostring` on each userdata, so that `print` can show which value one is (ADR 0006
+  says why, and that a userdata is expected to have one). Nothing Astra does has been altered in
+  how it works.
 - `LICENSE` is the Apache License 2.0. Astra distributes no `NOTICE` file, so there is none here.
   Astra's own `LICENSE` differs from the canonical text in section 8 and in the appendix; this is
   the canonical text. The copyright line in the headers, `Copyright 2024 ArkForge LLC`, is the one

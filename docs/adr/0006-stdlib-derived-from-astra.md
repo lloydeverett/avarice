@@ -6,6 +6,8 @@ status: accepted
 
 > Amended 2026-09-20: the sources are Astra's own, not adapted. Amended 2026-09-21: `validation`
 > is taken after all, and every Astra file carries a header, with no `NOTICE` or `UPSTREAM.md`.
+> Amended 2026-09-21 again: a change may also be an **addition** that leaves everything Astra does
+> as it was, and the first is a `__tostring` on the `fs` userdata.
 > Where the text below says otherwise, or mentions `jiff`, `NOTICE`, or files without a header, or
 > says validation is not taken, the amendments at the end win.
 
@@ -151,3 +153,44 @@ whose it was or under what licence. It is reversed.
 - **`src/lib.rs` and `src/modules.rs` are this crate's own** and carry no header. They make the
   same registration calls Astra's `register_components` makes, which the API leaves no other way to
   spell, and share no other expression with Astra.
+
+## Amendment, 2026-09-21: a change may add, if nothing Astra does is altered
+
+The rule was that a change may take functionality away but may not alter how anything that remains
+works, which in practice meant removals and respellings only. It is relaxed by one clause: a change
+may also **add** something, provided every thing Astra does still does what it did.
+
+The reason is `print`. A userdata's contents live in Rust, and Lua can neither enumerate them nor,
+since mlua protects the metatable, list the methods that reach them. `print` therefore cannot
+render one the way it renders a table; all it can show is `tostring`, which for an Astra userdata
+is its type name and an address. `fs.read_dir` returns a list of them, and printing that listing
+showed a column of addresses. Only the type can say what it holds, so the type must say it, and
+that is a `__tostring` metamethod, which `print` already honours at the top level and inside a
+table.
+
+**The preference, going forward, is that a stdlib userdata has a `__tostring`.** A type that is
+added, or that Astra adds in a later version we take, is expected to arrive with one, and a type
+without one wants a reason, not the other way round. It is the one addition this crate makes
+routinely, so it is the one worth stating outright rather than leaving each file to argue for.
+
+Every userdata Astra hands out now has one, and each says what it is without saying more than it
+should: a path for `AstraFile` and `AstraDirEntry`; the kind and length for `AstraMetadata`;
+`readonly` or `read-write` for `AstraFilePermissions`; the kind for `AstraEntryType`; method and URL
+for `HTTPClientRequest`, and status and URL for `HTTPClientResponse`; the pattern for `AstraRegex`;
+the state for `TaskHandler`; the length for `AstraBuffer` and `AstraBufferMut`. (`AstraDateTime`
+already had one.) Two things are left out on purpose. **Headers and bodies** are not shown for a
+request or a response, because a request's headers are where a token lives and `print` is what a
+script reaches for when something is wrong, which is when its output gets pasted somewhere. **A
+buffer's contents** are not shown either, because a buffer can be any size and `print` should not
+be the way a megabyte reaches a terminal.
+
+Where a userdata's Rust side can be busy, `print` must not be what fails. A `TaskHandler` under an
+`await` and an `AstraFile` under a `read` are held mutably while they wait, so theirs is a
+metamethod *function* that tries the borrow and says `awaiting` or `in use` when it cannot; a
+buffer's `try_lock` does the same. Each file's header, under `Changes from the original:`, lists
+its own.
+
+The header remains the only record of what differs from Astra: a change of this kind goes there,
+in the same file, or it is not made. An addition is limited to what the rule already protected. It
+does not change what a method returns, what a function raises, or what any module exposes under a
+name Astra already gave it. Anything that would, is not an addition, and the earlier rule applies.

@@ -10,15 +10,24 @@
 //     feature.
 //   - Astra's `src/components/http/client/websocket.rs` (`AstraWebSocket`) is not in this crate for
 //     the same reason; see `client/mod.rs`.
+//   - Added a `__tostring` metamethod to `HTTPClientRequest` and `HTTPClientResponse`, and
+//     `MetaMethod` to the `mlua` import for it. Astra has none, so `tostring` and `print` give a
+//     userdata's type name and its address. Now `tostring` gives `HTTPClientRequest(<method>
+//     <url>)` and `HTTPClientResponse(<status code> <url>)`. Headers and bodies are left out on
+//     purpose: a request's headers are where a token lives, and a body can be any size. Nothing
+//     Astra does is altered: these are additions.
 //   - Everything else is unchanged.
 
 use crate::components::AstraBuffer;
 use futures::StreamExt;
-use mlua::{ExternalError, UserData};
+use mlua::{ExternalError, MetaMethod, UserData};
 use std::collections::HashMap;
 
 impl UserData for super::HTTPClientRequest {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            Ok(format!("HTTPClientRequest({} {})", this.method, this.url))
+        });
         methods.add_method("set_method", |_, this, method: String| {
             let mut request = this.clone();
             request.method = method;
@@ -156,6 +165,12 @@ pub struct HTTPClientResponse {
 
 impl UserData for HTTPClientResponse {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            Ok(format!(
+                "HTTPClientResponse({} {})",
+                this.status_code, this.url
+            ))
+        });
         methods.add_method("url", |_, this, ()| Ok(this.url.clone()));
         methods.add_method("status_code", |_, this, ()| Ok(this.status_code));
         methods.add_method("remote_address", |_, this, ()| {

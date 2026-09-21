@@ -12,6 +12,12 @@
 //     standard library through `crate::ASTRA_STD_LIBS` (defined in Astra's `main.rs`).
 //   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
 //     workspace is on, moved it; Astra is on 0.11.
+//   - Added a `__tostring` metamethod to the userdata `astra_buffer_types!` defines, `AstraBuffer`
+//     and `AstraBufferMut`. Astra has none, so `tostring` and `print` give a userdata's type name
+//     and its address. Now `tostring` gives `AstraBuffer(len <bytes>)`, and likewise for
+//     `AstraBufferMut`, or `(in use)` in place of the length while a `read` or `write` holds the
+//     buffer. The contents are left out on purpose: a buffer can be any size. Nothing Astra does
+//     is altered: this is an addition.
 //   - Everything else is unchanged.
 
 use mlua::{ExternalError, FromLua, LuaSerdeExt};
@@ -35,6 +41,13 @@ macro_rules! astra_buffer_types {
         }
         impl mlua::UserData for $name {
             fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+                methods.add_meta_method(mlua::MetaMethod::ToString, |_, this, ()| {
+                    // `try_lock`, since printing is not a place to wait for whoever holds it.
+                    Ok(match this.try_lock() {
+                        Ok(bytes) => format!("{}(len {})", stringify!($name), bytes.len()),
+                        Err(_) => format!("{}(in use)", stringify!($name)),
+                    })
+                });
                 methods.add_async_method("bytes", |_, this, ()| async move {
                     let bytes = this.lock().await;
                     Ok(bytes.to_vec())

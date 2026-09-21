@@ -5,10 +5,22 @@
 //
 // Changes from the original:
 //   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
-//     workspace is on, moved it; Astra is on 0.11. Nothing else changed.
+//     workspace is on, moved it; Astra is on 0.11.
+//   - Added a `__tostring` metamethod to each userdata here, and `AnyUserData` and `MetaMethod` to
+//     the `mlua` import for them, and a private function `entry_kind` that two of them share.
+//     Astra has none, so `tostring` and `print` give a userdata's type name and its address, which
+//     says nothing about which value it is. Now `tostring` gives:
+//       `AstraFile(<path>)`, or `AstraFile(in use)` while a `read` or `write` holds the file;
+//       `AstraMetadata(<kind>, len <bytes>)`;
+//       `AstraFilePermissions(readonly)` or `AstraFilePermissions(read-write)`;
+//       `AstraEntryType(<kind>)`;
+//       `AstraDirEntry(<path>)`.
+//     `<kind>` is `file`, `dir`, `symlink` or `other`. A path is lossy where the name is not
+//     UTF-8, unlike `AstraDirEntry:path`, so that printing a listing cannot raise. Nothing Astra
+//     does is altered: these are additions.
 
 use super::AstraBufferMut;
-use mlua::{ExternalError, LuaSerdeExt, UserData};
+use mlua::{AnyUserData, ExternalError, LuaSerdeExt, MetaMethod, UserData};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
@@ -154,6 +166,14 @@ impl AstraFile {
 }
 impl UserData for AstraFile {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        // A function, not a method, so that it can find the file busy: `read` and `write` hold it
+        // mutably across their awaits, and a method would raise a borrow error there.
+        methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
+            Ok(match this.borrow::<Self>() {
+                Ok(this) => format!("AstraFile({})", this.path.to_string_lossy()),
+                Err(_) => "AstraFile(in use)".to_string(),
+            })
+        });
         macro_rules! file_io_methods {
             ($name:expr, $method:ident) => {
                 methods.add_async_method_mut(
@@ -211,6 +231,13 @@ impl UserData for AstraMetadata {
         file_metadata_methods!("created_at", created);
         file_metadata_methods!("type", AstraEntryType, file_type);
         file_metadata_methods!("file_permissions", AstraFilePermissions, permissions);
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            Ok(format!(
+                "AstraMetadata({}, len {})",
+                entry_kind(&this.file_type()),
+                this.len()
+            ))
+        });
     }
 }
 
@@ -220,6 +247,14 @@ super::macros::impl_deref!(AstraFilePermissions, std::fs::Permissions);
 impl UserData for AstraFilePermissions {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("is_readonly", |_, this, ()| Ok(this.readonly()));
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            let access = if this.readonly() {
+                "readonly"
+            } else {
+                "read-write"
+            };
+            Ok(format!("AstraFilePermissions({access})"))
+        });
         methods.add_method_mut("set_readonly", |_, this, mode: bool| {
             this.set_readonly(mode);
             Ok(())
@@ -235,6 +270,22 @@ impl UserData for AstraEntryType {
         methods.add_method("is_file", |_, this, ()| Ok(this.is_file()));
         methods.add_method("is_dir", |_, this, ()| Ok(this.is_dir()));
         methods.add_method("is_symlink", |_, this, ()| Ok(this.is_symlink()));
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            Ok(format!("AstraEntryType({})", entry_kind(&this.0)))
+        });
+    }
+}
+
+/// What kind of entry `file_type` is, as the word `print` shows for it.
+fn entry_kind(file_type: &std::fs::FileType) -> &'static str {
+    if file_type.is_symlink() {
+        "symlink"
+    } else if file_type.is_dir() {
+        "dir"
+    } else if file_type.is_file() {
+        "file"
+    } else {
+        "other"
     }
 }
 
@@ -258,6 +309,9 @@ impl UserData for AstraDirEntry {
         methods.add_method("path", |_, this, ()| match this.path().to_str() {
             Some(path) => Ok(path.to_string()),
             None => Err(mlua::Error::runtime("Could not get the path")),
+        });
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            Ok(format!("AstraDirEntry({})", this.path().to_string_lossy()))
         });
     }
 }
