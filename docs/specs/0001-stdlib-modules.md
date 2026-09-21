@@ -65,7 +65,8 @@ Eight **stdlib modules**, reachable by `require`:
 | `stores`   | In-memory key/value, pubsub and observable stores            |
 | `validation` | Schema validators, and regular expressions                 |
 
-**Trusted mode** registers all eight; **sandbox mode** registers none. An
+**Trusted mode** registers every module that is compiled in (all eight unless a build turned some
+off; see ADR 0007); **sandbox mode** registers none. An
 embedder who wants trusted-minus-`http` says so on the builder, in the same
 shape they already use to subtract a standard library:
 
@@ -377,7 +378,7 @@ error. `fs` runs under `TempDir`.
 **`tests/stdlib.rs`** also covers selection, which is behaviour rather than
 configuration:
 
-- Trusted mode: all eight `require` successfully.
+- Trusted mode: every module that is compiled in (all eight, by default) `require`s successfully.
 - Sandbox mode: all eight fail to `require`, with the runtime's "module not found" message.
 - `without_std_modules(HTTP)` on trusted: `http` is gone, the other seven remain.
 - `with_std_modules(FS)` on sandbox: `fs` is present, the other seven are not.

@@ -95,6 +95,20 @@ impl StdModule {
         }
     }
 
+    /// This module's flag. `const`, so that [`StdModules::ALL`] can be built from it.
+    const fn flag(self) -> StdModules {
+        match self {
+            StdModule::Http => StdModules::HTTP,
+            StdModule::Fs => StdModules::FS,
+            StdModule::Crypto => StdModules::CRYPTO,
+            StdModule::Serde => StdModules::SERDE,
+            StdModule::Datetime => StdModules::DATETIME,
+            StdModule::Utils => StdModules::UTILS,
+            StdModule::Stores => StdModules::STORES,
+            StdModule::Validation => StdModules::VALIDATION,
+        }
+    }
+
     /// The Cargo feature that compiles this module in, spelled the same on this crate and on
     /// `avarice-rt`.
     pub const fn feature(self) -> &'static str {
@@ -186,21 +200,6 @@ impl StdModules {
     }
 }
 
-impl StdModule {
-    const fn flag(self) -> StdModules {
-        match self {
-            StdModule::Http => StdModules::HTTP,
-            StdModule::Fs => StdModules::FS,
-            StdModule::Crypto => StdModules::CRYPTO,
-            StdModule::Serde => StdModules::SERDE,
-            StdModule::Datetime => StdModules::DATETIME,
-            StdModule::Utils => StdModules::UTILS,
-            StdModule::Stores => StdModules::STORES,
-            StdModule::Validation => StdModules::VALIDATION,
-        }
-    }
-}
-
 impl From<StdModule> for StdModules {
     fn from(module: StdModule) -> Self {
         module.flag()
@@ -215,13 +214,13 @@ impl FromIterator<StdModule> for StdModules {
     }
 }
 
-/// The Lua source of `module`'s wrapper, once its Rust half has registered its primitives.
+/// Registers `module`'s Rust primitives, and returns the Lua source of its wrapper.
 ///
 /// A module that is not compiled in is an error naming the feature, not a panic: [`loader`] is
 /// public, and hands out a loader for any variant.
 ///
 /// [`loader`]: crate::loader
-fn source(lua: &Lua, module: StdModule) -> mlua::Result<&'static str> {
+fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static str> {
     // `lua` is only used by a module that is compiled in.
     let _ = lua;
     match module {
@@ -280,7 +279,7 @@ fn source(lua: &Lua, module: StdModule) -> mlua::Result<&'static str> {
 
 /// Builds `module`'s value: registers its primitives, then runs its Lua layer.
 pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
-    let source = source(lua, module)?;
+    let source = register_and_source(lua, module)?;
     // Named so a traceback through a stdlib module says where it came from. Text only: the
     // sources are embedded, and a chunk that is not text is not one of ours.
     let chunk = lua

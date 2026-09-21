@@ -41,8 +41,8 @@ feature.)
 
 The stdlib crate depends on `mlua` and never on `avarice-rt`, so the dependency
 runs one way only. `avarice-rt` depends on it unconditionally — no feature flag
-— which means every embedder links reqwest and a TLS stack whether or not any
-Lua calls `http`, taking the core's dependency tree from four crates to roughly
+(reversed: see [ADR 0007](0007-stdlib-modules-are-compile-time-optional.md)) — which means
+every embedder links reqwest and a TLS stack whether or not any Lua calls `http`, taking the core's dependency tree from four crates to roughly
 a hundred and fifty. This was chosen for simplicity over dependency hygiene, and
 reversing it later is a breaking change to every embedder's `Cargo.toml`.
 

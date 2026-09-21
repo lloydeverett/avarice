@@ -591,14 +591,16 @@ impl RuntimeBuilder {
                 .modules()
                 .map(|m| format!("`{}`", m.feature()))
                 .collect();
+            let (s, verb) = if names.len() == 1 {
+                ("", "is")
+            } else {
+                ("s", "are")
+            };
             return Err(Error::Config(format!(
-                "the stdlib module{} {} {} not compiled in: build avarice-rt with the {} \
-                 feature{} (`stdlib` turns them all on)",
-                if names.len() == 1 { "" } else { "s" },
+                "the stdlib module{s} {} {verb} not compiled in: build avarice-rt with the {} \
+                 feature{s} (`stdlib` turns them all on)",
                 names.join(", "),
-                if names.len() == 1 { "is" } else { "are" },
                 features.join(", "),
-                if names.len() == 1 { "" } else { "s" },
             )));
         }
         let lua = Lua::new_with(self.std_libs, LuaOptions::default())?;

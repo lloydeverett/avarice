@@ -38,7 +38,14 @@ turns on code from `utils.rs` without registering `utils`.
   `[StdModule; 8]`. `Profile::Trusted` and `stdlib()` follow it.
 - **Asking for a module that is not compiled in is an error.** `RuntimeBuilder::build` returns one
   naming the feature that is missing. `without_std_modules` on such a module is a no-op, since it
-  asks for less.
+  asks for less. `avarice_rt_stdlib::loader` is public and takes any variant, so for one that is not
+  compiled in it returns an error naming the feature when called, rather than panicking.
+- **Three public items are added to say what is compiled in:** `StdModule::is_compiled_in`,
+  `StdModule::feature` (the name of the feature that compiles it in) and
+  `StdModules::not_compiled_in`, which is what `build` uses to name what is missing. With the
+  changes above, the full list of changes to the public API is `StdModule::ALL`, the meaning of
+  `StdModules::ALL`, the error from `build`, and these three additions. `StdModules::all()`, the
+  method bitflags generates, still returns every flag, compiled in or not.
 
 ## Considered options
 
@@ -60,9 +67,14 @@ build without it is a mistake worth reporting.
 
 ## Consequences
 
-**The verbatim rule still holds.** A file cannot be split to isolate a module's half of it, so a
-feature gates the *file*, in `components/mod.rs`, and the entries in the `Changes from the original:`
-lists of the files that change say so. Nothing inside an Astra file is cfg-gated.
+**The verbatim rule gains one kind of change.** A file cannot be split to isolate a module's half of
+it, so a feature gates the *file*, by a `#[cfg]` on its `mod` declaration in `components/mod.rs`.
+That file also holds the shared buffer types and helpers, which are gated in place, along with
+`#[cfg_attr(..., allow(dead_code))]` where a build with only some features leaves part of a file
+unused. [ADR 0006](0006-stdlib-derived-from-astra.md) allows removals, respellings and additions that
+alter nothing; attributes that decide what is compiled, and alter nothing when every feature is on,
+are a fourth kind, and `components/mod.rs`'s `Changes from the original:` lists each. No other Astra
+file changes.
 
 **What stays unconditional.** mlua's `async`, `send`, `serialize` and `macros` are on in every
 build. `send` in particular puts a `Send + Sync` bound on the core's loader type, and a bound that

@@ -18,15 +18,23 @@
 //     `AstraBufferMut`, or `(in use)` in place of the length while a `read` or `write` holds the
 //     buffer. The contents are left out on purpose: a buffer can be any size. Nothing Astra does
 //     is altered: this is an addition.
-//   - Put each module declaration behind the Cargo feature that compiles it in (ADR 0007), and the
-//     shared items below (`AstraBuffer` and `AstraBufferMut`, `macros`, `is_table_json` and
-//     `is_table_byte_array`) behind `_astra_buffers`, which `stdlib-http` and `stdlib-fs` turn on.
-//     `astra_serde` and `utils` are behind `_astra_serde` and `_astra_utils`, which the modules
-//     that borrow from them (`http`, `validation`) turn on without registering `serde` or `utils`.
-//     A build that has only some of these leaves part of a file unused (`astra_serde` under `http`
-//     alone, `utils` under `validation` alone, and one of the two buffer types and `is_table_json`
-//     under `fs` alone), so the `dead_code` lint is allowed there. Nothing Astra does is altered:
-//     these are `#[cfg]`, `#[cfg_attr]` and `#[allow]` attributes.
+//   - Put each module declaration behind the Cargo feature that compiles it in (ADR 0007):
+//     `crypto`, `datetime`, `file_system` and `http` behind `stdlib-crypto`, `stdlib-datetime`,
+//     `stdlib-fs` and `stdlib-http`. `astra_serde` and `utils` are behind `_astra_serde` and
+//     `_astra_utils` instead, which the modules that borrow from them (`http`, `validation`) turn
+//     on without registering `serde` or `utils`. Added a comment saying so.
+//   - Put the shared items behind `_astra_buffers`, which `stdlib-http` and `stdlib-fs` turn on:
+//     the `use mlua::{ExternalError, FromLua, LuaSerdeExt}` line that only they need,
+//     `astra_buffer_types!` and its two invocations `AstraBuffer` and `AstraBufferMut`, `macros`,
+//     `is_table_json` and `is_table_byte_array`.
+//   - Allowed `dead_code`, under `cfg_attr`, where a build with only some of the features leaves
+//     part of a file unused: on `astra_serde` unless `stdlib-serde` is on (`http` alone), on `utils`
+//     unless `stdlib-utils` is on (`validation` alone), on `is_table_json` unless `stdlib-http` is
+//     on (`fs` alone), and, inside `astra_buffer_types!`, on the struct and on `new` unless both
+//     `stdlib-http` and `stdlib-fs` are on (`AstraBuffer` is `http`'s and `AstraBufferMut` is
+//     `fs`'s). Added a comment saying so.
+//   - Nothing Astra does is altered by any of these: they are `#[cfg]`, `#[cfg_attr]` and
+//     `#[allow]` attributes, and in a build with every feature on the file is as it was.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
@@ -54,12 +62,18 @@ macro_rules! astra_buffer_types {
     ($name:ident, $buffer_type:ty) => {
         // `http` uses `AstraBuffer` and `fs` uses `AstraBufferMut`, so a build with one of the two
         // leaves the other unused.
-        #[allow(dead_code)]
+        #[cfg_attr(
+            not(all(feature = "stdlib-http", feature = "stdlib-fs")),
+            allow(dead_code)
+        )]
         #[derive(Debug, Clone, FromLua)]
         pub struct $name(std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         macros::impl_deref!($name, std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         impl $name {
-            #[allow(dead_code)]
+            #[cfg_attr(
+                not(all(feature = "stdlib-http", feature = "stdlib-fs")),
+                allow(dead_code)
+            )]
             pub fn new(bytes: $buffer_type) -> Self {
                 Self(std::sync::Arc::new(tokio::sync::Mutex::new(bytes)))
             }

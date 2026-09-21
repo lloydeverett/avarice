@@ -104,7 +104,8 @@ chrono = { version = "0.4.45", features = ["serde"], optional = true }
 
 # runtime
 # Astra takes `macros`, `rt-multi-thread` and `signal`; the sources here use `spawn`, `time`,
-# `fs` and `sync::Mutex`, so those are the features taken. `fs` is added by `stdlib-fs`.
+# `fs` and `sync::Mutex`, so those are the features taken. `stdlib-fs` adds `fs`, and `io-util` for
+# the `AsyncReadExt` and `AsyncWriteExt` it reads and writes files with.
 tokio = { version = "1.52.3", features = ["rt", "sync", "time"] }
 futures = { version = "0.3.32", optional = true }
 tracing = { version = "0.1.44", optional = true }

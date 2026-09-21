@@ -78,8 +78,11 @@ is **compiled in**, **sandbox mode** registers none.
 
 A stdlib module is in one of three states, and "available" names none of them:
 **compiled in** (part of the build), **registered** (a runtime has it, so
-`require` finds it), and loaded (built by the first `require`). Each implies
+`require` finds it), and **loaded** (built by the first `require`). Each implies
 the one before.
+
+Named for Lua's standard library by analogy, and separate from it: the standard
+library is Lua's own, opened by `mlua`, and reachable without `require`.
 
 ## Compiled in
 
@@ -91,9 +94,6 @@ embedder at runtime.
 All are compiled in unless the embedder opts out. Its purpose is a smaller
 dependency tree and faster builds, not confinement: **sandbox mode** withholds
 capability by not registering, and does not rely on a module being compiled out.
-
-Named for Lua's standard library by analogy, and separate from it: the standard
-library is Lua's own, opened by `mlua`, and reachable without `require`.
 
 ## Program
 
