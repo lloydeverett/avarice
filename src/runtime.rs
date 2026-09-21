@@ -12,7 +12,8 @@ use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 
 use crate::error::{Error, Result};
 use crate::limits::{
-    self, unless_cancelled, CancelHandle, Execution, Limits, Trip, DEFAULT_CHECK_INTERVAL,
+    self, cancelled_error, unless_cancelled, CancelHandle, Execution, Limits,
+    DEFAULT_CHECK_INTERVAL,
 };
 use crate::lock::lock;
 use crate::module::{ModuleName, ModuleStore};
@@ -147,6 +148,10 @@ impl Runtime {
     ///
     /// A task that never finishes, an interval for one, keeps this waiting until a limit or a
     /// cancel ends it. That is the meaning of waiting for it.
+    ///
+    /// A task that was running Lua when a limit fired or a cancel arrived is stopped by the same
+    /// hook as any chunk, and the stdlib swallows a task's error, so it leaves the executor
+    /// without a trace. The wait notices anyway, and fails as if it had been the one interrupted.
     pub async fn wait_for_tasks(&self) -> Result<()> {
         self.run(async {
             while self.outstanding_tasks() > 0 {
@@ -155,7 +160,7 @@ impl Runtime {
                 }
                 tokio::time::sleep(TASK_POLL).await;
             }
-            Ok(())
+            self.limits.stopped().map_or(Ok(()), Err)
         })
         .await
     }
@@ -166,6 +171,9 @@ impl Runtime {
     /// an error, it simply never resumes. The Lua state is untouched, so globals, loaded modules
     /// and anything the tasks had already done remain, and the runtime carries on with a fresh
     /// executor.
+    ///
+    /// Work a task had handed to tokio's blocking pool, a file read for one, is not stopped: it
+    /// finishes unobserved, and nothing waits for it.
     ///
     /// # Panics
     ///
@@ -195,8 +203,9 @@ impl Runtime {
     /// Two things to know when driving Lua directly through this handle. Chunks loaded with
     /// [`Lua::load`] do not inherit this runtime's refusal of binary chunks — use
     /// [`Runtime::load`] for that. And a time limit is armed only while an
-    /// [`Execution`] guard is held, so take one from [`Runtime::enter`] around calls made from
-    /// here; cancellation needs no arming and applies throughout.
+    /// [`Execution`] guard is held, so run calls made from here through [`Runtime::run`], or
+    /// take a guard from [`Runtime::enter`]; cancellation needs no arming and applies to Lua that
+    /// is running throughout, though only `run` also stops a call that is waiting.
     pub fn lua(&self) -> &Lua {
         &self.lua
     }
@@ -213,8 +222,9 @@ impl Runtime {
 
     /// Marks the start of a top-level execution, arming the time limit until the guard drops.
     ///
-    /// [`exec`](Self::exec) and [`eval`](Self::eval) do this for themselves; call it when
-    /// driving Lua through [`Runtime::lua`]. Nesting is safe: an inner guard does not extend the
+    /// [`exec`](Self::exec), [`eval`](Self::eval) and [`run`](Self::run) do this for themselves;
+    /// call it when driving Lua through [`Runtime::lua`] in a way `run` cannot express. Nesting is
+    /// safe: an inner guard does not extend the
     /// outer execution's budget.
     ///
     /// The clock keeps running while the execution awaits, so time spent waiting on a slow
@@ -255,7 +265,7 @@ impl Runtime {
         let _execution = self.enter()?;
         match unless_cancelled(self.limits.cancel_handle(), future).await {
             Some(result) => Ok(result?),
-            None => Err(Trip::Cancelled.to_error().into()),
+            None => Err(cancelled_error().into()),
         }
     }
 

@@ -59,7 +59,7 @@ reads a program from standard input. `arg` is populated the way stock `lua` does
 the script, `arg[1]` onwards its arguments, and the negative indices walk back through the words
 before the script to `arg[-n]`, the interpreter itself.
 
-The command exits 0 on success, 1 on a Lua error, and 2 on a usage error.
+The command exits 0 on success, 1 on a Lua error, 2 on a usage error, and 130 when Ctrl-C stopped it.
 
 Unlike stock `lua`, `avrt` defaults to the **trusted** profile — you asked for an interpreter, so
 you get one — and there is no `-l` flag, because there is no `package.path` for it to search.
@@ -297,9 +297,8 @@ and, for cancellation, only once the handle itself is reset.
 
 A cancel stops a runtime that is *waiting* as well as one that is running. A chunk awaiting a
 response executes no Lua for the hook to interrupt, so `CancelHandle::cancel` also wakes the
-future `Runtime::exec`, `eval` and `run` are waiting on, and the chunk is dropped. That holds for
-`Runtime::run`, which is `enter` plus this; if you drive Lua through `Runtime::lua` yourself,
-`CancelHandle::cancelled` is the future to race it against.
+future `Runtime::exec`, `eval` and `run` are waiting on, and the chunk is dropped. `Runtime::run` takes
+any future that drives Lua, so it is the way to call a chunk with arguments while keeping this.
 
 The hook triggers on **function calls** as well as on an instruction count. Without that,
 `while true do pcall(spin) end` runs forever: the instruction hook nearly always lands inside the
@@ -307,9 +306,9 @@ protected call, where `pcall` catches it. The call hook fires as `pcall` is ente
 has established its protection, so the latched error propagates out of the loop instead.
 
 A time limit is per top-level execution, not per runtime, and is armed when the future
-`Runtime::exec` or `Runtime::eval` returns is first polled, or by `Runtime::enter`, and keeps running
-while the chunk awaits. If you drive Lua through `Runtime::lua` directly, hold an
-`Execution` guard from `Runtime::enter` for the limit to apply.
+`Runtime::exec`, `eval` or `run` returns is first polled, or by `Runtime::enter`, and keeps running
+while the chunk awaits. If you drive Lua through `Runtime::lua` directly, prefer `Runtime::run`;
+failing that, hold an `Execution` guard from `Runtime::enter` for the limit to apply.
 
 ## Building
 

@@ -40,7 +40,7 @@ pub struct CancelHandle {
 struct CancelState {
     flag: AtomicBool,
     /// Wakes whatever is waiting in [`CancelHandle::cancelled`].
-    tripped: Notify,
+    on_cancel: Notify,
 }
 
 impl CancelHandle {
@@ -53,7 +53,7 @@ impl CancelHandle {
     /// runtime is waiting on something.
     pub fn cancel(&self) {
         self.inner.flag.store(true, Ordering::Relaxed);
-        self.inner.tripped.notify_waiters();
+        self.inner.on_cancel.notify_waiters();
     }
 
     /// Whether this handle has been tripped.
@@ -68,11 +68,9 @@ impl CancelHandle {
 
     /// Completes once the handle is tripped, or at once if it already is.
     ///
-    /// For an embedder that drives Lua through [`Runtime::lua`](crate::Runtime::lua) and wants
-    /// to give way to a cancel while awaiting; [`Runtime::run`](crate::Runtime::run) does this
-    /// for itself.
-    pub async fn cancelled(&self) {
-        let mut notified = pin!(self.inner.tripped.notified());
+    /// What [`Runtime::run`](crate::Runtime::run) races a waiting chunk against.
+    pub(crate) async fn cancelled(&self) {
+        let mut notified = pin!(self.inner.on_cancel.notified());
         loop {
             // Registered before the flag is read, so that a cancel between the two is not lost.
             notified.as_mut().enable();
@@ -80,24 +78,29 @@ impl CancelHandle {
                 return;
             }
             notified.as_mut().await;
-            notified.set(self.inner.tripped.notified());
+            notified.set(self.inner.on_cancel.notified());
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Trip {
+enum Trip {
     Cancelled,
     TimedOut,
 }
 
 impl Trip {
-    pub(crate) fn to_error(self) -> mlua::Error {
+    fn to_error(self) -> mlua::Error {
         match self {
             Trip::Cancelled => mlua::Error::external(Cancelled),
             Trip::TimedOut => mlua::Error::external(TimedOut),
         }
     }
+}
+
+/// The error a cancelled execution fails with, for a cancel that no limit check saw.
+pub(crate) fn cancelled_error() -> mlua::Error {
+    Trip::Cancelled.to_error()
 }
 
 /// A `std::cell::Cell` that is `Sync`.
@@ -182,6 +185,19 @@ impl Limits {
         None
     }
 
+    /// Whether this execution has been stopped by a cancel or by a limit, without also asking
+    /// whether the clock has run out since.
+    ///
+    /// For after a wait, when the tasks are gone and it is unclear why. A task stopped by the hook
+    /// has its error swallowed by the stdlib, so the executor's count alone reads the same for a
+    /// task that finished and one that was cut off; the latch and the cancel flag still know.
+    pub(crate) fn stopped(&self) -> Option<mlua::Error> {
+        if let Some(trip) = self.tripped.get() {
+            return Some(trip.to_error());
+        }
+        self.precheck()
+    }
+
     /// What the hook runs. Returns the error to raise, if any.
     ///
     /// Also what a wait that is not running Lua asks of itself, so that a time limit or a cancel
@@ -256,8 +272,9 @@ pub(crate) async fn unless_cancelled<T>(
 /// A top-level execution in progress. Arms the time limit for as long as it is held.
 ///
 /// Returned by [`Runtime::enter`](crate::Runtime::enter) for embedders driving Lua through
-/// [`Runtime::lua`](crate::Runtime::lua) directly; the runtime's own `exec` and `eval` take one
-/// for themselves.
+/// [`Runtime::lua`](crate::Runtime::lua) directly; the runtime's own `exec`, `eval` and `run`
+/// take one for themselves, and `run` is usually the better way to drive Lua by hand, since it
+/// also gives way to a cancel while waiting.
 #[must_use = "limits apply only while the Execution guard is held"]
 pub struct Execution {
     limits: Arc<Limits>,

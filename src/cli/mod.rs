@@ -143,26 +143,26 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
     // What to run, if anything. With nothing given, behave like stock lua: a REPL on a terminal,
     // otherwise read the program from standard input.
-    let mut program = match script {
-        Some("-") => Some(Program::Stdin),
-        Some(path) => Some(Program::File(Path::new(path))),
+    let mut main_chunk = match script {
+        Some("-") => Some(MainChunk::Stdin),
+        Some(path) => Some(MainChunk::File(Path::new(path))),
         None => None,
     };
-    let idle = program.is_none() && cli.execute.is_empty() && !cli.version;
+    let idle = main_chunk.is_none() && cli.execute.is_empty() && !cli.version;
     let interactive = cli.interactive || (idle && std::io::stdin().is_terminal());
     if idle && !interactive {
-        program = Some(Program::Stdin);
+        main_chunk = Some(MainChunk::Stdin);
     }
 
     // All of it is one run, so that the tasks it leaves behind are waited for once, after the last
     // of it, rather than after each statement.
     let script_args = cli.script.get(1..).unwrap_or_default();
-    run_to_the_end(&rt, async {
+    run_and_settle_tasks(&rt, async {
         for statement in &cli.execute {
             rt.exec(statement.as_str(), "=(command line)").await?;
         }
-        if let Some(program) = program {
-            run_program(&rt, program, script_args).await?;
+        if let Some(chunk) = main_chunk {
+            run_main_chunk(&rt, chunk, script_args).await?;
         }
         Ok(())
     })?;
@@ -180,7 +180,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 /// at the terminal knows whether work was lost. That covers a Lua error, a time limit, and
 /// Ctrl-C, which is reported as [`CliError::Interrupted`]. Either way no task outlives the call,
 /// which is what lets the REPL treat the prompt as a place where nothing is running.
-fn run_to_the_end(
+fn run_and_settle_tasks(
     rt: &Runtime,
     work: impl Future<Output = Result<(), CliError>>,
 ) -> Result<(), CliError> {
@@ -203,27 +203,34 @@ fn run_to_the_end(
     }
 }
 
-/// A program named on the command line: the script, or standard input.
+/// Where the main chunk comes from: the script named on the command line, or standard input.
 #[derive(Clone, Copy)]
-enum Program<'a> {
+enum MainChunk<'a> {
     Stdin,
     File(&'a Path),
 }
 
-/// Runs a program, passing its arguments as the main chunk's varargs.
+/// Reads the main chunk and runs it, passing its arguments as its varargs.
 ///
 /// A script reaches them either as `...` or through the `arg` table; stock `lua` provides both,
 /// and scripts use both.
-async fn run_program(rt: &Runtime, program: Program<'_>, args: &[String]) -> Result<(), CliError> {
-    let (source, name) = match program {
-        Program::File(path) => {
+///
+/// The read is synchronous although this is async: it happens once, before the chunk starts, and
+/// whatever tasks an earlier `-e` statement spawned can wait for it.
+async fn run_main_chunk(
+    rt: &Runtime,
+    chunk: MainChunk<'_>,
+    args: &[String],
+) -> Result<(), CliError> {
+    let (source, name) = match chunk {
+        MainChunk::File(path) => {
             let source = std::fs::read(path).map_err(|source| CliError::OpenScript {
                 path: path.to_path_buf(),
                 source,
             })?;
             (source, format!("@{}", path.display()))
         }
-        Program::Stdin => {
+        MainChunk::Stdin => {
             let mut source = Vec::new();
             std::io::stdin()
                 .read_to_end(&mut source)

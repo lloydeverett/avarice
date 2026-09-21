@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 use avarice_rt::mlua::{self, Function, MultiValue};
 use avarice_rt::{Error, Runtime};
-
-use super::{run_to_the_end, CliError};
 use reedline::{
     FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
     Reedline, Signal,
 };
+
+use super::{run_and_settle_tasks, CliError};
 
 /// How many entries the history file keeps.
 const HISTORY_CAPACITY: usize = 2_000;
@@ -87,7 +87,7 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
                         buffer.clear();
                         // The tasks an entry leaves are finished, or given up, before the next
                         // prompt, so the line is read with nothing else running.
-                        if let Err(e) = run_to_the_end(rt, evaluate(rt, chunk)) {
+                        if let Err(e) = run_and_settle_tasks(rt, evaluate(rt, chunk)) {
                             eprintln!("avrt: {e}");
                         }
                     }

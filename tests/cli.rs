@@ -371,6 +371,25 @@ fn a_failing_script_gives_up_its_tasks_and_says_so() {
 }
 
 #[test]
+fn a_timeout_is_not_lost_when_a_task_is_the_one_running_lua() {
+    let output = avrt_within(
+        30,
+        [
+            "--timeout",
+            "0.3",
+            "-e",
+            r#"require("utils").spawn_task(function() while true do end end)"#,
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("time limit"),
+        "{}",
+        stderr_of(&output)
+    );
+}
+
+#[test]
 fn a_timeout_ends_the_wait_for_tasks() {
     let started = std::time::Instant::now();
     let output = avrt_within(
@@ -399,6 +418,12 @@ mod interrupt {
 
     /// Starts `script`, waits for it to print a line, sends SIGINT, and collects what happens.
     fn interrupted(script: &str) -> Output {
+        interrupted_after(std::time::Duration::ZERO, script)
+    }
+
+    /// As [`interrupted`], but lets the script settle into whatever it does next first, for a test
+    /// that needs the signal to land while something is already under way.
+    fn interrupted_after(settle: std::time::Duration, script: &str) -> Output {
         let mut child = spawn_piped(["-e", script]);
         let _watchdog = Watchdog::arm(child.id(), 60);
 
@@ -407,6 +432,7 @@ mod interrupt {
             .read_line(&mut ready)
             .expect("avrt should print when ready");
         assert_eq!(ready, "ready\n", "the script did not start");
+        std::thread::sleep(settle);
 
         let status = Command::new("kill")
             .args(["-INT", &child.id().to_string()])
@@ -437,6 +463,23 @@ mod interrupt {
         let stderr = stderr_of(&output);
         assert!(stderr.contains("interrupted"), "{stderr}");
         assert!(stderr.contains("aborting 1 running task\n"), "{stderr}");
+    }
+
+    #[test]
+    fn ctrl_c_is_not_lost_when_a_task_is_the_one_running_lua() {
+        // The task dies of the limit hook and the stdlib swallows its error, leaving nothing
+        // outstanding; the run must still end as interrupted rather than as a success. The task
+        // says it is ready itself, so the signal lands while it is the one running Lua.
+        let output = interrupted_after(
+            std::time::Duration::from_millis(300),
+            r#"require("utils").spawn_task(function() print("ready") while true do end end)"#,
+        );
+        assert_eq!(output.status.code(), Some(130), "{}", stderr_of(&output));
+        assert!(
+            stderr_of(&output).contains("interrupted"),
+            "{}",
+            stderr_of(&output)
+        );
     }
 
     #[test]

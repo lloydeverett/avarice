@@ -5,9 +5,9 @@ status: accepted
 # Async-first, on a current-thread tokio runtime the core owns
 
 > **Amended 2026-09-20 and 2026-09-21; the amendments at the end win.** `send` is on, so `Runtime`
-> is `Send + Sync` and its lazy-module loaders must be too, and there is no `LocalSet`; and Ctrl-C
-> is not "selected against the running evaluation" but reaches it through the `CancelHandle`. The
-> text below is the original decision and still says otherwise in places.
+> is `Send + Sync` and its lazy-module loaders must be too, there is no `LocalSet`, and Ctrl-C is
+> not "selected against the running evaluation" but reaches it through the `CancelHandle`. The
+> text below is the original decision and still says otherwise on each of those points.
 
 `Runtime` has no synchronous entry points. `exec` and `eval` are gone, replaced
 by async ones, and the core crate owns a current-thread tokio runtime with a
@@ -107,6 +107,13 @@ panicking with a clear message instead of deadlocking if it cannot, as `block_on
 another runtime. The Lua state is untouched by an abort. The old executor is shut down with
 `shutdown_background`, so that it does not wait for blocking work its tasks had started. The
 count is of every task on the executor, including any a stdlib module spawns for itself.
+
+The count alone cannot say why a task is gone. A task that was running Lua when a limit fired or a
+cancel arrived is stopped by the same hook as any chunk, and Astra prints and swallows a task's
+error, so it leaves the executor looking like one that finished. `wait_for_tasks` therefore asks
+the limits once more when the count reaches zero, and fails if the latch or the cancel flag is
+set. A test that sent the signal at the wrong moment passed without this, so the tests that pin it
+send it while the task is the one spinning.
 
 **A signal cannot be selected against a busy chunk.** The decision above says Ctrl-C is
 "selected against the running evaluation". That cannot work alone: the executor is a single

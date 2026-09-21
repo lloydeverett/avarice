@@ -115,6 +115,50 @@ fn waiting_stops_when_cancelled() {
 }
 
 #[test]
+fn a_task_that_dies_of_the_time_limit_does_not_read_as_finishing() {
+    // The limit hook stops the task's Lua, and the stdlib swallows a task's error, so afterwards
+    // the executor simply has one task fewer. The wait must not mistake that for a clean finish.
+    let rt = Runtime::builder(Profile::Sandbox)
+        .with_std_modules(StdModules::UTILS)
+        .time_limit(Duration::from_millis(150))
+        .check_interval(1_000)
+        .build()
+        .unwrap();
+    rt.block_on(rt.exec(
+        r#"require("utils").spawn_task(function() while true do end end)"#,
+        "=spawn",
+    ))
+    .unwrap();
+
+    let err = lua_error(rt.block_on(rt.wait_for_tasks()).unwrap_err());
+    assert!(was_timed_out(&err), "{err}");
+    assert_eq!(rt.outstanding_tasks(), 0, "the task did die");
+}
+
+#[test]
+fn a_task_that_dies_of_a_cancel_does_not_read_as_finishing() {
+    let cancel = CancelHandle::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .check_interval(1_000)
+        .build()
+        .unwrap();
+    rt.block_on(rt.exec(
+        r#"require("utils").spawn_task(function() while true do end end)"#,
+        "=spawn",
+    ))
+    .unwrap();
+
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        cancel.cancel();
+    });
+    let err = lua_error(rt.block_on(rt.wait_for_tasks()).unwrap_err());
+    canceller.join().unwrap();
+    assert!(was_cancelled(&err), "{err}");
+}
+
+#[test]
 fn aborting_stops_the_tasks_and_counts_them() {
     let rt = trusted();
     rt.block_on(rt.exec(
