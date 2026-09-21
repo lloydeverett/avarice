@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 use std::time::Duration;
 
 use avarice_rt_stdlib::StdModules;
@@ -11,7 +11,9 @@ use mlua::chunk::{AsChunk, Chunk, ChunkMode};
 use mlua::{FromLuaMulti, IntoLua, Lua, LuaOptions, StdLib, Table, Value};
 
 use crate::error::{Error, Result};
-use crate::limits::{self, CancelHandle, Execution, Limits, DEFAULT_CHECK_INTERVAL};
+use crate::limits::{
+    self, unless_cancelled, CancelHandle, Execution, Limits, Trip, DEFAULT_CHECK_INTERVAL,
+};
 use crate::lock::lock;
 use crate::module::{ModuleName, ModuleStore};
 use crate::print::{self, Sink};
@@ -19,6 +21,12 @@ use crate::profile::Profile;
 
 /// The registry key Lua itself uses for its loaded-module table.
 const LOADED: &str = "_LOADED";
+
+/// How often [`Runtime::wait_for_tasks`] looks at the executor again.
+///
+/// The executor cannot say when its last task finishes, so the wait asks. This is how late a
+/// program that has just run out of work can be to notice it.
+const TASK_POLL: Duration = Duration::from_millis(5);
 
 // `Send + Sync` because mlua's `send` feature, which the stdlib crate needs for its tasks, makes
 // the `require` function Lua holds `Send`, and `require` reaches the loaders.
@@ -53,11 +61,25 @@ struct Modules {
 /// embedder that is already async should build the `Runtime` on a thread of its own and talk to
 /// that thread, since one Lua state is not reentrant in any case.
 ///
-/// Dropping the runtime drops whatever tasks are still outstanding. Nothing waits for them.
+/// # Tasks
+///
+/// Lua code can leave work running: the stdlib's `utils.spawn_task` and friends put a task on the
+/// executor and hand Lua a handle to it. Tasks run only while the executor is being driven, that
+/// is, during a call to [`block_on`](Self::block_on), and nothing ends them when the chunk that
+/// spawned them does. A host decides what should become of them:
+///
+/// - [`outstanding_tasks`](Self::outstanding_tasks) says how many there are;
+/// - [`wait_for_tasks`](Self::wait_for_tasks) drives them until there are none;
+/// - [`abort_tasks`](Self::abort_tasks) ends them all;
+/// - dropping the runtime drops them, without waiting.
+///
+/// The runtime keeps no list of them. Their handles live inside Lua, so what it can report is
+/// what the executor knows: every task on it, whoever spawned it.
 pub struct Runtime {
     // Declared first so that it drops first: outstanding tasks hold Lua values, and should be gone
-    // before the state they point into.
-    executor: tokio::runtime::Runtime,
+    // before the state they point into. Behind a lock because aborting the tasks means replacing
+    // it, since a tokio runtime cannot be told to drop only its tasks.
+    executor: RwLock<tokio::runtime::Runtime>,
     lua: Lua,
     limits: Arc<Limits>,
     modules: Arc<Modules>,
@@ -90,13 +112,82 @@ impl Runtime {
     ///
     /// Tasks that Lua code spawns run whenever the executor does, which is only while a call to
     /// this is in progress; they are not driven between calls, and they are not waited for when
-    /// `future` finishes.
+    /// `future` finishes. See [`wait_for_tasks`](Self::wait_for_tasks).
     ///
     /// # Panics
     ///
     /// If called from within another tokio runtime. See the type's documentation.
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.executor.block_on(future)
+        self.executor().block_on(future)
+    }
+
+    fn executor(&self) -> std::sync::RwLockReadGuard<'_, tokio::runtime::Runtime> {
+        self.executor.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// How many tasks are on the executor and have not finished.
+    ///
+    /// Counts every task, whoever spawned it: those Lua spawned, and any a stdlib module spawns
+    /// for itself. A task that is waiting, on a timer or on the network, is outstanding.
+    pub fn outstanding_tasks(&self) -> usize {
+        self.executor().handle().metrics().num_alive_tasks()
+    }
+
+    /// Drives the executor until no task is outstanding, including those that tasks spawn on the
+    /// way.
+    ///
+    /// The returned future must be driven by this runtime's executor: pass it to
+    /// [`block_on`](Self::block_on). This is how a program that spawned tasks and then ran out of
+    /// things to do finishes them, since nothing else drives them once the chunk is over.
+    ///
+    /// The wait is a top-level execution of its own, under the same limits as any other: a time
+    /// limit gives it a fresh budget, and a [`CancelHandle`] that trips ends it with
+    /// [`Cancelled`](crate::Cancelled). Either leaves the tasks that were still running as they
+    /// were; [`abort_tasks`](Self::abort_tasks) is how to be rid of them.
+    ///
+    /// A task that never finishes, an interval for one, keeps this waiting until a limit or a
+    /// cancel ends it. That is the meaning of waiting for it.
+    pub async fn wait_for_tasks(&self) -> Result<()> {
+        self.run(async {
+            while self.outstanding_tasks() > 0 {
+                if let Some(err) = self.limits.check() {
+                    return Err(err);
+                }
+                tokio::time::sleep(TASK_POLL).await;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Ends every outstanding task, and says how many there were.
+    ///
+    /// The tasks are dropped where they stand: a task in the middle of a call to Lua does not see
+    /// an error, it simply never resumes. The Lua state is untouched, so globals, loaded modules
+    /// and anything the tasks had already done remain, and the runtime carries on with a fresh
+    /// executor.
+    ///
+    /// # Panics
+    ///
+    /// If the executor is running, that is, from inside [`block_on`](Self::block_on) or from
+    /// another thread while a call to it is in progress. Call it once that has returned.
+    pub fn abort_tasks(&self) -> Result<usize> {
+        let fresh = new_executor()?;
+        let old = {
+            let mut slot = match self.executor.try_write() {
+                Ok(slot) => slot,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => panic!(
+                    "abort_tasks was called while the executor is running: call it after \
+                     `block_on` has returned"
+                ),
+            };
+            std::mem::replace(&mut *slot, fresh)
+        };
+        let aborted = old.handle().metrics().num_alive_tasks();
+        // Not a plain drop, which would wait for blocking work the tasks had started.
+        old.shutdown_background();
+        Ok(aborted)
     }
 
     /// The underlying Lua state, for everything this API does not wrap.
@@ -149,14 +240,31 @@ impl Runtime {
         enforce_chunk_mode(chunk, self.binary_chunks)
     }
 
+    /// Runs `future`, which drives Lua, as one top-level execution.
+    ///
+    /// This is what [`exec`](Self::exec) and [`eval`](Self::eval) are made of, for when a chunk
+    /// needs calling with arguments, or a call needs several steps under one time budget: it takes
+    /// an [`Execution`] as [`enter`](Self::enter) does, and it also gives way if the runtime's
+    /// [`CancelHandle`] trips while `future` is waiting on something, dropping `future` and failing
+    /// with [`Cancelled`](crate::Cancelled). Lua that is running is stopped by the limit hook, as
+    /// ever; this is for the time when it is not.
+    ///
+    /// The returned future must be driven by this runtime's executor: pass it to
+    /// [`block_on`](Self::block_on).
+    pub async fn run<T>(&self, future: impl Future<Output = mlua::Result<T>>) -> Result<T> {
+        let _execution = self.enter()?;
+        match unless_cancelled(self.limits.cancel_handle(), future).await {
+            Some(result) => Ok(result?),
+            None => Err(Trip::Cancelled.to_error().into()),
+        }
+    }
+
     /// Runs a chunk for its side effects.
     ///
     /// The returned future must be driven by this runtime's executor: pass it to
     /// [`block_on`](Self::block_on).
     pub async fn exec(&self, source: impl AsChunk, name: impl Into<String>) -> Result<()> {
-        let _exec = self.enter()?;
-        self.load(source, name).exec_async().await?;
-        Ok(())
+        self.run(self.load(source, name).exec_async()).await
     }
 
     /// Runs a chunk and converts its result.
@@ -171,8 +279,7 @@ impl Runtime {
         source: impl AsChunk,
         name: impl Into<String>,
     ) -> Result<R> {
-        let _exec = self.enter()?;
-        Ok(self.load(source, name).eval_async().await?)
+        self.run(self.load(source, name).eval_async()).await
     }
 
     /// Makes `value` the module `name`, resolvable by `require` from then on.
@@ -476,10 +583,7 @@ impl RuntimeBuilder {
             limits::install_hook(&lua, Arc::clone(&limits), self.check_interval)?;
         }
 
-        let executor = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| Error::Config(format!("could not start the tokio runtime: {e}")))?;
+        let executor = RwLock::new(new_executor()?);
 
         let runtime = Runtime {
             executor,
@@ -499,6 +603,14 @@ impl RuntimeBuilder {
         }
         Ok(runtime)
     }
+}
+
+/// The executor a runtime drives its Lua on.
+fn new_executor() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Config(format!("could not start the tokio runtime: {e}")))
 }
 
 /// Ensures Lua's loaded-module table exists, and hands it back.

@@ -1,10 +1,14 @@
 //! Cancellation and wall-clock limits, enforced from a global debug hook.
 
+use std::future::{poll_fn, Future};
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use mlua::{HookTriggers, Lua, VmState};
+use tokio::sync::Notify;
 
 use crate::error::{Cancelled, TimedOut};
 use crate::lock::lock;
@@ -20,12 +24,23 @@ pub const DEFAULT_CHECK_INTERVAL: u32 = 10_000;
 /// A handle cloned out of the [`Runtime`](crate::Runtime) can be parked in a signal handler or
 /// handed to a watchdog thread, and cancelling through it never has to wait for the runtime.
 ///
+/// Cancelling stops the runtime whichever way it is busy. Lua that is running hits the limit
+/// check at its next tick; a chunk that is awaiting something, with no Lua running to notice, is
+/// woken and stopped at once. Either way the chunk fails with [`Cancelled`].
+///
 /// Cancellation latches. Once tripped, every subsequent limit check fails too, so a `pcall` in
 /// the script cannot swallow the error and carry on; the handle must be [`reset`](Self::reset)
 /// before the runtime will run anything again.
 #[derive(Debug, Clone, Default)]
 pub struct CancelHandle {
-    flag: Arc<AtomicBool>,
+    inner: Arc<CancelState>,
+}
+
+#[derive(Debug, Default)]
+struct CancelState {
+    flag: AtomicBool,
+    /// Wakes whatever is waiting in [`CancelHandle::cancelled`].
+    tripped: Notify,
 }
 
 impl CancelHandle {
@@ -34,30 +49,50 @@ impl CancelHandle {
         CancelHandle::default()
     }
 
-    /// Asks the runtime to stop at its next limit check.
+    /// Asks the runtime to stop: at its next limit check if Lua is running, immediately if the
+    /// runtime is waiting on something.
     pub fn cancel(&self) {
-        self.flag.store(true, Ordering::Relaxed);
+        self.inner.flag.store(true, Ordering::Relaxed);
+        self.inner.tripped.notify_waiters();
     }
 
     /// Whether this handle has been tripped.
     pub fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Relaxed)
+        self.inner.flag.load(Ordering::Relaxed)
     }
 
     /// Clears the handle, so the runtime will execute again.
     pub fn reset(&self) {
-        self.flag.store(false, Ordering::Relaxed);
+        self.inner.flag.store(false, Ordering::Relaxed);
+    }
+
+    /// Completes once the handle is tripped, or at once if it already is.
+    ///
+    /// For an embedder that drives Lua through [`Runtime::lua`](crate::Runtime::lua) and wants
+    /// to give way to a cancel while awaiting; [`Runtime::run`](crate::Runtime::run) does this
+    /// for itself.
+    pub async fn cancelled(&self) {
+        let mut notified = pin!(self.inner.tripped.notified());
+        loop {
+            // Registered before the flag is read, so that a cancel between the two is not lost.
+            notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.as_mut().await;
+            notified.set(self.inner.tripped.notified());
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Trip {
+pub(crate) enum Trip {
     Cancelled,
     TimedOut,
 }
 
 impl Trip {
-    fn to_error(self) -> mlua::Error {
+    pub(crate) fn to_error(self) -> mlua::Error {
         match self {
             Trip::Cancelled => mlua::Error::external(Cancelled),
             Trip::TimedOut => mlua::Error::external(TimedOut),
@@ -148,7 +183,10 @@ impl Limits {
     }
 
     /// What the hook runs. Returns the error to raise, if any.
-    fn check(&self) -> Option<mlua::Error> {
+    ///
+    /// Also what a wait that is not running Lua asks of itself, so that a time limit or a cancel
+    /// ends it just as it would end a script.
+    pub(crate) fn check(&self) -> Option<mlua::Error> {
         if let Some(trip) = self.tripped.get() {
             return Some(trip.to_error());
         }
@@ -187,6 +225,32 @@ pub(crate) fn install_hook(lua: &Lua, limits: Arc<Limits>, interval: u32) -> mlu
         Some(err) => Err(err),
         None => Ok(VmState::Continue),
     })
+}
+
+/// Runs `future`, unless `cancel` trips while it is pending, in which case it is dropped and the
+/// answer is `None`.
+///
+/// `future` is polled first, so one that is ready is not thrown away for a cancel that arrived at
+/// the same moment.
+pub(crate) async fn unless_cancelled<T>(
+    cancel: Option<&CancelHandle>,
+    future: impl Future<Output = T>,
+) -> Option<T> {
+    let Some(cancel) = cancel else {
+        return Some(future.await);
+    };
+    let mut future = pin!(future);
+    let mut cancelled = pin!(cancel.cancelled());
+    poll_fn(|cx| {
+        if let Poll::Ready(value) = future.as_mut().poll(cx) {
+            return Poll::Ready(Some(value));
+        }
+        match cancelled.as_mut().poll(cx) {
+            Poll::Ready(()) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await
 }
 
 /// A top-level execution in progress. Arms the time limit for as long as it is held.
@@ -259,6 +323,81 @@ mod tests {
         let limits = Limits::new(None, Some(Duration::ZERO));
         limits.enter();
         assert!(limits.check().is_some());
+    }
+
+    /// Runs a future to completion on a throwaway executor, giving up after a while so that a
+    /// wake that never comes fails the test rather than hanging it.
+    fn block_on<T>(future: impl Future<Output = T>) -> T {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        executor
+            .block_on(async { tokio::time::timeout(Duration::from_secs(10), future).await })
+            .expect("the future was never woken")
+    }
+
+    #[test]
+    fn cancelled_is_ready_at_once_for_a_handle_already_tripped() {
+        let cancel = CancelHandle::new();
+        cancel.cancel();
+        block_on(cancel.cancelled());
+    }
+
+    #[test]
+    fn cancelled_is_woken_by_a_cancel_from_another_thread() {
+        let cancel = CancelHandle::new();
+        let canceller = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                cancel.cancel();
+            })
+        };
+        block_on(cancel.cancelled());
+        canceller.join().unwrap();
+    }
+
+    #[test]
+    fn a_reset_handle_waits_again() {
+        let cancel = CancelHandle::new();
+        cancel.cancel();
+        cancel.reset();
+        let waited = block_on(unless_cancelled(None, async {
+            // Not ready yet, so this is a real wait rather than a lucky first poll.
+            tokio::time::timeout(Duration::from_millis(50), cancel.cancelled()).await
+        }))
+        .unwrap();
+        assert!(waited.is_err(), "a reset handle should not read as tripped");
+    }
+
+    #[test]
+    fn unless_cancelled_drops_a_pending_future_on_cancel() {
+        let cancel = CancelHandle::new();
+        let canceller = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                cancel.cancel();
+            })
+        };
+        let outcome = block_on(unless_cancelled(
+            Some(&cancel),
+            std::future::pending::<()>(),
+        ));
+        canceller.join().unwrap();
+        assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn unless_cancelled_prefers_a_future_that_is_ready() {
+        let cancel = CancelHandle::new();
+        cancel.cancel();
+        assert_eq!(
+            block_on(unless_cancelled(Some(&cancel), async { 7 })),
+            Some(7)
+        );
+        assert_eq!(block_on(unless_cancelled(None, async { 7 })), Some(7));
     }
 
     #[test]

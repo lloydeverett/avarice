@@ -46,7 +46,8 @@ avrt [options] [script [args...]]
   -i             enter the REPL after running the script and any -e statements
   -v, --version  print version information
   --sandbox      run in the sandbox profile instead of the trusted one
-  --timeout SEC  stop any one script, statement or REPL entry after SEC seconds
+  --timeout SEC  stop any one script, statement or REPL entry, and the wait for its
+                 tasks, after SEC seconds
   --path DIR     resolve `require` against DIR instead of the script's own
                  directory; may be repeated, and tried in the order given
   --             end of options
@@ -87,16 +88,39 @@ something else, or leave the stdlib module out of the runtime.
 An embedder using the library gets no store at all unless it asks for one with
 `RuntimeBuilder::store`: this default belongs to `avrt`, not to the runtime.
 
+### Tasks and Ctrl-C
+
+A program can leave work running: `utils.spawn_task`, `spawn_timeout` and `spawn_interval` each
+start a **task** that carries on after the chunk that spawned it has finished. `avrt` runs the
+program and then waits for every outstanding task before it exits, so a task spawned on a
+script's last line still runs. A task that spawns another is waited for too. An interval never
+finishes by itself, so a script that starts one runs until it is interrupted; a task that should
+be abandoned can be stopped with its handle's `abort()`.
+
+**Ctrl-C** stops whatever is running, whether that is a script spinning in a loop, a script
+waiting on a response, or the wait for tasks. It aborts every outstanding task, says how many on
+stderr (`avrt: aborting 2 running tasks`, and nothing at all if there were none), and exits with
+status 130, as a shell reports a process that died of SIGINT. A script that ends in an error, or
+by `--timeout`, gives up its tasks the same way rather than waiting for them.
+
+Two limits to know. A script stuck in a call that never returns to Lua, such as `io.read` on a
+terminal, notices Ctrl-C only when the call returns; Ctrl-\ (SIGQUIT) still ends it outright.
+And because Ctrl-C has to be able to stop anything, `avrt` is always cancellable, which installs
+the limit hook, and every run pays a little throughput for it.
+
 ### The REPL
 
 Entries are compiled as an expression first, so `6 * 7` prints `42` rather than being a syntax
-error; an entry Lua reports as incomplete continues on the next line at a `>>` prompt. Ctrl-C
-abandons the entry being typed, Ctrl-D exits, and history is kept in
-`$XDG_STATE_HOME/avarice-rt/repl-history`.
+error; an entry Lua reports as incomplete continues on the next line at a `>>` prompt. Ctrl-D
+exits, and history is kept in `$XDG_STATE_HOME/avarice-rt/repl-history`.
 
-One gap worth knowing: Ctrl-C during a *running* script is the terminal's default SIGINT, which
-kills the process. Interrupting a script back to the prompt needs a signal handler, which needs
-a dependency this crate does not yet have. Use `--timeout` in the meantime.
+Ctrl-C at a prompt abandons the entry being typed, including a half-finished multi-line one.
+Ctrl-C while an entry is running abandons the entry and its tasks, as above, and returns to the
+prompt with the session intact: globals and loaded modules are as they were.
+
+The REPL waits for the tasks an entry leaves behind before it shows the next prompt, so there is
+never anything running at a prompt. The consequence is that spawning an interval holds the
+terminal until Ctrl-C, which makes an interval, in the REPL, a foreground command.
 
 ## Embedding
 
@@ -111,6 +135,12 @@ Running a chunk is asynchronous, because a stdlib module may await while Lua wai
 `Runtime::exec` and `Runtime::eval` return futures, and `Runtime::block_on` drives one on the
 executor the runtime owns. It panics if called from inside another tokio runtime, so an embedder
 that is already async builds its `Runtime` on a thread of its own.
+
+Tasks that Lua spawns run only while a call to `block_on` is in progress, and nothing ends them
+when the chunk that spawned them does. `Runtime::outstanding_tasks` says how many there are,
+`Runtime::wait_for_tasks` drives them until there are none, and `Runtime::abort_tasks` ends them
+all and says how many it ended; it must be called once `block_on` has returned. Dropping the
+runtime drops them without waiting. This is what `avrt` is built from.
 
 mlua is a **public dependency**, re-exported as `avarice_rt::mlua`: values, tables and functions
 crossing the boundary are mlua's, so an embedder needs the same version avarice-rt was built
@@ -264,6 +294,12 @@ inside a coroutine.
 Tripping **latches**. Once a limit fires, every later check fires too, so catching the error and
 carrying on gets the script nowhere. The latch clears when the next top-level execution starts —
 and, for cancellation, only once the handle itself is reset.
+
+A cancel stops a runtime that is *waiting* as well as one that is running. A chunk awaiting a
+response executes no Lua for the hook to interrupt, so `CancelHandle::cancel` also wakes the
+future `Runtime::exec`, `eval` and `run` are waiting on, and the chunk is dropped. That holds for
+`Runtime::run`, which is `enter` plus this; if you drive Lua through `Runtime::lua` yourself,
+`CancelHandle::cancelled` is the future to race it against.
 
 The hook triggers on **function calls** as well as on an instruction count. Without that,
 `while true do pcall(spin) end` runs forever: the instruction hook nearly always lands inside the

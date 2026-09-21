@@ -252,7 +252,7 @@ because sandbox mode has it and sandbox mode has no stdlib modules.
 - `main` builds the runtime and uses `Runtime::block_on`.
 - Script mode runs the program, then waits for every outstanding task before exiting.
 - The REPL drains tasks to completion between prompts, so `spawn_interval` holds the terminal until Ctrl-C. This is why the blocking `read_line` stays correct: nothing needs to run while input is awaited.
-- A Ctrl-C handler is installed over `tokio::signal::ctrl_c`, selected against the running evaluation. It trips the runtime's `CancelHandle`, which aborts the evaluation and every task, and prints `avrt: aborting N running task(s)` to stderr.
+- A Ctrl-C handler is installed over `tokio::signal::ctrl_c`, selected against the running evaluation. It trips the runtime's `CancelHandle`, which aborts the evaluation and every task, and prints `avrt: aborting N running task(s)` to stderr. *(As built, 2026-09-21: not selected against the evaluation but run on a thread of its own, because a chunk that never awaits would never let the executor read the signal. The handle wakes a waiting chunk and stops a running one itself; see the third amendment to ADR 0004. It prints nothing when no task was running, and exits 130.)*
 - Since `avrt` now configures a `CancelHandle` unconditionally, the limit hook is always installed. The comment in `cli/mod.rs` explaining why it deliberately did not is removed along with the behaviour.
 - `Ctrl-D` at a prompt exits cleanly, unchanged.
 - `--sandbox` gets no stdlib modules, which needs no new flag: it follows from the profile.
@@ -415,11 +415,10 @@ today; the REPL's `compile` tests, unchanged.
 
 ### Known gap
 
-Ctrl-C during a running script is not covered by an automated test. Driving it
-means sending SIGINT to a child process and racing its handler, which is the kind
-of test that fails on a loaded CI machine for reasons unrelated to the code. It
-is verified by hand, and this paragraph exists so that the gap is a decision
-rather than an oversight.
+*(Narrowed 2026-09-21.)* Ctrl-C during a running script now has automated tests, because the
+race that made them unreliable can be removed: the script prints a line once the handler stands,
+and the test sends SIGINT only after reading it. What stays unautomated is Ctrl-C in the REPL,
+which needs a terminal and is verified by hand.
 
 ## Out of Scope
 

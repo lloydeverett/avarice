@@ -219,3 +219,239 @@ fn a_shebang_line_does_not_upset_line_numbers() {
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr_of(&output).contains(":2:"), "{}", stderr_of(&output));
 }
+
+/// Runs `avrt`, killing it if it has not finished in `seconds`, so that a test of something that
+/// should end does not hang the suite when it does not.
+fn avrt_within<I, S>(seconds: u64, args: I) -> Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let child = spawn_piped(args);
+    let _watchdog = Watchdog::arm(child.id(), seconds);
+    child.wait_with_output().expect("avrt should finish")
+}
+
+fn spawn_piped<I, S>(args: I) -> std::process::Child
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    Command::new(AVRT)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("avrt should run")
+}
+
+/// Kills a process after a while unless dropped first.
+struct Watchdog(std::sync::mpsc::Sender<()>);
+
+impl Watchdog {
+    fn arm(pid: u32, seconds: u64) -> Self {
+        let (disarm, armed) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if armed
+                .recv_timeout(std::time::Duration::from_secs(seconds))
+                .is_err()
+            {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .status();
+            }
+        });
+        Watchdog(disarm)
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+#[test]
+fn a_script_waits_for_the_tasks_it_left_running() {
+    let dir = TempDir::new();
+    let script = dir.write(
+        "main.lua",
+        r#"
+        require("utils").spawn_timeout(function() print("late") end, 150)
+        print("first")
+        "#,
+    );
+    let output = avrt_within(30, [&script]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "first\nlate\n");
+}
+
+#[test]
+fn a_statement_waits_for_its_tasks_too() {
+    let output = avrt_within(
+        30,
+        [
+            "-e",
+            r#"require("utils").spawn_timeout(function() print("late") end, 150)"#,
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "late\n");
+}
+
+#[test]
+fn tasks_that_spawn_tasks_are_waited_for() {
+    let output = avrt_within(
+        30,
+        [
+            "-e",
+            r#"
+            local utils = require("utils")
+            utils.spawn_timeout(function()
+              print("outer")
+              utils.spawn_timeout(function() print("inner") end, 50)
+            end, 50)
+            "#,
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "outer\ninner\n");
+}
+
+#[test]
+fn a_task_can_be_aborted_so_that_the_script_ends() {
+    let output = avrt_within(
+        30,
+        [
+            "-e",
+            r#"
+            local task = require("utils").spawn_interval(function() print("tick") end, 20)
+            task:abort()
+            print("done")
+            "#,
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "done\n");
+}
+
+#[test]
+fn a_stdlib_module_works_from_a_script() {
+    let output = avrt_within(30, ["-e", r#"print(#require("utils").uuid())"#]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "36\n");
+}
+
+#[test]
+fn the_sandbox_has_no_stdlib_modules_to_spawn_tasks_with() {
+    let output = avrt_within(30, ["--sandbox", "-e", r#"require("utils")"#]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr_of(&output).contains("utils"),
+        "{}",
+        stderr_of(&output)
+    );
+}
+
+#[test]
+fn a_failing_script_gives_up_its_tasks_and_says_so() {
+    // An interval never ends by itself, so if the script waited for it this would hang.
+    let output = avrt_within(
+        30,
+        [
+            "-e",
+            r#"require("utils").spawn_interval(function() end, 10) error("boom")"#,
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr_of(&output);
+    assert!(stderr.contains("boom"), "{stderr}");
+    assert!(stderr.contains("aborting 1 running task\n"), "{stderr}");
+}
+
+#[test]
+fn a_timeout_ends_the_wait_for_tasks() {
+    let started = std::time::Instant::now();
+    let output = avrt_within(
+        30,
+        [
+            "--timeout",
+            "0.3",
+            "-e",
+            r#"require("utils").spawn_interval(function() end, 10)"#,
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr_of(&output);
+    assert!(stderr.contains("time limit"), "{stderr}");
+    assert!(stderr.contains("aborting 1 running task"), "{stderr}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+/// Ctrl-C at a terminal is a SIGINT to `avrt`. These start a script that says it is ready once
+/// the handler stands, so that the signal never races it, then send the signal and see what is
+/// left. They are unix-only because `kill` is.
+#[cfg(unix)]
+mod interrupt {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+
+    /// Starts `script`, waits for it to print a line, sends SIGINT, and collects what happens.
+    fn interrupted(script: &str) -> Output {
+        let mut child = spawn_piped(["-e", script]);
+        let _watchdog = Watchdog::arm(child.id(), 60);
+
+        let mut ready = String::new();
+        BufReader::new(child.stdout.as_mut().unwrap())
+            .read_line(&mut ready)
+            .expect("avrt should print when ready");
+        assert_eq!(ready, "ready\n", "the script did not start");
+
+        let status = Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        child.wait_with_output().expect("avrt should finish")
+    }
+
+    #[test]
+    fn ctrl_c_stops_a_spinning_script() {
+        let output = interrupted(r#"print("ready") while true do end"#);
+        assert_eq!(output.status.code(), Some(130), "{}", stderr_of(&output));
+        assert!(
+            stderr_of(&output).contains("interrupted"),
+            "{}",
+            stderr_of(&output)
+        );
+    }
+
+    #[test]
+    fn ctrl_c_stops_a_script_that_is_awaiting() {
+        // Nothing is running Lua here, so the hook cannot notice; the wait has to be woken.
+        let output = interrupted(
+            r#"print("ready") require("utils").spawn_timeout(function() end, 600000):await()"#,
+        );
+        assert_eq!(output.status.code(), Some(130), "{}", stderr_of(&output));
+        let stderr = stderr_of(&output);
+        assert!(stderr.contains("interrupted"), "{stderr}");
+        assert!(stderr.contains("aborting 1 running task\n"), "{stderr}");
+    }
+
+    #[test]
+    fn ctrl_c_stops_the_wait_for_tasks_and_counts_them() {
+        let output = interrupted(
+            r#"
+            local utils = require("utils")
+            utils.spawn_interval(function() end, 10)
+            utils.spawn_interval(function() end, 10)
+            print("ready")
+            "#,
+        );
+        assert_eq!(output.status.code(), Some(130), "{}", stderr_of(&output));
+        let stderr = stderr_of(&output);
+        assert!(stderr.contains("interrupted"), "{stderr}");
+        assert!(stderr.contains("aborting 2 running tasks\n"), "{stderr}");
+    }
+}

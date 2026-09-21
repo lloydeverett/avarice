@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use avarice_rt::mlua::{self, Function, MultiValue};
 use avarice_rt::{Error, Runtime};
+
+use super::{run_to_the_end, CliError};
 use reedline::{
     FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
     Reedline, Signal,
@@ -83,7 +85,9 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
                 match compile(rt, &buffer) {
                     Ok(chunk) => {
                         buffer.clear();
-                        if let Err(e) = rt.block_on(evaluate(rt, chunk)) {
+                        // The tasks an entry leaves are finished, or given up, before the next
+                        // prompt, so the line is read with nothing else running.
+                        if let Err(e) = run_to_the_end(rt, evaluate(rt, chunk)) {
                             eprintln!("avrt: {e}");
                         }
                     }
@@ -144,18 +148,20 @@ fn compile(rt: &Runtime, entry: &str) -> Result<Function, CompileError> {
 }
 
 /// Runs an entry and prints whatever it returned, as stock `lua` does.
-async fn evaluate(rt: &Runtime, chunk: Function) -> Result<(), Error> {
+async fn evaluate(rt: &Runtime, chunk: Function) -> Result<(), CliError> {
     // A previous entry may have been cancelled or timed out; each entry starts fresh.
     if let Some(cancel) = rt.cancel_handle() {
         cancel.reset();
     }
-    let _execution = rt.enter()?;
-
-    let values: MultiValue = chunk.call_async(()).await?;
-    if !values.is_empty() {
-        let print: Function = rt.lua().globals().get("print")?;
-        print.call_async::<()>(values).await?;
-    }
+    rt.run(async {
+        let values: MultiValue = chunk.call_async(()).await?;
+        if !values.is_empty() {
+            let print: Function = rt.lua().globals().get("print")?;
+            print.call_async::<()>(values).await?;
+        }
+        Ok(())
+    })
+    .await?;
     Ok(())
 }
 

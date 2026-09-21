@@ -26,16 +26,17 @@ required-features = ["cli"]
 [features]
 default = ["cli"]
 # The `avrt` command-line program. Embedders should depend on avarice-rt with
-# `default-features = false` to avoid pulling in clap and reedline.
-cli = ["dep:clap", "dep:reedline"]
+# `default-features = false` to avoid pulling in clap and reedline. `tokio/signal` is what
+# catches Ctrl-C.
+cli = ["dep:clap", "dep:reedline", "tokio/signal"]
 
 [dependencies]
 # `async` for `exec_async` and friends; the stdlib crate adds `send` on top, by unification.
 mlua = { workspace = true, features = ["async"] }
 # The core owns the executor (ADR 0004). `net` and `time` are the drivers the stdlib's http and
 # task timers need, so the runtime is built with them rather than relying on another crate's
-# features arriving by unification.
-tokio = { version = "1.52.3", features = ["net", "rt", "time"] }
+# features arriving by unification. `sync` is for waking a waiting chunk when it is cancelled.
+tokio = { version = "1.52.3", features = ["net", "rt", "sync", "time"] }
 avarice-rt-stdlib = { path = "crates/avarice-rt-stdlib" }
 thiserror = "2.0"
 clap = { version = "4.6", features = ["derive"], optional = true }

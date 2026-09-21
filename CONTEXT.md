@@ -111,14 +111,16 @@ rather than by the host.
 A task is a green thread, not an OS thread: every task shares the one thread its
 Lua state lives on, so tasks interleave but never run in parallel and never
 observe a half-finished mutation by another. A task outlives the chunk that
-spawned it.
+spawned it, and nothing ends it for the chunk: the embedder decides, by waiting
+for the tasks or aborting them. The runtime keeps no list of them, since their
+handles live inside Lua, so it counts and aborts them through the executor.
 
 ## Executor
 
 The current-thread tokio runtime a `Runtime` owns. It drives every chunk the
 runtime runs and every task Lua spawns, and it runs only while an embedder is
 driving it with `Runtime::block_on`. The core owns it rather than leaving the
-choice to the embedder.
+choice to the embedder. Aborting the runtime's tasks replaces it with a fresh one.
 
 ## Write sink
 

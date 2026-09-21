@@ -1,17 +1,23 @@
 //! `avrt`: the command-line interpreter.
 
+mod interrupt;
 mod repl;
 
+use std::future::Future;
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use avarice_rt::mlua::{Table, Variadic};
-use avarice_rt::{Error, FsStore, Profile, Runtime};
+use avarice_rt::{was_cancelled, CancelHandle, Error, FsStore, Profile, Runtime};
 use clap::Parser;
 
 /// Exit code for a Lua error, matching stock `lua`.
 const EXIT_LUA_ERROR: u8 = 1;
+
+/// Exit code for a run cut short by Ctrl-C: 128 plus SIGINT's number, which is what a shell
+/// reports for a process that died of it, so `avrt script && next` still stops.
+const EXIT_INTERRUPTED: u8 = 130;
 
 /// Exit code for a usage error. clap uses the same code for a parse failure.
 const EXIT_USAGE: u8 = 2;
@@ -33,6 +39,10 @@ enum CliError {
     /// Standard input could not be read.
     #[error("cannot read standard input: {source}")]
     ReadStdin { source: std::io::Error },
+
+    /// Ctrl-C stopped the run.
+    #[error("interrupted")]
+    Interrupted,
 
     /// Anything the runtime, or the Lua code it ran, reported.
     #[error(transparent)]
@@ -74,7 +84,8 @@ struct Cli {
     #[arg(long)]
     sandbox: bool,
 
-    /// Stop after this long, in seconds. Applies to each script, -e statement or REPL entry.
+    /// Stop after this long, in seconds. Applies to each script, -e statement or REPL entry, and
+    /// again to waiting for the tasks it left running.
     #[arg(long, value_name = "seconds")]
     timeout: Option<f64>,
 
@@ -93,7 +104,10 @@ pub fn main() -> ExitCode {
         Ok(code) => code,
         Err(err) => {
             report(&err);
-            ExitCode::from(EXIT_LUA_ERROR)
+            ExitCode::from(match err {
+                CliError::Interrupted => EXIT_INTERRUPTED,
+                _ => EXIT_LUA_ERROR,
+            })
         }
     }
 }
@@ -110,10 +124,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Profile::Trusted
     };
 
-    // No cancel handle: nothing in `avrt` can trip one yet, and configuring one would install
-    // the limit hook — and pay for it on every run — for no reason. See the README's note on
-    // Ctrl-C during a running script.
-    let mut builder = Runtime::builder(profile);
+    // Always cancellable, because Ctrl-C has to be able to stop whatever is running. That installs
+    // the limit hook, so every run pays a little throughput for it.
+    let cancel = CancelHandle::new();
+    let mut builder = Runtime::builder(profile).cancel_handle(cancel.clone());
     if let Some(seconds) = cli.timeout {
         if !(seconds.is_finite() && seconds > 0.0) {
             eprintln!("avrt: --timeout must be a positive number of seconds");
@@ -122,71 +136,106 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         builder = builder.time_limit(std::time::Duration::from_secs_f64(seconds));
     }
     let rt = builder.store(store_for(cli, script)).build()?;
+    if let Err(e) = interrupt::install(cancel) {
+        eprintln!("avrt: Ctrl-C will not be caught: {e}");
+    }
     set_arg_table(&rt, &cli.script)?;
 
-    for statement in &cli.execute {
-        rt.block_on(rt.exec(statement.as_str(), "=(command line)"))?;
-    }
-
-    let script_args = cli.script.get(1..).unwrap_or_default();
-    let ran_script = match script {
-        Some("-") => {
-            run_stdin(&rt, script_args)?;
-            true
-        }
-        Some(path) => {
-            run_file(&rt, Path::new(path), script_args)?;
-            true
-        }
-        None => false,
+    // What to run, if anything. With nothing given, behave like stock lua: a REPL on a terminal,
+    // otherwise read the program from standard input.
+    let mut program = match script {
+        Some("-") => Some(Program::Stdin),
+        Some(path) => Some(Program::File(Path::new(path))),
+        None => None,
     };
-
-    // With nothing to run, behave like stock lua: a REPL on a terminal, otherwise read the
-    // program from standard input.
-    let idle = !ran_script && cli.execute.is_empty() && !cli.version;
-    if cli.interactive || (idle && std::io::stdin().is_terminal()) {
-        repl::run(&rt)?;
-    } else if idle {
-        run_stdin(&rt, &[])?;
+    let idle = program.is_none() && cli.execute.is_empty() && !cli.version;
+    let interactive = cli.interactive || (idle && std::io::stdin().is_terminal());
+    if idle && !interactive {
+        program = Some(Program::Stdin);
     }
 
+    // All of it is one run, so that the tasks it leaves behind are waited for once, after the last
+    // of it, rather than after each statement.
+    let script_args = cli.script.get(1..).unwrap_or_default();
+    run_to_the_end(&rt, async {
+        for statement in &cli.execute {
+            rt.exec(statement.as_str(), "=(command line)").await?;
+        }
+        if let Some(program) = program {
+            run_program(&rt, program, script_args).await?;
+        }
+        Ok(())
+    })?;
+
+    if interactive {
+        repl::run(&rt)?;
+    }
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_file(rt: &Runtime, path: &Path, args: &[String]) -> Result<(), CliError> {
-    let source = std::fs::read(path).map_err(|source| CliError::OpenScript {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    // A leading `#!` line is not Lua, but a script with one should still run.
-    let source = strip_shebang(source);
-    run_program(rt, source, format!("@{}", path.display()), args)
+/// Runs `work` on the runtime's executor, then waits for the tasks it left running, so that a
+/// task spawned on a program's last line is not silently abandoned.
+///
+/// A run that ends in an error gives up its tasks instead, and says how many, so that the person
+/// at the terminal knows whether work was lost. That covers a Lua error, a time limit, and
+/// Ctrl-C, which is reported as [`CliError::Interrupted`]. Either way no task outlives the call,
+/// which is what lets the REPL treat the prompt as a place where nothing is running.
+fn run_to_the_end(
+    rt: &Runtime,
+    work: impl Future<Output = Result<(), CliError>>,
+) -> Result<(), CliError> {
+    let outcome = rt.block_on(async {
+        work.await?;
+        rt.wait_for_tasks().await?;
+        Ok(())
+    });
+    let Err(err) = outcome else { return Ok(()) };
+
+    // Called once `block_on` has returned, as `abort_tasks` requires.
+    let aborted = rt.abort_tasks()?;
+    if aborted > 0 {
+        let s = if aborted == 1 { "" } else { "s" };
+        eprintln!("avrt: aborting {aborted} running task{s}");
+    }
+    match err {
+        CliError::Runtime(Error::Lua(ref lua)) if was_cancelled(lua) => Err(CliError::Interrupted),
+        err => Err(err),
+    }
 }
 
-fn run_stdin(rt: &Runtime, args: &[String]) -> Result<(), CliError> {
-    let mut source = Vec::new();
-    std::io::stdin()
-        .read_to_end(&mut source)
-        .map_err(|source| CliError::ReadStdin { source })?;
-    run_program(rt, strip_shebang(source), "=stdin".to_string(), args)
+/// A program named on the command line: the script, or standard input.
+#[derive(Clone, Copy)]
+enum Program<'a> {
+    Stdin,
+    File(&'a Path),
 }
 
 /// Runs a program, passing its arguments as the main chunk's varargs.
 ///
 /// A script reaches them either as `...` or through the `arg` table; stock `lua` provides both,
 /// and scripts use both.
-fn run_program(
-    rt: &Runtime,
-    source: Vec<u8>,
-    name: String,
-    args: &[String],
-) -> Result<(), CliError> {
+async fn run_program(rt: &Runtime, program: Program<'_>, args: &[String]) -> Result<(), CliError> {
+    let (source, name) = match program {
+        Program::File(path) => {
+            let source = std::fs::read(path).map_err(|source| CliError::OpenScript {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            (source, format!("@{}", path.display()))
+        }
+        Program::Stdin => {
+            let mut source = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut source)
+                .map_err(|source| CliError::ReadStdin { source })?;
+            (source, "=stdin".to_string())
+        }
+    };
+    // A leading `#!` line is not Lua, but a script with one should still run.
+    let source = strip_shebang(source);
     let args: Variadic<String> = args.to_vec().into();
-    rt.block_on(async {
-        let _execution = rt.enter()?;
-        rt.load(source, name).call_async::<()>(args).await?;
-        Ok(())
-    })
+    rt.run(rt.load(source, name).call_async::<()>(args)).await?;
+    Ok(())
 }
 
 fn strip_shebang(mut source: Vec<u8>) -> Vec<u8> {

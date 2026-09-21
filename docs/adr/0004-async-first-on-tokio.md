@@ -5,8 +5,9 @@ status: accepted
 # Async-first, on a current-thread tokio runtime the core owns
 
 > **Amended 2026-09-20 and 2026-09-21; the amendments at the end win.** `send` is on, so `Runtime`
-> is `Send + Sync` and its lazy-module loaders must be too, and there is no `LocalSet`. The text
-> below is the original decision and still says otherwise in two places.
+> is `Send + Sync` and its lazy-module loaders must be too, and there is no `LocalSet`; and Ctrl-C
+> is not "selected against the running evaluation" but reaches it through the `CancelHandle`. The
+> text below is the original decision and still says otherwise in places.
 
 `Runtime` has no synchronous entry points. `exec` and `eval` are gone, replaced
 by async ones, and the core crate owns a current-thread tokio runtime with a
@@ -88,3 +89,36 @@ and `Runtime::block_on` is that runtime's own `block_on`. Everything else here s
 with tokio's message when called from inside another runtime, tasks are green threads on the
 thread that drives it, and they run only while something is driving it. `Runtime` declares the
 executor before the Lua state, so that dropping one drops outstanding tasks first.
+
+## Amendment, 2026-09-21: what becomes of tasks, and how Ctrl-C reaches a chunk
+
+Two things the decision above left to `avrt` need the core's help, and neither was in reach of a
+CLI written over `block_on` alone.
+
+**Tasks cannot be listed, so they are counted and aborted through the executor.** Astra's tasks
+are bare `tokio::spawn`s whose `JoinHandle`s live inside Lua userdata, so the runtime holds no
+handle it could wait on or abort, and changing Astra to hand it one is the kind of edit this
+project avoids. What tokio does offer is `num_alive_tasks`, and dropping a runtime drops its
+tasks. So `Runtime` gains `outstanding_tasks` (that count), `wait_for_tasks` (poll it, every 5ms,
+until it is zero) and `abort_tasks` (replace the executor with a fresh one and drop the old, which
+ends every task on it and reports how many there were). The executor therefore sits behind an
+`RwLock`: `block_on` holds it for reading, and `abort_tasks` takes it for writing without waiting,
+panicking with a clear message instead of deadlocking if it cannot, as `block_on` does inside
+another runtime. The Lua state is untouched by an abort. The old executor is shut down with
+`shutdown_background`, so that it does not wait for blocking work its tasks had started. The
+count is of every task on the executor, including any a stdlib module spawns for itself.
+
+**A signal cannot be selected against a busy chunk.** The decision above says Ctrl-C is
+"selected against the running evaluation". That cannot work alone: the executor is a single
+thread, and a Lua loop that never awaits never gives it a turn, so a signal it is meant to read
+sits unread. And the opposite case fails differently: a chunk that is *awaiting* runs no Lua for
+the limit hook to interrupt. So `CancelHandle::cancel` now does both. It sets the flag the hook
+reads, and it wakes a `tokio::sync::Notify`, which `Runtime::run` — what `exec` and `eval` are
+made of — races the chunk against, dropping the chunk if it wins. `avrt` catches Ctrl-C with
+`tokio::signal::ctrl_c` on a thread of its own, whose one job is to trip the handle. The
+`CancelHandle` doc's old promise, that it "can stop a runtime from another thread", is now true of
+a runtime that is waiting as well as one that is running.
+
+Deliberately not done: a second Ctrl-C that kills the process outright, as stock `lua` has. A
+script stuck in a blocking call that never returns to Lua, `io.read` on a terminal for one, notices
+the first Ctrl-C only when the call returns; Ctrl-\ (SIGQUIT) still ends it.

@@ -20,6 +20,10 @@
 //! it for a caller who is not async. It panics if called from inside another tokio runtime, so an
 //! embedder that is already async builds its `Runtime` on a thread of its own.
 //!
+//! Lua can leave tasks running (the stdlib's `utils.spawn_task` and friends), and they run only
+//! while the executor is being driven. See [`Runtime::outstanding_tasks`],
+//! [`Runtime::wait_for_tasks`] and [`Runtime::abort_tasks`] for waiting on them and ending them.
+//!
 //! # Output
 //!
 //! Both profiles replace `print` with one that renders tables structurally. It writes to the
@@ -64,7 +68,7 @@
 //! Memory is capped at the allocator. Wall-clock limits and cancellation are enforced from a
 //! global debug hook, so a script cannot shed them by running inside a coroutine, and both
 //! latch once tripped, so a `pcall` cannot swallow them. A [`CancelHandle`] is `Send`, and
-//! can stop a runtime from another thread.
+//! can stop a runtime from another thread, whether it is running Lua or waiting on something.
 
 mod error;
 mod limits;
