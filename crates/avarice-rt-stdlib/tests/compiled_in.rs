@@ -102,3 +102,30 @@ fn loading_a_module_that_is_not_compiled_in_says_which_feature_is_missing() {
         );
     }
 }
+
+#[test]
+fn a_selection_is_refused_when_it_names_a_module_that_is_not_compiled_in() {
+    assert!(StdModules::ALL.require_compiled_in().is_ok());
+    assert!(StdModules::NONE.require_compiled_in().is_ok());
+
+    let missing: Vec<_> = EXPECTED
+        .into_iter()
+        .filter(|(_, on)| !*on)
+        .map(|(name, _)| name)
+        .collect();
+    match StdModules::all().require_compiled_in() {
+        Ok(()) => assert!(missing.is_empty(), "{missing:?} are not compiled in"),
+        Err(error) => {
+            let message = error.to_string();
+            assert!(!missing.is_empty(), "nothing is missing, yet: {message}");
+            for module in every_module() {
+                assert_eq!(
+                    message.contains(module.feature()),
+                    missing.contains(&module.name()),
+                    "{}: {message}",
+                    module.feature()
+                );
+            }
+        }
+    }
+}

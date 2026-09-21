@@ -43,99 +43,137 @@ pub enum StdModule {
     Validation,
 }
 
-/// Every module, compiled in or not, in the order [`StdModules::modules`] yields them.
-const EVERY: [StdModule; 8] = [
-    StdModule::Http,
-    StdModule::Fs,
-    StdModule::Crypto,
-    StdModule::Serde,
-    StdModule::Datetime,
-    StdModule::Utils,
-    StdModule::Stores,
-    StdModule::Validation,
+/// What is known about one module. Every fact about a module that is not code lives in [`TABLE`],
+/// so that adding a module is one row here, one variant, one flag and one arm in
+/// [`register_and_source`].
+#[derive(Clone, Copy)]
+struct Entry {
+    module: StdModule,
+    /// The name Lua `require`s it by.
+    name: &'static str,
+    /// The Cargo feature that compiles it in.
+    feature: &'static str,
+    flag: StdModules,
+    /// Whether that feature is on in this build.
+    compiled_in: bool,
+}
+
+/// One row per module, compiled in or not, in the order [`StdModules::modules`] yields them. A
+/// module's row is at the index of its discriminant, which `the_table_is_in_declaration_order`
+/// holds to.
+const TABLE: [Entry; 8] = [
+    Entry {
+        module: StdModule::Http,
+        name: "http",
+        feature: "stdlib-http",
+        flag: StdModules::HTTP,
+        compiled_in: cfg!(feature = "stdlib-http"),
+    },
+    Entry {
+        module: StdModule::Fs,
+        name: "fs",
+        feature: "stdlib-fs",
+        flag: StdModules::FS,
+        compiled_in: cfg!(feature = "stdlib-fs"),
+    },
+    Entry {
+        module: StdModule::Crypto,
+        name: "crypto",
+        feature: "stdlib-crypto",
+        flag: StdModules::CRYPTO,
+        compiled_in: cfg!(feature = "stdlib-crypto"),
+    },
+    Entry {
+        module: StdModule::Serde,
+        name: "serde",
+        feature: "stdlib-serde",
+        flag: StdModules::SERDE,
+        compiled_in: cfg!(feature = "stdlib-serde"),
+    },
+    Entry {
+        module: StdModule::Datetime,
+        name: "datetime",
+        feature: "stdlib-datetime",
+        flag: StdModules::DATETIME,
+        compiled_in: cfg!(feature = "stdlib-datetime"),
+    },
+    Entry {
+        module: StdModule::Utils,
+        name: "utils",
+        feature: "stdlib-utils",
+        flag: StdModules::UTILS,
+        compiled_in: cfg!(feature = "stdlib-utils"),
+    },
+    Entry {
+        module: StdModule::Stores,
+        name: "stores",
+        feature: "stdlib-stores",
+        flag: StdModules::STORES,
+        compiled_in: cfg!(feature = "stdlib-stores"),
+    },
+    Entry {
+        module: StdModule::Validation,
+        name: "validation",
+        feature: "stdlib-validation",
+        flag: StdModules::VALIDATION,
+        compiled_in: cfg!(feature = "stdlib-validation"),
+    },
 ];
+
+const COMPILED_IN_COUNT: usize = {
+    let mut count = 0;
+    let mut i = 0;
+    while i < TABLE.len() {
+        if TABLE[i].compiled_in {
+            count += 1;
+        }
+        i += 1;
+    }
+    count
+};
+
+/// The modules compiled in, taken from [`TABLE`] so that no second list has to agree with it.
+const COMPILED_IN: [StdModule; COMPILED_IN_COUNT] = {
+    let mut modules = [StdModule::Http; COMPILED_IN_COUNT];
+    let mut next = 0;
+    let mut i = 0;
+    while i < TABLE.len() {
+        if TABLE[i].compiled_in {
+            modules[next] = TABLE[i].module;
+            next += 1;
+        }
+        i += 1;
+    }
+    modules
+};
 
 impl StdModule {
     /// The modules compiled into this build, in the order [`StdModules::modules`] yields them.
     ///
     /// A build that turns a module's feature off has fewer than eight, so this is a slice and not
     /// a fixed array.
-    pub const ALL: &'static [StdModule] = &[
-        #[cfg(feature = "stdlib-http")]
-        StdModule::Http,
-        #[cfg(feature = "stdlib-fs")]
-        StdModule::Fs,
-        #[cfg(feature = "stdlib-crypto")]
-        StdModule::Crypto,
-        #[cfg(feature = "stdlib-serde")]
-        StdModule::Serde,
-        #[cfg(feature = "stdlib-datetime")]
-        StdModule::Datetime,
-        #[cfg(feature = "stdlib-utils")]
-        StdModule::Utils,
-        #[cfg(feature = "stdlib-stores")]
-        StdModule::Stores,
-        #[cfg(feature = "stdlib-validation")]
-        StdModule::Validation,
-    ];
+    pub const ALL: &'static [StdModule] = &COMPILED_IN;
 
     /// Whether this module is part of the build: whether [`StdModule::feature`] is on.
     ///
     /// A module that is not compiled in cannot be registered, by a profile or by anyone.
     pub const fn is_compiled_in(self) -> bool {
-        match self {
-            StdModule::Http => cfg!(feature = "stdlib-http"),
-            StdModule::Fs => cfg!(feature = "stdlib-fs"),
-            StdModule::Crypto => cfg!(feature = "stdlib-crypto"),
-            StdModule::Serde => cfg!(feature = "stdlib-serde"),
-            StdModule::Datetime => cfg!(feature = "stdlib-datetime"),
-            StdModule::Utils => cfg!(feature = "stdlib-utils"),
-            StdModule::Stores => cfg!(feature = "stdlib-stores"),
-            StdModule::Validation => cfg!(feature = "stdlib-validation"),
-        }
-    }
-
-    /// This module's flag. `const`, so that [`StdModules::ALL`] can be built from it.
-    const fn flag(self) -> StdModules {
-        match self {
-            StdModule::Http => StdModules::HTTP,
-            StdModule::Fs => StdModules::FS,
-            StdModule::Crypto => StdModules::CRYPTO,
-            StdModule::Serde => StdModules::SERDE,
-            StdModule::Datetime => StdModules::DATETIME,
-            StdModule::Utils => StdModules::UTILS,
-            StdModule::Stores => StdModules::STORES,
-            StdModule::Validation => StdModules::VALIDATION,
-        }
+        self.entry().compiled_in
     }
 
     /// The Cargo feature that compiles this module in, spelled the same on this crate and on
     /// `avarice-rt`.
     pub const fn feature(self) -> &'static str {
-        match self {
-            StdModule::Http => "stdlib-http",
-            StdModule::Fs => "stdlib-fs",
-            StdModule::Crypto => "stdlib-crypto",
-            StdModule::Serde => "stdlib-serde",
-            StdModule::Datetime => "stdlib-datetime",
-            StdModule::Utils => "stdlib-utils",
-            StdModule::Stores => "stdlib-stores",
-            StdModule::Validation => "stdlib-validation",
-        }
+        self.entry().feature
     }
 
     /// The name Lua passes to `require` to get this module.
     pub const fn name(self) -> &'static str {
-        match self {
-            StdModule::Http => "http",
-            StdModule::Fs => "fs",
-            StdModule::Crypto => "crypto",
-            StdModule::Serde => "serde",
-            StdModule::Datetime => "datetime",
-            StdModule::Utils => "utils",
-            StdModule::Stores => "stores",
-            StdModule::Validation => "validation",
-        }
+        self.entry().name
+    }
+
+    const fn entry(self) -> Entry {
+        TABLE[self as usize]
     }
 }
 
@@ -175,9 +213,9 @@ impl StdModules {
     pub const ALL: StdModules = {
         let mut set = StdModules::empty();
         let mut i = 0;
-        while i < EVERY.len() {
-            if EVERY[i].is_compiled_in() {
-                set = set.union(EVERY[i].flag());
+        while i < TABLE.len() {
+            if TABLE[i].compiled_in {
+                set = set.union(TABLE[i].flag);
             }
             i += 1;
         }
@@ -189,20 +227,64 @@ impl StdModules {
 
     /// The modules in this set, in a fixed order, compiled in or not.
     pub fn modules(self) -> impl Iterator<Item = StdModule> {
-        EVERY
+        TABLE
             .into_iter()
-            .filter(move |module| self.contains(module.flag()))
+            .filter(move |entry| self.contains(entry.flag))
+            .map(|entry| entry.module)
     }
 
     /// The modules in this set that are not compiled in, and so cannot be registered.
     pub const fn not_compiled_in(self) -> StdModules {
         self.difference(StdModules::ALL)
     }
+
+    /// `Ok` if every module in this set is compiled in, and otherwise an error naming the ones
+    /// that are not and the features that would compile them in.
+    pub fn require_compiled_in(self) -> Result<(), NotCompiledIn> {
+        match self.not_compiled_in() {
+            missing if missing.is_empty() => Ok(()),
+            missing => Err(NotCompiledIn(missing)),
+        }
+    }
 }
+
+/// A selection named stdlib modules that are not compiled in. Its message says which, and which
+/// Cargo features compile them in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotCompiledIn(StdModules);
+
+impl std::fmt::Display for NotCompiledIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<_> = self
+            .0
+            .modules()
+            .map(|m| format!("'{}'", m.name()))
+            .collect();
+        let features: Vec<_> = self
+            .0
+            .modules()
+            .map(|m| format!("`{}`", m.feature()))
+            .collect();
+        let (s, verb) = if names.len() == 1 {
+            ("", "is")
+        } else {
+            ("s", "are")
+        };
+        write!(
+            f,
+            "the stdlib module{s} {} {verb} not compiled in: build with the {} feature{s} \
+             (`stdlib` turns them all on)",
+            names.join(", "),
+            features.join(", "),
+        )
+    }
+}
+
+impl std::error::Error for NotCompiledIn {}
 
 impl From<StdModule> for StdModules {
     fn from(module: StdModule) -> Self {
-        module.flag()
+        module.entry().flag
     }
 }
 
@@ -269,11 +351,7 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static st
         // Only reached by a module whose feature is off; in a build with every feature on, every
         // variant has an arm above.
         #[allow(unreachable_patterns)]
-        module => Err(mlua::Error::runtime(format!(
-            "the stdlib module '{}' is not compiled in: build with the `{}` feature",
-            module.name(),
-            module.feature()
-        ))),
+        module => Err(mlua::Error::runtime(NotCompiledIn(module.into()))),
     }
 }
 
@@ -339,7 +417,7 @@ mod tests {
     fn none_is_no_module_and_all_is_no_more_than_every_module() {
         assert_eq!(StdModules::NONE.modules().count(), 0);
         assert!(StdModules::all().contains(StdModules::ALL));
-        for module in EVERY {
+        for module in StdModules::all().modules() {
             assert!(!StdModules::NONE.contains(module.into()));
         }
     }
@@ -349,13 +427,28 @@ mod tests {
         // The flag set and the enum cannot drift apart: each variant maps to a distinct single
         // flag, and all of them together are every flag, compiled in or not.
         let mut union = StdModules::NONE;
-        for module in EVERY {
+        for module in StdModules::all().modules() {
             let flag = StdModules::from(module);
             assert_eq!(flag.bits().count_ones(), 1, "{module:?}");
             assert!(!union.intersects(flag), "{module:?} shares a bit");
             union |= flag;
         }
         assert_eq!(union, StdModules::all());
+    }
+
+    #[test]
+    fn the_table_is_in_declaration_order() {
+        // `StdModule::entry` indexes the table by discriminant, and `modules` yields it in order.
+        for (index, entry) in TABLE.iter().enumerate() {
+            assert_eq!(entry.module as usize, index, "{}", entry.name);
+        }
+    }
+
+    #[test]
+    fn a_features_name_is_the_module_prefixed() {
+        for entry in TABLE {
+            assert_eq!(entry.feature, format!("stdlib-{}", entry.name));
+        }
     }
 
     #[test]

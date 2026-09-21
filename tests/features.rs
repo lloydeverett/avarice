@@ -7,29 +7,14 @@
 //! the expectations come from `StdModule::ALL` and `StdModules::not_compiled_in`, the public
 //! answer to "what is compiled in", not from a second list of features kept here.
 
+mod common;
+
 use avarice_rt::{Error, Profile, Runtime, StdModule, StdModules};
+use common::{compiled_in, listed, requirable};
 
 /// The modules this build does not have, one at a time.
 fn missing() -> Vec<StdModule> {
     StdModules::all().not_compiled_in().modules().collect()
-}
-
-fn requirable(rt: &Runtime, name: &str) -> bool {
-    rt.block_on(rt.eval::<bool>(format!("return (pcall(require, '{name}'))"), "=test"))
-        .unwrap()
-}
-
-fn listed(rt: &Runtime) -> Vec<String> {
-    rt.block_on(rt.eval::<Vec<String>>("return stdlib()", "=test"))
-        .unwrap()
-}
-
-fn compiled_in_names() -> Vec<&'static str> {
-    StdModule::ALL
-        .iter()
-        .copied()
-        .map(StdModule::name)
-        .collect()
 }
 
 // -- Asking for a module that is not compiled in -----------------------------------------------
@@ -92,7 +77,7 @@ fn a_sandbox_asks_for_no_module_and_so_builds_in_every_build() {
 #[test]
 fn trusted_mode_registers_exactly_the_modules_that_are_compiled_in() {
     let rt = Runtime::new(Profile::Trusted).expect("trusted mode builds with any set compiled in");
-    assert_eq!(listed(&rt), compiled_in_names());
+    assert_eq!(listed(&rt), compiled_in());
     for module in StdModules::all().modules() {
         assert_eq!(
             rt.has_module(module.name()),

@@ -8,9 +8,10 @@ mod common;
 
 #[cfg(feature = "stdlib-crypto")]
 use avarice_rt::FsStore;
-use avarice_rt::{Profile, Runtime, StdModule, StdModules};
+use avarice_rt::{Profile, Runtime, StdModules};
 #[cfg(any(feature = "stdlib-crypto", feature = "stdlib-fs"))]
 use common::TempDir;
+use common::{compiled_in, listed, requirable};
 
 const NAMES: [&str; 8] = [
     "http",
@@ -22,23 +23,6 @@ const NAMES: [&str; 8] = [
     "stores",
     "validation",
 ];
-
-/// The names of the modules this build has, which is what trusted mode registers (ADR 0007). The
-/// tests below that need one module in particular are gated on its feature; the rest hold whatever
-/// is compiled in.
-fn compiled_in() -> Vec<&'static str> {
-    StdModule::ALL
-        .iter()
-        .copied()
-        .map(StdModule::name)
-        .collect()
-}
-
-/// Whether `require(name)` succeeds in `rt`.
-fn requirable(rt: &Runtime, name: &str) -> bool {
-    rt.block_on(rt.eval::<bool>(format!("return (pcall(require, '{name}'))"), "=test"))
-        .unwrap()
-}
 
 /// The names of `NAMES` that `rt` can `require`.
 fn reachable(rt: &Runtime) -> Vec<&'static str> {
@@ -436,11 +420,6 @@ fn uuid_and_env_get_work() {
 }
 
 // -- `stdlib()` --------------------------------------------------------------------------------
-
-/// What `stdlib()` returns in `rt`.
-fn listed(rt: &Runtime) -> Vec<String> {
-    rt.block_on(rt.eval("return stdlib()", "=test")).unwrap()
-}
 
 #[test]
 fn stdlib_lists_the_names_require_takes() {

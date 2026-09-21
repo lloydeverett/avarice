@@ -40,11 +40,12 @@ turns on code from `utils.rs` without registering `utils`.
   naming the feature that is missing. `without_std_modules` on such a module is a no-op, since it
   asks for less. `avarice_rt_stdlib::loader` is public and takes any variant, so for one that is not
   compiled in it returns an error naming the feature when called, rather than panicking.
-- **Three public items are added to say what is compiled in:** `StdModule::is_compiled_in`,
-  `StdModule::feature` (the name of the feature that compiles it in) and
-  `StdModules::not_compiled_in`, which is what `build` uses to name what is missing. With the
-  changes above, the full list of changes to the public API is `StdModule::ALL`, the meaning of
-  `StdModules::ALL`, the error from `build`, and these three additions. `StdModules::all()`, the
+- **Five public items are added to say what is compiled in:** `StdModule::is_compiled_in`,
+  `StdModule::feature` (the name of the feature that compiles it in), `StdModules::not_compiled_in`,
+  `StdModules::require_compiled_in` and its error, `NotCompiledIn`. The last is the one message,
+  which names the modules and the features, that both `build` and `loader` give. With the changes
+  above, the full list of changes to the public API is `StdModule::ALL`, the meaning of
+  `StdModules::ALL`, the error from `build`, and these five additions. `StdModules::all()`, the
   method bitflags generates, still returns every flag, compiled in or not.
 
 ## Considered options

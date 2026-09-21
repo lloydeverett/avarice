@@ -579,30 +579,11 @@ impl RuntimeBuilder {
                     .to_string(),
             ));
         }
-        let missing = self.std_modules.not_compiled_in();
-        if !missing.is_empty() {
-            // Refused rather than dropped, as `package` is: a runtime that quietly lacks a module
-            // it was asked for disagrees with the code that asked (ADR 0007).
-            let names: Vec<_> = missing
-                .modules()
-                .map(|m| format!("'{}'", m.name()))
-                .collect();
-            let features: Vec<_> = missing
-                .modules()
-                .map(|m| format!("`{}`", m.feature()))
-                .collect();
-            let (s, verb) = if names.len() == 1 {
-                ("", "is")
-            } else {
-                ("s", "are")
-            };
-            return Err(Error::Config(format!(
-                "the stdlib module{s} {} {verb} not compiled in: build avarice-rt with the {} \
-                 feature{s} (`stdlib` turns them all on)",
-                names.join(", "),
-                features.join(", "),
-            )));
-        }
+        // Refused rather than dropped, as `package` is: a runtime that quietly lacks a module it
+        // was asked for disagrees with the code that asked (ADR 0007).
+        self.std_modules
+            .require_compiled_in()
+            .map_err(|e| Error::Config(e.to_string()))?;
         let lua = Lua::new_with(self.std_libs, LuaOptions::default())?;
 
         let modules = Arc::new(Modules {

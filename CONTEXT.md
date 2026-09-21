@@ -87,13 +87,11 @@ library is Lua's own, opened by `mlua`, and reachable without `require`.
 ## Compiled in
 
 A **stdlib module** that is part of an avarice-rt build. Chosen by the
-**embedder** when it builds, once, for every runtime in that program; a module
-that is not compiled in cannot be registered by any **profile** or by the
-embedder at runtime.
+**embedder** when it builds, once, for every runtime in that program. A module
+that is not compiled in cannot be **registered**, by a **profile** or by the
+embedder.
 
-All are compiled in unless the embedder opts out. Its purpose is a smaller
-dependency tree and faster builds, not confinement: **sandbox mode** withholds
-capability by not registering, and does not rely on a module being compiled out.
+It says what was built, not what a runtime has: that is **registered**.
 
 ## Program
 

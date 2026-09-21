@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+use avarice_rt::{Runtime, StdModule};
+
 /// A write sink a test can read back: hand a clone to the runtime, keep one to inspect.
 #[derive(Clone, Default)]
 pub struct Buffer(Arc<Mutex<Vec<u8>>>);
@@ -67,4 +69,26 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// Whether `require(name)` succeeds in `rt`.
+pub fn requirable(rt: &Runtime, name: &str) -> bool {
+    rt.block_on(rt.eval::<bool>(format!("return (pcall(require, '{name}'))"), "=test"))
+        .unwrap()
+}
+
+/// What `stdlib()` returns in `rt`.
+pub fn listed(rt: &Runtime) -> Vec<String> {
+    rt.block_on(rt.eval::<Vec<String>>("return stdlib()", "=test"))
+        .unwrap()
+}
+
+/// The names of the stdlib modules this build has, which is what trusted mode registers (ADR
+/// 0007).
+pub fn compiled_in() -> Vec<&'static str> {
+    StdModule::ALL
+        .iter()
+        .copied()
+        .map(StdModule::name)
+        .collect()
 }

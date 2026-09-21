@@ -17,7 +17,7 @@ mod modules;
 
 use mlua::{Lua, Value};
 
-pub use crate::modules::{StdModule, StdModules};
+pub use crate::modules::{NotCompiledIn, StdModule, StdModules};
 
 /// The loader for `module`: a function that builds the module's value in a Lua state.
 ///
