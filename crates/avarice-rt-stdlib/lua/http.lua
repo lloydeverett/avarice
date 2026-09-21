@@ -1,12 +1,23 @@
--- Derived from Astra <https://github.com/ArkForgeLabs/Astra>, astra/lua/http.lua
--- Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
--- See LICENSE and NOTICE in this crate's root.
+-- Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+-- 885586cca0ef065ac80d6a7c702d05e60fbdbb47), astra/lua/http.lua.
+-- Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+-- crate's root.
 --
 -- Changes from the original:
---   - Removed the HTTP server: `HTTPServer`, `http.server` and the routing helpers, which call `astra_internal__start_server`, and `http.middleware`.
---   - Removed the `---@class` annotations that described only the server (`callback`, `HTTPRouteConfiguration`, `HTTPRoute`, `IPAddress`, `HTTPMultipart*`, `HTTPServerRequest`, `HTTPServerResponse`, `Cookie`).
---   - Removed `execute_websocket` from the `HTTPClientRequest` annotations, and the WebSocket annotations (`CloseFrame`, `WebSocketMessageType`, `WebSocketMessage`, `WebSocket`, `wscallback`): the WebSocket client is not taken.
---   - The rest of the client (`http.request`, `http.status_codes`) is unchanged.
+--   - Removed the HTTP server: the `HTTPServer` class with its methods (`new`, `get`, `post`,
+--     `put`, `delete`, `options`, `patch`, `trace`, `static_dir`, `static_file`, `websocket`,
+--     `fallback` and `run`), `http.server` and `http.server.new`, and the local `add_to_routes`.
+--     `run` called `astra_internal__start_server`, which is not provided.
+--   - Removed `http.middleware` and `http.middleware.chain`.
+--   - Removed the annotations that described only the server: the `callback` alias, with the
+--     `---@diagnostic disable-next-line: duplicate-doc-alias` above it, and the classes
+--     `HTTPRouteConfiguration`, `HTTPRoute`, `IPAddress`, `HTTPMultipartField`, `HTTPMultipart`,
+--     `HTTPServerRequest`, `HTTPServerResponse` and `Cookie`.
+--   - Removed the WebSocket annotations: `execute_websocket` from `HTTPClientRequest`, the classes
+--     `CloseFrame`, `WebSocketMessage` and `WebSocket`, and the aliases `WebSocketMessageType` and
+--     `wscallback`. The WebSocket client is not taken.
+--   - Removed the three lines of dashes that divided those annotations from the server code.
+--   - Everything else is unchanged: the client annotations, `http.request` and `http.status_codes`.
 
 ---@meta
 

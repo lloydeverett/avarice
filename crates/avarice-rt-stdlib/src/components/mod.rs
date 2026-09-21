@@ -1,12 +1,18 @@
-// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/mod.rs
-// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
-// See LICENSE and NOTICE in this crate's root.
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+// 885586cca0ef065ac80d6a7c702d05e60fbdbb47), src/components/mod.rs.
+// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+// crate's root.
 //
 // Changes from the original:
-//   - Removed `pub mod database;`, `pub mod import;` and `pub mod templates;`: those components are not taken.
-//   - Removed `register_components`, which registered every component eagerly; this crate registers each module lazily from `src/modules.rs`.
-//   - Removed `read_from_stdlib`, which read Astra's embedded standard library through `crate::ASTRA_STD_LIBS` (defined in Astra's `main.rs`).
-//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11.
+//   - Removed `pub mod database;`, `pub mod import;` and `pub mod templates;`: those components are
+//     not taken.
+//   - Removed `register_components`, which registered every component eagerly; this crate registers
+//     each module lazily from `src/modules.rs`.
+//   - Removed `read_from_stdlib` and its `#[allow(dead_code)]`, which read Astra's embedded
+//     standard library through `crate::ASTRA_STD_LIBS` (defined in Astra's `main.rs`).
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
+//     workspace is on, moved it; Astra is on 0.11.
+//   - Everything else is unchanged.
 
 use mlua::{ExternalError, FromLua, LuaSerdeExt};
 

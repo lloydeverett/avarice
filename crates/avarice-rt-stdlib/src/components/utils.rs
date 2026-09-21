@@ -1,15 +1,22 @@
-// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/utils.rs
-// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
-// See LICENSE and NOTICE in this crate's root.
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+// 885586cca0ef065ac80d6a7c702d05e60fbdbb47), src/components/utils.rs.
+// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+// crate's root.
 //
 // Changes from the original:
-//   - Removed `close_dbs` (`astra_internal__close_all_databases`) and the `DATABASE_POOLS` import: the database component is not taken.
+//   - Removed `close_dbs` (`astra_internal__close_all_databases`) and the `DATABASE_POOLS` import:
+//     the database component is not taken.
 //   - Removed `dotenv_function` (`astra_internal__dotenv_load`): `dotenvy` is not taken.
 //   - Removed `pprint`, which replaced Lua's global `print`: `print` belongs to avarice-rt's core.
-//   - Removed `setenv` (`astra_internal__setenv`): it wraps `std::env::set_var`, which is unsound in a process with threads.
-//   - Removed `invalidate_cache` (`astra_internal__invalidate_cache`): it clears the import cache of Astra's `import.rs`, which is not taken.
+//   - Removed `setenv` (`astra_internal__setenv`): it wraps `std::env::set_var`, which is unsound
+//     in a process with threads.
+//   - Removed `invalidate_cache` (`astra_internal__invalidate_cache`): it clears the import cache
+//     of Astra's `import.rs`, which is not taken.
+//   - Removed the calls to `dotenv_function`, `invalidate_cache`, `pprint`, `close_dbs` and
+//     `setenv` from `register_to_lua`.
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
+//     workspace is on, moved it; Astra is on 0.11.
 //   - Everything else, including `tokio::spawn` for tasks, is unchanged.
-//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11.
 
 use mlua::{LuaSerdeExt, UserData};
 

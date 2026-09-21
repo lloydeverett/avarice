@@ -9,7 +9,8 @@
 //! [`loader`], which builds a module's value on demand. The core registers each selected
 //! module's loader as an ordinary lazy module and never learns what any of them contains.
 //!
-//! See the crate's `README.md` and `UPSTREAM.md` for how the Astra sources are kept and marked.
+//! Every Astra file opens with a header naming its origin and what was changed; the crate's
+//! `README.md` says how they are kept.
 
 mod components;
 mod modules;

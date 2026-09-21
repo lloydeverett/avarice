@@ -13,16 +13,29 @@ The crate depends on `mlua` and never on `avarice-rt`, so the dependency runs on
 
 ## Provenance
 
-[`UPSTREAM.md`](UPSTREAM.md) lists every file taken from Astra, which of them are identical to
-Astra's, which had to change, and what was left out. The short version:
+Everything under `src/components/` and `lua/` is Astra's, from version 0.51.2 (commit
+`885586cca0ef065ac80d6a7c702d05e60fbdbb47`), at the same relative path: Astra's `astra/lua/` is
+`lua/` here. Each of those files opens with a header that names the Astra file, the copyright
+holder and the licence, and has a `Changes from the original:` list:
 
-- A file that is byte-for-byte Astra's has **no header**, so it stays that way.
-- A file that differs opens with a header naming the Astra file it came from and listing what
-  changed. The list is never empty and is limited to removals and the respelling of an mlua path.
-- `LICENSE` is the Apache License 2.0. `NOTICE` is ours: Astra distributes no `NOTICE` file, so
-  none is inherited, and this one names ArkForge LLC as the source.
+- A file that is otherwise unchanged says `none`, and below its header it is byte-for-byte
+  Astra's: `sed '1,/^$/d' <file>` gives Astra's file exactly.
+- A file that differs lists every change. The changes are removals of what is not taken, and the
+  respelling of `mlua::SerializeOptions` for the mlua this workspace is on. Nothing Astra does has
+  been altered in how it works.
+- `LICENSE` is the Apache License 2.0. Astra distributes no `NOTICE` file, so there is none here.
+  Astra's own `LICENSE` differs from the canonical text in section 8 and in the appendix; this is
+  the canonical text. The copyright line in the headers, `Copyright 2024 ArkForge LLC`, is the one
+  Astra's `LICENSE` appendix carries.
 
-`src/lib.rs` and `src/modules.rs` are not derived and have no header.
+`src/lib.rs` and `src/modules.rs` are this crate's own, not derived from an Astra file, and have
+no header. `modules::load` makes the same registration calls that Astra's `register_components`
+does, and loads the same Lua files.
+
+**Not taken:** the HTTP server, templates, the database, Astra's own `require` (`import.rs`), and
+the Lua layers `templates.lua`, `database.lua` and `test.lua`; the WebSocket client, which does not
+satisfy mlua 0.12's `Sync` bound on userdata under the `send` feature; and Astra's `main.rs`,
+`commands/` and `build.rs`.
 
 ## How a module is built
 
@@ -30,8 +43,11 @@ Astra's own shape: a Rust half, `src/components/<module>.rs`, whose `register_to
 primitives on the Lua globals as `astra_internal__<name>`, and a Lua file, `lua/<module>.lua`,
 that wraps them into the module table and reads them off `_G` when called. `stores` has no Rust
 half. The Lua source is embedded with `include_str!`; there is no build script. One module is
-loaded differently: `validation.lua` defines its functions as globals, so it runs against a table
-of its own, and registers the regex primitive itself. `UPSTREAM.md` says why.
+loaded differently, in `src/modules.rs` and not in Astra's file: `validation.lua` defines `number`,
+`struct`, `regex` and a dozen more as *global* functions, which would appear in every program's
+globals as soon as anything required the module. It therefore runs against a table of its own that
+reads through to the real globals. It also registers the regex primitive itself, which Astra's
+`utils` Rust half would otherwise have to have set first.
 
 `loader` maps a `StdModule` to a function that does both, on demand. Modules are registered
 lazily, so nothing here runs until a script first requires the module: in particular the

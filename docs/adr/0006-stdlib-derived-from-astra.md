@@ -5,8 +5,9 @@ status: accepted
 # The stdlib is derived from Astra, and lives in its own Apache-2.0 crate
 
 > Amended 2026-09-20: the sources are Astra's own, not adapted. Amended 2026-09-21: `validation`
-> is taken after all. Where the text below says otherwise, or mentions `jiff`, or says validation
-> is not taken, the amendments at the end win.
+> is taken after all, and every Astra file carries a header, with no `NOTICE` or `UPSTREAM.md`.
+> Where the text below says otherwise, or mentions `jiff`, `NOTICE`, or files without a header, or
+> says validation is not taken, the amendments at the end win.
 
 The **stdlib modules** are adapted from [Astra](https://github.com/ArkForgeLabs/Astra)
 by ArkForge LLC, which is Apache-2.0. They live in `avarice-rt-stdlib`, a
@@ -100,7 +101,8 @@ whole keeps every Astra file as Astra has it, and was chosen.
 
 So there are now **eight** stdlib modules, and `validation` is the eighth: `StdModule::Validation`,
 `StdModules::VALIDATION`, `require("validation")`, registered by trusted mode like the others.
-`lua/validation.lua` is byte-identical to Astra's and carries no header. It brings Astra's schema
+`lua/validation.lua` is byte-identical to Astra's (and, under the next amendment, carries the header
+every Astra file does). It brings Astra's schema
 validators (`types.struct`, `array`, `union`, `range`, `pattern`, `build` and the rest) as well as
 `regex`, and the regex is `require("validation").regex`, not `utils.regex` as the spec first
 planned.
@@ -127,3 +129,25 @@ Rust half in some degree. It is why the sandbox profile registers none of them, 
 embedder who adds `validation` to a sandbox is not getting the limits the sandbox otherwise
 promises for anything that reaches it. It is also a reason to look again at whether a module
 should be allowed to run Rust that Lua's limits cannot see; that is not settled here.
+
+## Amendment, 2026-09-21: every Astra file carries a header, and there is no `NOTICE` or `UPSTREAM.md`
+
+The first amendment left a file that is byte-for-byte Astra's with no header, on the ground that
+a header would make it not identical, and put its attribution in `NOTICE` and `UPSTREAM.md`
+instead. That put the attribution in the wrong place: a reader of `crypto.rs` saw nothing to say
+whose it was or under what licence. It is reversed.
+
+- **Every file under `src/components/` and `lua/` opens with a header** naming the Astra file, the
+  version and commit, the copyright holder and the licence, and a `Changes from the original:`
+  list. A file that is otherwise unchanged says `none`, and is byte-for-byte Astra's below its
+  header. So the earlier rule that the list is never empty holds again, and so does the header
+  format in the spec; the rule about changes being removals and respellings only is unchanged.
+- **`NOTICE` is deleted.** Astra ships none, so none is inherited (§4(d)), and the copyright line
+  is in every header. §4(a) is met by `LICENSE`, §4(b) and §4(c) by the headers.
+- **`UPSTREAM.md` is deleted.** Its per-file table and SHA-256 checksums were the attribution the
+  headers now carry, and are redundant with them: the Astra commit is named in each header, and
+  stripping a header leaves Astra's file, so there is nothing to checksum. What it held besides
+  attribution, what is not taken and how `validation` is loaded, is in the crate's `README.md`.
+- **`src/lib.rs` and `src/modules.rs` are this crate's own** and carry no header. They make the
+  same registration calls Astra's `register_components` makes, which the API leaves no other way to
+  spell, and share no other expression with Astra.

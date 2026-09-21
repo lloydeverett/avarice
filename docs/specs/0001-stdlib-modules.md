@@ -160,9 +160,9 @@ And `avrt` grows a Ctrl-C handler, closing the gap the README admits to.
 
 The workspace gains `crates/avarice-rt-stdlib`, and the root `Cargo.toml`
 becomes a workspace manifest with the existing package in place. The stdlib
-crate carries `LICENSE` (Apache-2.0), `NOTICE` naming ArkForge LLC, and a
-`README.md` explaining the derivation and why `datetime` alone has no Astra
-header.
+crate carries `LICENSE` (Apache-2.0) and a `README.md` explaining the
+derivation. (Amended: there is no `NOTICE`, Astra having none; see the last
+amendment to ADR 0006.)
 
 `avarice-rt` depends on it unconditionally, with no feature flag, per ADR 0006.
 
@@ -302,16 +302,18 @@ differs from its neighbours.
 Every derived file opens with:
 
 ```rust
-// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/crypto.rs
-// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
-// See LICENSE and NOTICE in this crate's root.
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+// 885586cca0ef065ac80d6a7c702d05e60fbdbb47), src/components/crypto.rs.
+// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+// crate's root.
 //
 // Changes from the original:
 //   - <one line per change>
 ```
 
 `Changes from the original:` is mandatory and never empty. A file copied
-verbatim says so on that line.
+verbatim says `none` on that line, and opens "Taken from" where a changed one
+opens "Derived from".
 
 ### Documentation to update alongside
 

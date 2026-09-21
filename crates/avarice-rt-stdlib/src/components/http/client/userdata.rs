@@ -1,10 +1,16 @@
-// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/http/client/userdata.rs
-// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
-// See LICENSE and NOTICE in this crate's root.
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+// 885586cca0ef065ac80d6a7c702d05e60fbdbb47), src/components/http/client/userdata.rs.
+// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+// crate's root.
 //
 // Changes from the original:
-//   - Removed `execute_websocket` and the `reqwest_websocket::Upgrade` import: the WebSocket client is not taken, and `AstraWebSocket` does not satisfy mlua 0.12's `Sync` bound on userdata under its `send` feature.
-//   - Removed `src/components/http/client/websocket.rs` (`AstraWebSocket`) for the same reason; see `client/mod.rs`.
+//   - Removed the `execute_websocket` method from the `UserData` impl of `HTTPClientRequest`, and
+//     the `use reqwest_websocket::Upgrade;` that it needed: the WebSocket client is not taken, and
+//     `AstraWebSocket` does not satisfy mlua 0.12's `Sync` bound on userdata under its `send`
+//     feature.
+//   - Astra's `src/components/http/client/websocket.rs` (`AstraWebSocket`) is not in this crate for
+//     the same reason; see `client/mod.rs`.
+//   - Everything else is unchanged.
 
 use crate::components::AstraBuffer;
 use futures::StreamExt;

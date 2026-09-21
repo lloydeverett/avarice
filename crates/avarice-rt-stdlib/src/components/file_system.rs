@@ -1,9 +1,11 @@
-// Derived from Astra <https://github.com/ArkForgeLabs/Astra>, src/components/file_system.rs
-// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
-// See LICENSE and NOTICE in this crate's root.
+// Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+// 885586cca0ef065ac80d6a7c702d05e60fbdbb47), src/components/file_system.rs.
+// Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+// crate's root.
 //
 // Changes from the original:
-//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this workspace is on, moved it; Astra is on 0.11. Nothing else changed.
+//   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
+//     workspace is on, moved it; Astra is on 0.11. Nothing else changed.
 
 use super::AstraBufferMut;
 use mlua::{ExternalError, LuaSerdeExt, UserData};

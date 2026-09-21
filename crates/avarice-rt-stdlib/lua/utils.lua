@@ -1,9 +1,13 @@
--- Derived from Astra <https://github.com/ArkForgeLabs/Astra>, astra/lua/utils.lua
--- Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0.
--- See LICENSE and NOTICE in this crate's root.
+-- Derived from Astra <https://github.com/ArkForgeLabs/Astra> (version 0.51.2, commit
+-- 885586cca0ef065ac80d6a7c702d05e60fbdbb47), astra/lua/utils.lua.
+-- Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
+-- crate's root.
 --
 -- Changes from the original:
---   - Removed `clean_require`, `dotenv_load` and `env.set`, and the `astra_internal__` primitives behind them, which `src/components/utils.rs` no longer provides.
+--   - Removed `clean_require`, `dotenv_load` and `env_set`, which called the primitives
+--     `astra_internal__invalidate_cache`, `astra_internal__dotenv_load` and
+--     `astra_internal__setenv`, and their entries in the returned table (`clean_require`,
+--     `dotenv_load` and `env.set`). `src/components/utils.rs` no longer provides those primitives.
 --   - Everything else is unchanged.
 
 ---@meta

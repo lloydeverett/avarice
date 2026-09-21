@@ -12,7 +12,7 @@ function to `utils.lua`, so that no Astra file gains a line. See the second amen
 **Status:** done.
 
 - [x] `StdModule::Validation`, `StdModules::VALIDATION` and the name `validation`; trusted mode registers it, sandbox mode does not, and it can be added to a sandbox or taken from trusted mode like any other.
-- [x] `lua/validation.lua` is byte-identical to Astra's, carries no header, and is listed in `UPSTREAM.md` with its checksum.
+- [x] `lua/validation.lua` is Astra's, unchanged: it opens with an attribution header saying `Changes from the original: none`, and below it is byte-for-byte Astra's.
 - [x] Regular expressions work: `is_match`, `captures`, `replace` with and without a limit, and a bad pattern is an error a script can catch.
 - [x] They work when `validation` is the only module selected, so the module does not lean on `utils` having been built.
 - [x] Astra's validators load and run under this runtime: struct, array, union, literal, range, pattern, optional, boolean, nil and `build` with defaults, including the messages they report.
