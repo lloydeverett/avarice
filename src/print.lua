@@ -45,11 +45,14 @@ local FUNCTION = paint(RED, "function")
 
 local INDENT = "  "
 
-local KEYWORDS = {}
-for word in ([[and break do else elseif end false for function goto if in local nil not or
-repeat return then true until while]]):gmatch("%a+") do
-  KEYWORDS[word] = true
-end
+-- A key that is one of these has to be bracketed to be valid Lua.
+local KEYWORDS = {
+  ["and"] = true, ["break"] = true, ["do"] = true, ["else"] = true, ["elseif"] = true,
+  ["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true, ["goto"] = true,
+  ["if"] = true, ["in"] = true, ["local"] = true, ["nil"] = true, ["not"] = true,
+  ["or"] = true, ["repeat"] = true, ["return"] = true, ["then"] = true, ["true"] = true,
+  ["until"] = true, ["while"] = true,
+}
 
 -- The plain string forms of `nil` and the booleans, which are the ones `line_text` highlights.
 local LITERAL = { ["nil"] = true, ["true"] = true, ["false"] = true }
