@@ -3,12 +3,12 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use anstream::{eprintln, println};
+use anstream::{eprintln, println, AutoStream, ColorChoice};
 use avarice_rt::mlua::{self, Function, MultiValue};
 use avarice_rt::{Error, Runtime};
 use reedline::{
     FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
-    Reedline, Signal,
+    Reedline, Signal, SimpleMatchHighlighter,
 };
 
 use super::{run_and_settle_tasks, CliError};
@@ -59,7 +59,13 @@ impl Prompt for LuaPrompt {
 
 /// Runs the prompt until Ctrl-D or end of input.
 pub fn run(rt: &Runtime) -> Result<(), Error> {
-    let mut editor = Reedline::create();
+    // Reedline paints to standard error, so that is the stream whose colour it follows. It reads
+    // no environment variable itself, and its default highlighter colours typed text, so both are
+    // set explicitly (ADR 0009). An empty `SimpleMatchHighlighter` leaves the text unstyled.
+    let colour = AutoStream::choice(&std::io::stderr()) != ColorChoice::Never;
+    let mut editor = Reedline::create()
+        .with_ansi_colors(colour)
+        .with_highlighter(Box::new(SimpleMatchHighlighter::default()));
     if let Some(path) = history_path() {
         match FileBackedHistory::with_file(HISTORY_CAPACITY, path) {
             Ok(history) => editor = editor.with_history(Box::new(history)),

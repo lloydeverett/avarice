@@ -202,9 +202,11 @@ escape codes (`ansi.bold .. ansi.fg.red .. "error" .. ansi.reset`) and a few col
 whether the output is a terminal or whether `NO_COLOR` is set; that is for the program to decide.
 `avrt` decides by stripping the escape codes from what `print` writes, and from its own messages,
 unless the output is a colour terminal (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `TERM=dumb`
-are honoured). `io.write` is left alone, so it is the way to write bytes exactly as they are:
-`print` is a text function, and control bytes such as NUL do not survive it when colour is off
-([ADR 0009](docs/adr/0009-avrt-filters-escapes-on-non-terminals.md)). An embedder's write sink gets `print`'s output as it stands.
+are honoured), and the REPL's prompt is coloured under the same rule. `io.write` is left alone, so
+it is the way to write bytes exactly as they are: `print` is a text function, and control bytes
+such as NUL do not survive it when colour is off
+([ADR 0009](docs/adr/0009-avrt-filters-escapes-on-non-terminals.md)). An embedder's write sink gets
+`print`'s output as it stands.
 
 Take trusted mode and subtract one with `without_std_modules`, or add one to a sandbox with
 `with_std_modules`. This is a choice made for each runtime, at run time; the next section is the

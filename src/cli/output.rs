@@ -2,7 +2,8 @@
 //! the destination is not a colour terminal (ADR 0009).
 //!
 //! `anstream` makes that call from the terminal, `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and
-//! `TERM`. The prompt in the REPL is drawn by reedline and does not come through here.
+//! `TERM`. The prompt in the REPL is drawn by reedline and does not come through here; the REPL asks
+//! `anstream` for the same decision itself (see `repl::run`).
 
 use std::io::{self, Write};
 

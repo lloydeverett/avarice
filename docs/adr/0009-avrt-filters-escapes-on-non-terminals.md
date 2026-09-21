@@ -6,8 +6,8 @@ status: accepted
 
 `avrt` writes what a program prints through [`anstream`](https://docs.rs/anstream), which passes
 ANSI escape codes to a colour terminal and removes them everywhere else: a pipe, a file, a terminal
-with `TERM=dumb`, or any destination while `NO_COLOR` is set. `avrt` adds no colour of its own; it
-only decides whether the colour a program wrote is delivered.
+with `TERM=dumb`, or any destination while `NO_COLOR` is set. Apart from the REPL's prompt, `avrt`
+adds no colour of its own; it only decides whether the colour a program wrote is delivered.
 
 A reader would otherwise wonder why `avrt script.lua | cat` prints `red` where the script wrote
 `ansi.fg.red .. "red"`, why `print("a\0b")` loses its NUL there, and why `io.write` does not.
@@ -21,13 +21,19 @@ This is the decision [ADR 0008](0008-ansi-is-original-and-pure.md) left to "the 
   `avrt`'s own messages on standard output and standard error: the error report (which is also how
   an interrupt or a timeout is reported), the notices about Ctrl-C and about tasks being aborted,
   the `--timeout` usage error, `--version` and the REPL banner. clap's own help and usage errors
-  are clap's, and it makes the same decision from the same variables. `avrt` installs an `anstream` sink with
-  `RuntimeBuilder::write_sink`, and the library is untouched apart from one function it now
-  exports (below).
+  are clap's, and it makes the same decision from the same variables. `avrt` installs an
+  `anstream` sink with `RuntimeBuilder::write_sink`, and the library is untouched apart from one
+  function it now exports (below).
 - **What is not:** `io.write`, `io.stdout` and `io.stderr`. They are C stdio and never reach the
   write sink, so nothing sits between them and the file descriptor. That makes them the way to send
   bytes exactly as they are, and to force colour on where the environment would turn it off.
-  Reedline draws its own prompt and is left to do so.
+- **The REPL prompt is told the same decision.** Reedline draws the prompt itself, on standard
+  error, and paints with its own defaults without reading the environment, so `avrt` asks
+  `anstream` about standard error and passes the answer to `Reedline::with_ansi_colors`. That turns
+  off the prompt's colours. It also replaces reedline's default highlighter, which paints typed
+  text white and a few example words green, with one that leaves it unstyled: that colour was never
+  something a Lua REPL asked for, and white text is unreadable on a light terminal. What reedline
+  writes to move the cursor is not colour and is not affected.
 - **`print` is a text function.** With colour off, `anstream` keeps printable characters, ASCII
   whitespace and well-formed UTF-8, so a control byte such as NUL is dropped and invalid UTF-8 is
   altered. A program that prints binary writes it with `io.write`. With colour on, `print` passes
@@ -47,6 +53,12 @@ This is the decision [ADR 0008](0008-ansi-is-original-and-pure.md) left to "the 
   feature, so an embedder with `default-features = false` does not build it.
 
 ## Considered options
+
+**Leaving reedline alone**, on the ground that it manages its own terminal, was the first plan
+and was rejected once it was checked: under `NO_COLOR` the prompt was still coloured. It is not
+covered by an automated test, because seeing what reedline writes needs a pseudo-terminal and that
+is a dev-dependency this did not seem to justify. It was checked by hand on a pty, with and without
+`NO_COLOR` and `CLICOLOR=0`.
 
 **Passing everything through**, as before, was rejected. A program that colours its output is
 right to do so on a terminal and wrong to do so into a log file, and every script would have to
