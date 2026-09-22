@@ -161,7 +161,7 @@ one sets, and doing so never affects the profile another runtime is built from.
 | `string` `table` `math` `utf8` `coroutine` | yes | yes     |
 | `io`, `os`            | no                       | yes                  |
 | `dofile`, `loadfile`  | no                       | yes                  |
-| Stdlib modules        | the pure ones            | every one compiled in (all nine by default) |
+| Stdlib modules        | the pure ones            | every one compiled in (all eight by default) |
 | `ansi`                | yes                      | yes                  |
 | `package`             | never                    | never                |
 | `debug`               | `traceback` only         | `traceback` only     |
@@ -183,19 +183,17 @@ its place both profiles get a `debug` table holding only `traceback`, which is e
 `xpcall(f, debug.traceback)` idiom and needs no library open. Code that feature-detects on
 `debug.getinfo` will correctly find it missing.
 
-**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
-and `dirs`. Every one but `dirs` is derived from [Astra](https://github.com/ArkForgeLabs/Astra);
-`dirs` is original to avarice-rt (see [ADR 0014](docs/adr/0014-dirs-resolves-standard-directories-via-etcetera.md)).
-All of them are kept in their own directory, [`src/stdlib`](src/stdlib), with a header on each
-Astra-derived file that says where it came from (see [The stdlib's source](#the-stdlibs-source)).
-They are registered as lazy host modules, so `require("crypto")` builds `crypto` and a program
-that never asks for it costs nothing. A program can ask which it has: `stdlib()` returns a list of
-the names to pass to `require`, in a fixed order. It says what this runtime registered, so in a
-sandbox it lists only the pure modules, and it is short one module when an embedder took one out.
-It builds nothing.
+**Stdlib modules** are `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores` and
+`validation`. They are derived from [Astra](https://github.com/ArkForgeLabs/Astra), and kept in
+their own directory, [`src/stdlib`](src/stdlib), with a header on each file that says where it came
+from (see [The stdlib's source](#the-stdlibs-source)). They are registered as lazy host modules, so
+`require("crypto")` builds `crypto` and a program that never asks for it costs nothing. A program
+can ask which it has: `stdlib()` returns a list of the names to pass to `require`, in a fixed order.
+It says what this runtime registered, so in a sandbox it lists only the pure modules, and it is
+short one module when an embedder took one out. It builds nothing.
 
 ```lua
-print(#stdlib())        --> 9, in trusted mode
+print(#stdlib())        --> 8, in trusted mode
 print(stdlib()[1])      --> http
 ```
 
@@ -233,10 +231,9 @@ let rt = Runtime::builder(Profile::Trusted)
 ### Choosing stdlib modules
 
 Each stdlib module is behind a Cargo feature that compiles it in: `stdlib-http`, `stdlib-fs`,
-`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
-`stdlib-validation` and `stdlib-dirs`. `stdlib` turns on all nine and is a default feature, so an
-embedder who changes nothing gets nothing different. `ansi` has no feature: it is in every build.
-One who wants
+`stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores` and
+`stdlib-validation`. `stdlib` turns on all eight and is a default feature, so an embedder who
+changes nothing gets nothing different. `ansi` has no feature: it is in every build. One who wants
 a smaller dependency tree and faster builds names the modules instead:
 
 ```toml
@@ -459,12 +456,8 @@ satisfy mlua 0.12's `Sync` bound on userdata under the `send` feature; and Astra
 `register_to_lua(lua)` sets primitives on the Lua globals as `astra_internal__<name>`, and a Lua
 file, `lua/<module>.lua`, that wraps them into the module table. `stores` has no Rust half at all
 and is **pure**, which is why sandbox mode registers it and why giving it a Rust half would move
-it out of the sandbox (ADR 0007). `dirs` follows the same two-layer shape but is original to
-avarice-rt, not Astra's, and is not pure: it wraps the `etcetera` crate to resolve standard
-per-application directories, and its files carry no Astra header
-([ADR 0014](docs/adr/0014-dirs-resolves-standard-directories-via-etcetera.md)). The Lua source is
-embedded with `include_str!`; there is no build script. One module is loaded differently, in
-`modules.rs` and not in Astra's file:
+it out of the sandbox (ADR 0007). The Lua source is embedded with `include_str!`; there is no
+build script. One module is loaded differently, in `modules.rs` and not in Astra's file:
 `validation.lua` defines `number`, `struct`, `regex` and a dozen more as *global* functions, which
 would appear in every program's globals as soon as anything required the module, so it runs against
 a table of its own that reads through to the real globals. It also registers the regex primitive
