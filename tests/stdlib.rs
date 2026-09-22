@@ -882,21 +882,38 @@ fn state_and_runtime_may_be_nil_but_are_strings_when_present() {
 
 #[cfg(feature = "stdlib-dirs")]
 #[test]
-fn app_raises_when_author_or_top_level_domain_is_missing() {
+fn app_raises_immediately_when_author_or_top_level_domain_is_missing() {
+    // `dirs.app` checks eagerly, not only when a directory kind is asked for: a script that never
+    // calls `:config()` and friends should still be told its call was wrong.
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let message: String = rt
         .block_on(rt.eval(
             r#"
-            local ok, err = pcall(function()
-              return require("dirs").app("avarice-rt-test-app"):config()
-            end)
+            local ok, err = pcall(require("dirs").app, "avarice-rt-test-app")
             assert(not ok)
             return tostring(err)
             "#,
             "=test",
         ))
         .unwrap();
-    assert!(!message.is_empty());
+    assert!(message.contains("author"), "{message}");
+}
+
+#[cfg(feature = "stdlib-dirs")]
+#[test]
+fn app_raises_when_a_field_is_not_a_string() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let message: String = rt
+        .block_on(rt.eval(
+            r#"
+            local ok, err = pcall(require("dirs").app, "avarice-rt-test-app", 42, "Acme")
+            assert(not ok)
+            return tostring(err)
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(message.contains("author"), "{message}");
 }
 
 #[cfg(all(feature = "stdlib-dirs", feature = "stdlib-fs"))]
