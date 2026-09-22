@@ -634,9 +634,7 @@ fn a_runtime_with_string_and_table_and_nothing_else_prints() {
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
 const MAGENTA: &str = "\x1b[35m";
-const CYAN: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
 
 /// `text` in `code`, reset after it: one token, as `print` writes them.
@@ -644,62 +642,45 @@ fn token(code: &str, text: &str) -> String {
     format!("{code}{text}{RESET}")
 }
 
-fn comma() -> String {
-    token(CYAN, ",")
-}
-
 #[test]
 fn a_table_is_highlighted_in_both_profiles() {
-    let expected = format!(
-        "{{\n  {s}{c}\n  {k} = 1{c}\n}}\n",
-        s = token(GREEN, "\"x\""),
-        k = token(YELLOW, "a"),
-        c = comma(),
-    );
+    let expected = format!("{{\n  {s},\n  a = 1,\n}}\n", s = token(GREEN, "\"x\""));
     for profile in BOTH {
         assert_eq!(raw(profile, r#"print({ "x", a = 1 })"#), expected);
     }
 }
 
 #[test]
-fn a_string_in_a_table_is_green_and_the_comma_after_it_is_cyan() {
+fn a_string_in_a_table_is_green_and_the_comma_after_it_is_plain() {
     let text = raw(Profile::Sandbox, r#"print({ "a" })"#);
-    assert_eq!(
-        text,
-        format!("{{\n  {}{}\n}}\n", token(GREEN, "\"a\""), comma())
-    );
+    assert_eq!(text, format!("{{\n  {},\n}}\n", token(GREEN, "\"a\"")));
 }
 
 #[test]
-fn every_entry_gets_a_cyan_comma_after_it_the_last_included() {
+fn every_entry_gets_a_comma_after_it_the_last_included() {
     let text = raw(Profile::Sandbox, "print({ 1, 2, a = 3 })");
-    assert_eq!(text.matches(&comma()).count(), 3, "{text:?}");
+    assert_eq!(text.matches(",\n").count(), 3, "{text:?}");
 }
 
 #[test]
-fn a_key_is_yellow_as_a_whole_brackets_and_quotes_included() {
+fn a_key_is_plain_as_a_whole_brackets_and_quotes_included() {
     let text = raw(
         Profile::Sandbox,
         r#"print({ ["with space"] = "v", [2.5] = 1 })"#,
     );
     // The quoted string inside a bracketed key is part of the key, so it is not green.
-    assert!(
-        text.contains(&token(YELLOW, "[\"with space\"]")),
-        "{text:?}"
-    );
-    assert!(text.contains(&token(YELLOW, "[2.5]")), "{text:?}");
+    assert!(text.contains("[\"with space\"] = "), "{text:?}");
+    assert!(text.contains("[2.5] = 1"), "{text:?}");
     assert_eq!(text.matches(GREEN).count(), 1, "{text:?}");
 }
 
 #[test]
-fn a_key_that_is_a_function_is_yellow_and_reads_as_tostring_does() {
+fn a_key_that_is_a_function_is_plain_and_reads_as_tostring_does() {
     let text = raw(Profile::Sandbox, "print({ [print] = 1 })");
     let key = text.lines().nth(1).unwrap().trim_start();
-    assert!(
-        key.starts_with(&format!("{YELLOW}[function: 0x")),
-        "{key:?}"
-    );
-    assert!(key.contains(&format!("]{RESET} = 1")), "{key:?}");
+    assert!(key.starts_with("[function: 0x"), "{key:?}");
+    assert!(key.contains("] = 1"), "{key:?}");
+    assert!(!key.contains('\x1b'), "{key:?}");
 }
 
 #[test]
@@ -726,21 +707,17 @@ fn a_top_level_string_and_a_number_carry_no_colour() {
         raw(Profile::Sandbox, r#"print("message", 1, 2.5)"#),
         "message\t1\t2.5\n"
     );
-    // Only the key and the two commas are tokens; the numbers are not.
+    // Neither the key, the commas, nor the numbers are tokens.
     assert_eq!(
         raw(Profile::Sandbox, "print({ 1, a = 2.5 })"),
-        format!(
-            "{{\n  1{c}\n  {k} = 2.5{c}\n}}\n",
-            k = token(YELLOW, "a"),
-            c = comma()
-        )
+        "{\n  1,\n  a = 2.5,\n}\n"
     );
 }
 
 #[test]
-fn a_function_is_red_its_parameters_plain_with_cyan_commas_and_its_address_dim() {
+fn a_function_is_red_its_parameters_and_commas_plain_and_its_address_dim() {
     let text = raw(Profile::Sandbox, "print(function(foo, bar) end)");
-    let prefix = format!("{} (foo{} bar) {DIM}[0x", token(RED, "function"), comma());
+    let prefix = format!("{} (foo, bar) {DIM}[0x", token(RED, "function"));
     assert!(text.starts_with(&prefix), "{text:?}");
     assert!(text.ends_with(&format!("]{RESET}\n")), "{text:?}");
 }
@@ -779,7 +756,7 @@ fn what_is_not_a_token_of_a_table_carries_no_colour() {
         Profile::Sandbox,
         r#"print(setmetatable({}, { __tostring = function() return "point!" end }), { {} })"#,
     );
-    assert_eq!(text, format!("point!\t{{\n  {{}}{}\n}}\n", comma()));
+    assert_eq!(text, "point!\t{\n  {},\n}\n");
     let thread = raw(Profile::Sandbox, "print(coroutine.create(print))");
     assert!(!thread.contains('\x1b'), "{thread:?}");
 }
@@ -808,7 +785,7 @@ fn a_script_editing_ansi_cannot_change_how_print_highlights() {
         Profile::Sandbox,
         r#"
         local ansi = require("ansi")
-        ansi.fg.green, ansi.fg.cyan, ansi.fg.yellow, ansi.reset = "G", "C", "Y", "R"
+        ansi.fg.green, ansi.fg.red, ansi.fg.magenta, ansi.dim, ansi.reset = "G", "R", "M", "D", "X"
         print({ "x", a = 1 })
         "#,
     );

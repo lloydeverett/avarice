@@ -33,14 +33,13 @@ local format = string.format
 -- token is a code, its text, and a full reset.
 local RESET = ansi.reset
 local DIM = ansi.dim
-local GREEN, CYAN = ansi.fg.green, ansi.fg.cyan
-local YELLOW, RED, MAGENTA = ansi.fg.yellow, ansi.fg.red, ansi.fg.magenta
+local GREEN = ansi.fg.green
+local RED, MAGENTA = ansi.fg.red, ansi.fg.magenta
 
 local function paint(code, text)
   return code .. text .. RESET
 end
 
-local COMMA = paint(CYAN, ",")
 local FUNCTION = paint(RED, "function")
 
 local INDENT = "  "
@@ -81,7 +80,7 @@ local function line_text(value)
       local names = parameters(value)
       local params = ""
       if names then
-        params = " (" .. gsub(names, ", ", COMMA .. " ") .. ")"
+        params = " (" .. names .. ")"
       end
       return FUNCTION .. params .. " " .. paint(DIM, "[" .. address .. "]")
     end
@@ -97,15 +96,14 @@ local function quote(text)
   return (gsub(format("%q", text), "\\\n", "\\n"))
 end
 
--- The whole key is one token, brackets and quotes with it, so a quoted key is not green.
 local function key_text(key)
   if type(key) == "string" then
     if find(key, "^[%a_][%w_]*$") and not KEYWORDS[key] then
-      return paint(YELLOW, key)
+      return key
     end
-    return paint(YELLOW, "[" .. quote(key) .. "]")
+    return "[" .. quote(key) .. "]"
   end
-  return paint(YELLOW, "[" .. tostring(key) .. "]")
+  return "[" .. tostring(key) .. "]"
 end
 
 -- Numbers, then strings, then booleans, then everything else, so that a table prints the same way
@@ -169,13 +167,13 @@ local function render(value, depth, ancestors, out)
   for i = 1, length do
     out[#out + 1] = inner
     render(rawget(value, i), depth + 1, ancestors, out)
-    out[#out + 1] = COMMA .. "\n"
+    out[#out + 1] = ",\n"
   end
   for i = 1, count do
     local key = keys[i]
     out[#out + 1] = inner .. key_text(key) .. " = "
     render(rawget(value, key), depth + 1, ancestors, out)
-    out[#out + 1] = COMMA .. "\n"
+    out[#out + 1] = ",\n"
   end
   out[#out + 1] = rep(INDENT, depth) .. "}"
   ancestors[value] = nil

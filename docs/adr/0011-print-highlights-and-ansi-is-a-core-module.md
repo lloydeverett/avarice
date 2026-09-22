@@ -8,11 +8,10 @@ status: accepted
 > `avarice-rt` and not a crate, and licenses the whole project Apache-2.0; where the text below
 > speaks of the stdlib crate, or says the core carries no licence, it wins.
 
-`print` colours what it shows: the strings, keys and commas of a table, and a function's name,
-parameters and address. It does so always, whatever the destination, and it does so in Lua, with the
-codes from `ansi`. To make that possible `ansi` moves out of the stdlib crate and into the core,
-where it is registered in every runtime, and a function's layout changes to
-`function (a, b) [0x55d0]`.
+`print` colours what it shows: the strings of a table, and a function's name, parameters and
+address. It does so always, whatever the destination, and it does so in Lua, with the codes from
+`ansi`. To make that possible `ansi` moves out of the stdlib crate and into the core, where it is
+registered in every runtime, and a function's layout changes to `function (a, b) [0x55d0]`.
 
 This supersedes [ADR 0008](0008-ansi-is-original-and-pure.md) in what it decided about *where*
 `ansi` lives and how a build selects it. What that ADR decided about the module itself stands: it
@@ -36,22 +35,22 @@ has a hole in its bits, and why a runtime without `string` cannot be built.
   | What | Colour |
   | ---- | ------ |
   | a string inside a table | green |
-  | the comma after every entry, and between a function's parameters | cyan |
-  | a key, brackets and quotes included, so a `["with space"]` key is wholly yellow | yellow |
   | `function` | red |
   | an address, brackets included, and a `<cycle: …>` marker | dim (SGR 2) |
   | `true`, `false` and `nil`, at the top level and in a table | magenta |
 
-  Everything else is plain: numbers, braces, `=`, indentation, parameter names, `table: 0x…`, the
-  text of a thread or userdata, whatever a `__tostring` returns, and a top-level string, which is a
-  message and not a literal. Each coloured token ends with a full reset, so no token depends on
-  what came before it. `nil` can only be seen at the top level, since a table cannot hold it.
+  Everything else is plain: numbers, braces, `=`, commas, indentation, keys, parameter names,
+  `table: 0x…`, the text of a thread or userdata, whatever a `__tostring` returns, and a top-level
+  string, which is a message and not a literal. A key stays plain whether or not it is bracketed,
+  matching the identifiers `avrt`'s prompt highlighting ([ADR 0013](0013-avrt-highlights-lua-at-the-prompt.md))
+  leaves uncoloured. Each coloured token ends with a full reset, so no token depends on what came
+  before it. `nil` can only be seen at the top level, since a table cannot hold it.
 - **A function has one layout, coloured or not**, at the top level and in a table:
   `function (a, b) [0x55d0]`. A function not written in Lua, such as `string.format` or a method on
   a Rust userdata, is `function [0x55d0]`, without parentheses, so that it does not claim to take
   nothing. A function whose debug information was stripped is `function (?, ?, ...) [0x55d0]`. A
   function with a string form of its own keeps it. A function used as a key reads as `tostring`
-  gives it, yellow with the rest of the key. `tostring` is unchanged.
+  gives it, plain with the rest of the key. `tostring` is unchanged.
 - **`ansi` is a core module.** The core registers it in every runtime, whatever the profile and
   whatever features the build has, by the path any lazy host module takes, so it carries no
   privilege an embedder's own module lacks. Its source is `src/lua/ansi.lua`. It is no longer a stdlib

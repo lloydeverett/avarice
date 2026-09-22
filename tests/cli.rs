@@ -563,10 +563,7 @@ mod colour {
     fn a_printed_table_is_highlighted_when_colour_is_forced() {
         let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print({ "x" })"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
-        assert_eq!(
-            stdout_of(&output),
-            "{\n  \x1b[32m\"x\"\x1b[0m\x1b[36m,\x1b[0m\n}\n"
-        );
+        assert_eq!(stdout_of(&output), "{\n  \x1b[32m\"x\"\x1b[0m,\n}\n");
     }
 
     #[test]
