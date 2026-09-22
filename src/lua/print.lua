@@ -21,7 +21,8 @@ local write, parameters, ansi = ...
 
 -- Kept in locals so that a script redefining a global later does not change how `print` works,
 -- which is also true of stock `print`.
-local tostring, type, select, rawget, next = tostring, type, select, rawget, next
+local tostring, type, select, rawget, next, getmetatable =
+  tostring, type, select, rawget, next, getmetatable
 local string, table = string, table
 
 local rep, gsub, find = string.rep, string.gsub, string.find
@@ -126,6 +127,24 @@ local function key_less(a, b)
   return tostring(a) < tostring(b)
 end
 
+-- What a table's `__index` is, as a hint rather than a render: `<__index: table>` or
+-- `<__index: function>` when the metatable has one, so a table backed by methods (`dirs.app`'s
+-- `App`, say) shows that there is more to it without printing the methods themselves, which
+-- would mix behaviour into what is otherwise a view of data. `getmetatable`, not raw metatable
+-- access, so a protected metatable (one with `__metatable` set) is respected: there is no way to
+-- learn it has an `__index` either. `nil` when there is nothing to show.
+local function index_marker(value)
+  local mt = getmetatable(value)
+  if type(mt) ~= "table" then
+    return nil
+  end
+  local kind = type(rawget(mt, "__index"))
+  if kind == "table" or kind == "function" then
+    return paint(DIM, "<__index: " .. kind .. ">")
+  end
+  return nil
+end
+
 -- Appends the text of a value found inside a table to `out`. `ancestors` holds the tables between
 -- here and the top, so that a table that contains itself is marked rather than followed.
 local function render(value, depth, ancestors, out)
@@ -155,8 +174,9 @@ local function render(value, depth, ancestors, out)
       keys[count] = key
     end
   end
+  local marker = index_marker(value)
   if length == 0 and count == 0 then
-    out[#out + 1] = "{}"
+    out[#out + 1] = marker and ("{ " .. marker .. " }") or "{}"
     return
   end
   sort(keys, key_less)
@@ -174,6 +194,9 @@ local function render(value, depth, ancestors, out)
     out[#out + 1] = inner .. key_text(key) .. " = "
     render(rawget(value, key), depth + 1, ancestors, out)
     out[#out + 1] = ",\n"
+  end
+  if marker then
+    out[#out + 1] = inner .. marker .. ",\n"
   end
   out[#out + 1] = rep(INDENT, depth) .. "}"
   ancestors[value] = nil

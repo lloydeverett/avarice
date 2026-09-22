@@ -147,3 +147,11 @@ they differ, it wins.
   gone, and `RuntimeBuilder::build` refuses such a runtime instead.
 
 The 30 000-deep test, the cycle marking, the key order and every limit above are unchanged.
+
+## Amendment, 2026-09-22: an `__index` marker joins the cycle marker
+
+[ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md) is amended again, on the same date:
+a table's printed form also marks whether its metatable has an `__index`, dim like `<cycle: …>`,
+without running or expanding it — see that ADR's amendment for the palette change. The raw-access
+rule above is unchanged: reading whether `__index` is set, and whether it is a table or a function,
+uses `getmetatable` and `rawget`, never the metamethod itself.

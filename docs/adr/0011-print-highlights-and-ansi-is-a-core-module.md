@@ -129,3 +129,20 @@ catchable error and not an abort, and its test stays.
 
 **Two evaluations of `ansi.lua` per runtime that requires it**: one at build for `print`, and one on
 the first `require`, which is lazy.
+
+## Amendment, 2026-09-22: an `__index` marker joins the palette
+
+`print` shows `<__index: table>` or `<__index: function>`, dim like `<cycle: …>`, as a pseudo-entry
+inside a table's own printed form when its metatable has a non-nil `__index` — not what `__index`
+holds, only whether it is a table or a function. The palette gains a row: `<__index: …>` is dim,
+alongside `<cycle: …>`.
+
+This exists so that a table whose behaviour lives behind a metatable — an OOP-style module such as
+`dirs.app`'s `App` — shows there is more to it than its own fields, without listing methods as
+though they were data, which would mix behaviour into what `print` otherwise shows as a view of
+data.
+
+It is shown, not run: the check reads `getmetatable(value)` and `rawget` on the result, so
+`__index` is never invoked, and a protected metatable (`__metatable`) hides this the same way it
+already hides everything else about a table's real metatable — nothing is shown for it either. An
+empty table whose metatable has `__index` now prints `{ <__index: table> }` rather than `{}`.

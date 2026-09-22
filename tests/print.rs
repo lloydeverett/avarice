@@ -400,7 +400,46 @@ fn printing_does_not_run_index_or_pairs_metamethods() {
         print(guarded)
         "#,
     );
-    assert_eq!(text, "{\n  real = 1,\n}\n");
+    assert_eq!(text, "{\n  real = 1,\n  <__index: function>,\n}\n");
+}
+
+#[test]
+fn a_table_backed_by_methods_hints_at_its_index_without_expanding_it() {
+    let text = printed(
+        Profile::Sandbox,
+        r#"
+        local Class = {}
+        Class.__index = Class
+        function Class:method() end
+        print(setmetatable({ x = 1 }, Class))
+        print(setmetatable({}, Class))
+        print(setmetatable({}, { __index = function() end }))
+        print(setmetatable({}, {}))
+        print({})
+        "#,
+    );
+    assert_eq!(
+        text,
+        "{\n  x = 1,\n  <__index: table>,\n}\n\
+         { <__index: table> }\n\
+         { <__index: function> }\n\
+         {}\n\
+         {}\n"
+    );
+}
+
+#[test]
+fn a_protected_metatables_index_marker_is_not_shown_either() {
+    // `__metatable` hides the real metatable from `getmetatable`, same as it hides `__tostring`
+    // above: there is no way to learn it has an `__index` without seeing behind the lock.
+    let text = printed(
+        Profile::Sandbox,
+        r#"
+        local guarded = setmetatable({ x = 1 }, { __metatable = "locked", __index = {} })
+        print(guarded)
+        "#,
+    );
+    assert_eq!(text, "{\n  x = 1,\n}\n");
 }
 
 // -- Limits ------------------------------------------------------------------------------------
@@ -747,6 +786,15 @@ fn a_cycle_marker_is_dim_as_a_whole() {
     let marker = &text[start..];
     let end = marker.find(RESET).unwrap();
     assert!(marker[..end].ends_with('>'), "{text:?}");
+}
+
+#[test]
+fn an_index_marker_is_dim_as_a_whole() {
+    let text = raw(
+        Profile::Sandbox,
+        "print(setmetatable({}, { __index = {} }))",
+    );
+    assert_eq!(text, format!("{{ {DIM}<__index: table>{RESET} }}\n"));
 }
 
 #[test]
