@@ -13,7 +13,7 @@ use avarice_rt::{Profile, Runtime, StdModules};
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
-const NAMES: [&str; 8] = [
+const NAMES: [&str; 9] = [
     "http",
     "fs",
     "crypto",
@@ -22,6 +22,7 @@ const NAMES: [&str; 8] = [
     "utils",
     "stores",
     "validation",
+    "dirs",
 ];
 
 /// The names of the pure modules that are compiled in: what a sandbox registers (ADR 0007).
@@ -805,4 +806,117 @@ fn printing_a_task_handle_that_is_being_awaited_does_not_raise() {
          utils.spawn_timeout(function() print(slow) end, 20):await()",
     );
     assert_eq!(printed, "TaskHandler(awaiting)\n");
+}
+
+// -- dirs ----------------------------------------------------------------------------------
+//
+// These tests never rely on `$XDG_CONFIG_HOME` or similar being set or unset one way rather than
+// another: the test binary runs tests in parallel, in one process, and mutating the environment
+// mid-run is exactly the unsoundness `utils.rs`'s removed `setenv` was cut for (see its header).
+// What is asserted instead is what holds regardless of the host's environment: that a path names
+// the application asked for, that different directory kinds and different applications resolve to
+// different places, and that resolving one never creates it.
+
+#[cfg(feature = "stdlib-dirs")]
+#[test]
+fn config_data_and_cache_end_with_the_app_name_and_differ_from_each_other() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let (config, data, cache): (String, String, String) = rt
+        .block_on(rt.eval(
+            r#"
+            local app = require("dirs").app("avarice-rt-test-app", "example.com", "Acme")
+            return app:config(), app:data(), app:cache()
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    for path in [&config, &data, &cache] {
+        assert!(
+            path.ends_with("avarice-rt-test-app"),
+            "{path} does not end with the app name"
+        );
+    }
+    assert_ne!(config, data);
+    assert_ne!(config, cache);
+    assert_ne!(data, cache);
+}
+
+#[cfg(feature = "stdlib-dirs")]
+#[test]
+fn two_different_apps_resolve_to_different_config_dirs() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let (a, b): (String, String) = rt
+        .block_on(rt.eval(
+            r#"
+            local dirs = require("dirs")
+            return dirs.app("avarice-rt-test-app-a", "example.com", "Acme"):config(),
+                   dirs.app("avarice-rt-test-app-b", "example.com", "Acme"):config()
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert_ne!(a, b);
+}
+
+#[cfg(feature = "stdlib-dirs")]
+#[test]
+fn state_and_runtime_may_be_nil_but_are_strings_when_present() {
+    // Neither is guaranteed by every strategy (ADR 0014), so this only checks the type, not
+    // presence.
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let (state_ok, runtime_ok): (bool, bool) = rt
+        .block_on(rt.eval(
+            r#"
+            local app = require("dirs").app("avarice-rt-test-app", "example.com", "Acme")
+            local state = app:state()
+            local runtime = app:runtime()
+            return state == nil or type(state) == "string",
+                   runtime == nil or type(runtime) == "string"
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(state_ok, "state() was neither nil nor a string");
+    assert!(runtime_ok, "runtime() was neither nil nor a string");
+}
+
+#[cfg(feature = "stdlib-dirs")]
+#[test]
+fn app_raises_when_author_or_top_level_domain_is_missing() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let message: String = rt
+        .block_on(rt.eval(
+            r#"
+            local ok, err = pcall(function()
+              return require("dirs").app("avarice-rt-test-app"):config()
+            end)
+            assert(not ok)
+            return tostring(err)
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(!message.is_empty());
+}
+
+#[cfg(all(feature = "stdlib-dirs", feature = "stdlib-fs"))]
+#[test]
+fn resolving_a_directory_never_creates_it() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let (config, existed_before): (String, bool) = rt
+        .block_on(rt.eval(
+            r#"
+            local fs = require("fs")
+            local config = require("dirs")
+                .app("avarice-rt-test-app-should-not-exist", "example.com", "Acme")
+                :config()
+            return config, fs.exists(config)
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(
+        !existed_before,
+        "{config} already existed; pick a name this test does not collide with"
+    );
 }

@@ -35,6 +35,8 @@
 //     `fs`'s). Added a comment saying so.
 //   - Nothing Astra does is altered by any of these: they are `#[cfg]`, `#[cfg_attr]` and
 //     `#[allow]` attributes, and in a build with every feature on the file is as it was.
+//   - Added `pub mod dirs;`, behind `stdlib-dirs`, for a module that owes Astra nothing (ADR 0014).
+//     Nothing Astra does is altered: this is an addition, like the module declarations above it.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
@@ -49,6 +51,9 @@ pub mod astra_serde;
 pub mod crypto;
 #[cfg(feature = "stdlib-datetime")]
 pub mod datetime;
+// Original to avarice-rt, not Astra's; see its own header and ADR 0014.
+#[cfg(feature = "stdlib-dirs")]
+pub mod dirs;
 #[cfg(feature = "stdlib-fs")]
 pub mod file_system;
 #[cfg(feature = "stdlib-http")]

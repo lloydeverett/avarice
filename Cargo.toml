@@ -45,6 +45,7 @@ stdlib = [
   "stdlib-utils",
   "stdlib-stores",
   "stdlib-validation",
+  "stdlib-dirs",
 ]
 # `net` is the tokio driver reqwest needs, so it follows `http`.
 stdlib-http = [
@@ -63,6 +64,8 @@ stdlib-utils = ["_astra_utils"]
 # Astra's `stores` has no Rust half, so there is nothing for it to pull in.
 stdlib-stores = []
 stdlib-validation = ["_astra_utils"]
+# `dirs` is original to avarice-rt, not derived from Astra (ADR 0014).
+stdlib-dirs = ["dep:etcetera"]
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
 # another's Rust takes the whole file, and these compile the file without adding the module: `http`
@@ -155,3 +158,7 @@ futures = { version = "0.3.32", optional = true }
 tracing = { version = "0.1.44", optional = true }
 regex = { version = "1.12.4", optional = true }
 pastey = { version = "0.2.3", optional = true }
+
+# `dirs`'s own dependency. Unlike its neighbours above, this one is not Astra's: `dirs` is original
+# to avarice-rt (ADR 0014), and `etcetera` is the crate that computes its paths.
+etcetera = { version = "0.11", optional = true }
