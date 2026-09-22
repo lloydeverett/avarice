@@ -28,6 +28,7 @@ cli = [
   "dep:anstyle-parse",
   "dep:anstyle-query",
   "dep:clap",
+  "dep:nu-ansi-term",
   "dep:reedline",
   "tokio/signal",
 ]
@@ -108,6 +109,9 @@ anstyle-parse = { version = "1", optional = true }
 anstyle-query = { version = "1", optional = true }
 clap = { version = "4.6", features = ["derive"], optional = true }
 reedline = { version = "0.51", optional = true }
+# The prompt's highlighter names `Style` directly (ADR 0013); reedline re-exports this crate's
+# `Color` but not `Style`. Pinned to the version reedline 0.51 already resolves to.
+nu-ansi-term = { version = "0.50.3", optional = true }
 
 # The stdlib's own dependencies (src/stdlib), all optional, behind the feature that needs them.
 # They are Astra's, at the version requirement Astra's Cargo.toml gives, because the sources are

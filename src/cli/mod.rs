@@ -1,6 +1,7 @@
 //! `avrt`: the command-line interpreter.
 
 mod escape;
+mod highlight;
 mod interrupt;
 mod output;
 mod repl;

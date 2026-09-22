@@ -173,6 +173,12 @@ so what reaches the **write sink** carries it. Whether it reaches a reader is th
 destination's concern: `avrt` removes it for a destination that cannot take it,
 and an **embedder**'s sink receives it as written.
 
+## Prompt highlighting
+
+The colour `avrt`'s REPL gives what is typed, before it is submitted: keywords, strings and
+comments. Distinct from **Highlighting**, which is `print`'s, and applies to a value once it is
+shown, not to the source a reader is still typing.
+
 ## Embedder
 
 A Rust program that depends on avarice-rt as a library to run Lua. `avrt` is

@@ -97,6 +97,7 @@ dependencies = [
  "futures",
  "glob",
  "mlua",
+ "nu-ansi-term",
  "pastey",
  "quick-xml",
  "reedline",

@@ -2,15 +2,17 @@
 
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use avarice_rt::mlua::{self, Function, MultiValue};
 use avarice_rt::{Error, Runtime};
 use reedline::{
     FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
-    Reedline, Signal, SimpleMatchHighlighter,
+    Reedline, Signal,
 };
 
 use super::escape::takes_colour;
+use super::highlight::LuaHighlighter;
 use super::output::{eprintln, println};
 use super::{CliError, run_and_settle_tasks};
 
@@ -62,11 +64,14 @@ impl Prompt for LuaPrompt {
 pub fn run(rt: &Runtime) -> Result<(), Error> {
     // Reedline paints to standard error, so that is the stream whose colour it follows. It reads
     // no environment variable itself, and its default highlighter colours typed text, so both are
-    // set explicitly (ADR 0009). An empty `SimpleMatchHighlighter` leaves the text unstyled.
+    // set explicitly (ADR 0009). `buffer` holds the lines of an unfinished multi-line entry, and
+    // is shared with the highlighter (ADR 0013) so a `--[[` or `[[` opened on an earlier line is
+    // still recognised on the line being typed now.
     let colour = takes_colour(&std::io::stderr());
+    let buffer = Arc::new(Mutex::new(String::new()));
     let mut editor = Reedline::create()
         .with_ansi_colors(colour)
-        .with_highlighter(Box::new(SimpleMatchHighlighter::default()));
+        .with_highlighter(Box::new(LuaHighlighter::new(Arc::clone(&buffer))));
     if let Some(path) = history_path() {
         match FileBackedHistory::with_file(HISTORY_CAPACITY, path) {
             Ok(history) => editor = editor.with_history(Box::new(history)),
@@ -80,35 +85,37 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
         rt.profile()
     );
 
-    let mut buffer = String::new();
     loop {
-        let prompt: &dyn Prompt = if buffer.is_empty() {
+        let prompt: &dyn Prompt = if buffer.lock().unwrap().is_empty() {
             &FRESH
         } else {
             &CONTINUED
         };
         match editor.read_line(prompt) {
             Ok(Signal::Success(line)) => {
-                buffer.push_str(&line);
-                match compile(rt, &buffer) {
+                buffer.lock().unwrap().push_str(&line);
+                // Cloned out rather than matched on directly: a guard borrowed in a match's
+                // scrutinee stays alive for the whole match, and an arm below locks it again.
+                let entry = buffer.lock().unwrap().clone();
+                match compile(rt, &entry) {
                     Ok(chunk) => {
-                        buffer.clear();
+                        buffer.lock().unwrap().clear();
                         // The tasks an entry leaves are finished, or given up, before the next
                         // prompt, so the line is read with nothing else running.
                         if let Err(e) = run_and_settle_tasks(rt, evaluate(rt, chunk)) {
                             eprintln!("avrt: {e}");
                         }
                     }
-                    Err(Incomplete) => buffer.push('\n'),
+                    Err(Incomplete) => buffer.lock().unwrap().push('\n'),
                     Err(Failed(message)) => {
-                        buffer.clear();
+                        buffer.lock().unwrap().clear();
                         eprintln!("avrt: {message}");
                     }
                 }
             }
             // Ctrl-C at the prompt abandons whatever has been typed so far, including a
             // half-finished multi-line entry.
-            Ok(Signal::CtrlC) => buffer.clear(),
+            Ok(Signal::CtrlC) => buffer.lock().unwrap().clear(),
             Ok(Signal::CtrlD) => break,
             Ok(_) => {}
             Err(e) => {
