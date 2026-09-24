@@ -695,3 +695,25 @@ mod colour {
         assert_eq!(stderr_of(&output), format!("{RED}red{RESET}\n"));
     }
 }
+
+#[cfg(all(unix, feature = "stdlib-utils"))]
+#[test]
+fn env_get_gives_a_value_that_is_not_utf8_exactly() {
+    // Set on `avrt`'s own environment, since changing the test process's is unsound while other
+    // tests run on other threads.
+    use std::os::unix::ffi::OsStrExt;
+    let output = Command::new(AVRT)
+        .args([
+            "-e",
+            "print(require('utils').env.get('AVARICE_RT_TEST_BYTES') == 'caf\\233')",
+        ])
+        .env(
+            "AVARICE_RT_TEST_BYTES",
+            std::ffi::OsStr::from_bytes(b"caf\xe9"),
+        )
+        .stdin(Stdio::null())
+        .output()
+        .expect("avrt should run");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(stdout_of(&output), "true\n");
+}

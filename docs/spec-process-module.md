@@ -192,6 +192,9 @@ string holding exactly those bytes.
   content type is unchanged. Byte tables are accepted as before.
 - `crypto.hash`, `crypto.base64.encode` and its URL-safe twin accept any bytes; both decoders
   return exactly the decoded bytes.
+- An HTTP response's header values, through `execute` and `execute_streaming` alike, and
+  `utils.env.get`'s value, reach Lua as their exact bytes. On Windows a variable whose value is not
+  valid Unicode is an error, since the environment there is UTF-16.
 - Rust-side, this means taking Lua strings as byte strings rather than as `String`, and returning
   byte slices as Lua strings rather than as vectors or lossily converted text.
 - Every changed Astra-derived file records the change under `Changes from the original:`.

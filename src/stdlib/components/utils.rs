@@ -22,6 +22,12 @@
 //     task that has run to its end and not been awaited, `TaskHandler(awaited or aborted)`,
 //     `TaskHandler(awaiting)` while an `await` holds the handle, and `AstraRegex(/<pattern>/)`.
 //     Nothing Astra does is altered: these are additions.
+//   - Made `getenv` give a value that is not UTF-8 as its exact bytes (ADR 0015), where Astra's
+//     `std::env::var` failed on it and `getenv` gave `nil`, as if the variable were unset. It calls
+//     `std::env::var_os` in place of `std::env::var`, and a new private function, `env_value`,
+//     makes the Lua string in place of `lua.to_value_with`: on Unix from the value's bytes, and
+//     elsewhere, where the environment is UTF-16 and a value has no bytes of its own, from the
+//     value if it is valid Unicode, raising an error if not. This alters what Astra does.
 //   - Everything else, including `tokio::spawn` for tasks, is unchanged.
 
 use mlua::{AnyUserData, LuaSerdeExt, MetaMethod, UserData};
@@ -43,18 +49,33 @@ pub fn getenv(lua: &mlua::Lua) -> mlua::Result<()> {
     lua.globals().set(
         "astra_internal__getenv",
         lua.create_function(|lua, key: String| {
-            if let Ok(value) = std::env::var(key) {
-                lua.to_value_with(
-                    &value,
-                    mlua::serde::SerializeOptions::new()
-                        .serialize_none_to_null(false)
-                        .serialize_unit_to_null(false),
-                )
+            if let Some(value) = std::env::var_os(key) {
+                env_value(lua, value)
             } else {
                 Ok(mlua::Value::Nil)
             }
         })?,
     )
+}
+
+/// An environment variable's value as a Lua string of its exact bytes. Windows keeps the
+/// environment as UTF-16, which has no such bytes, so there a value that is not valid Unicode is
+/// an error rather than a guess.
+fn env_value(lua: &mlua::Lua, value: std::ffi::OsString) -> mlua::Result<mlua::Value> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        lua.create_string(value.as_bytes()).map(mlua::Value::String)
+    }
+    #[cfg(not(unix))]
+    {
+        match value.into_string() {
+            Ok(value) => lua.create_string(value).map(mlua::Value::String),
+            Err(_) => Err(mlua::Error::runtime(
+                "the environment variable's value is not valid Unicode",
+            )),
+        }
+    }
 }
 
 pub fn uuid_v4(lua: &mlua::Lua) -> mlua::Result<()> {

@@ -9,6 +9,12 @@
 //     corrupted binary data. `HTTPClientRequestBodyTypes::String` holds a `Vec<u8>` in place of a
 //     `String`, and `body_parser` fills it with `value.as_bytes().to_vec()`. This alters what Astra
 //     does. Its `text/plain` default content type is unchanged.
+//   - Made `headers_parser` give each response header value as its exact bytes (ADR 0015), where
+//     Astra gave `String::from_utf8_lossy` of them, which replaced bytes that are not UTF-8, such
+//     as Latin-1 text, which HTTP allows in a value. It returns a `HashMap<String, mlua::BString>`
+//     in place of a `HashMap<String, String>`, and its `map` and `collect` changed to match; its
+//     signature, now longer than a line, is wrapped as `rustfmt` would. Header names are ASCII by
+//     the protocol, and stay `String`. This alters what Astra does.
 //   - Everything else is unchanged.
 
 use crate::components::{AstraBuffer, astra_serde::sanetize_lua_input};
@@ -191,16 +197,13 @@ impl HTTPClientRequest {
         }
     }
 
-    pub fn headers_parser(header_map: &reqwest::header::HeaderMap) -> HashMap<String, String> {
+    pub fn headers_parser(
+        header_map: &reqwest::header::HeaderMap,
+    ) -> HashMap<String, mlua::BString> {
         header_map
             .iter()
-            .map(|(key, value)| {
-                (
-                    key.to_string(),
-                    String::from_utf8_lossy(value.as_bytes()).to_string(),
-                )
-            })
-            .collect::<std::collections::HashMap<String, String>>()
+            .map(|(key, value)| (key.to_string(), value.as_bytes().into()))
+            .collect::<std::collections::HashMap<String, mlua::BString>>()
     }
 
     pub async fn response_to_http_client_response(

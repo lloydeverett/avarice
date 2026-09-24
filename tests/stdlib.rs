@@ -687,9 +687,9 @@ fn a_regex_prints_its_pattern() {
     assert_eq!(printed, "AstraRegex(/(\\d+)-x/)\n");
 }
 
-#[cfg(all(feature = "stdlib-fs", feature = "stdlib-http"))]
+#[cfg(feature = "stdlib-http")]
 /// Serves `response` once, on a port of its own, and returns the URL to ask for.
-fn serve_once(response: &'static str) -> String {
+fn serve_once(response: &'static [u8]) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/where", listener.local_addr().unwrap());
@@ -704,7 +704,7 @@ fn serve_once(response: &'static str) -> String {
             }
             seen.extend_from_slice(&chunk[..n]);
         }
-        stream.write_all(response.as_bytes()).unwrap();
+        stream.write_all(response).unwrap();
     });
     url
 }
@@ -750,7 +750,7 @@ fn an_http_request_does_not_print_its_headers_or_body() {
 #[test]
 fn an_http_response_prints_its_status_and_url_and_its_body_prints_its_length() {
     let url = serve_once(
-        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nSet-Cookie: session=SECRET\r\nConnection: close\r\n\r\nhello",
+        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nSet-Cookie: session=SECRET\r\nConnection: close\r\n\r\nhello",
     );
     let dir = TempDir::new();
     let printed = printed_in_fs(
@@ -1128,4 +1128,41 @@ fn a_request_body_given_as_a_table_of_byte_values_is_still_sent() {
          return true"
     )));
     assert!(request.recv().unwrap().ends_with(&[255, 0, 1]));
+}
+
+#[cfg(feature = "stdlib-http")]
+/// A response whose `X-Bytes` header value is `caf` and then E9, which is Latin-1 for `é` and not
+/// UTF-8. HTTP allows such bytes in a header value.
+const LATIN1_HEADER_RESPONSE: &[u8] =
+    b"HTTP/1.1 200 OK\r\nX-Bytes: caf\xe9\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn a_response_header_value_that_is_not_utf8_reaches_lua_exactly() {
+    let url = serve_once(LATIN1_HEADER_RESPONSE);
+    assert!(holds(&format!(
+        "return require('http').request('{url}'):execute():headers()['x-bytes'] == 'caf\\233'"
+    )));
+}
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn a_streamed_response_header_value_that_is_not_utf8_reaches_lua_exactly() {
+    let url = serve_once(LATIN1_HEADER_RESPONSE);
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    rt.block_on(rt.exec(
+        format!(
+            "require('http').request('{url}'):execute_streaming(function(response)
+               got = got or response:headers()['x-bytes']
+             end)"
+        ),
+        "=test",
+    ))
+    .unwrap();
+    // The callback runs on a task of its own, after `execute_streaming` returns.
+    rt.block_on(rt.wait_for_tasks()).unwrap();
+    let exact: bool = rt
+        .block_on(rt.eval("return got == 'caf\\233'", "=test"))
+        .unwrap();
+    assert!(exact);
 }

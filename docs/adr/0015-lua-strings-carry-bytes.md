@@ -29,6 +29,9 @@ Astra treats bytes as text or as tables of numbers, and both lose. Before this d
 - `crypto.hash` and `crypto.base64.encode` refused any input that was not UTF-8, and
   `crypto.base64.decode` replaced invalid UTF-8 in its output, so `/wAB` came back as
   `EF BF BD 00 01` and not as `FF 00 01`.
+- An HTTP response's header values replaced bytes that are not UTF-8, such as Latin-1 text, which
+  HTTP allows; through `execute_streaming`, such a value became `""` altogether.
+- `utils.env.get` gave `nil` for a variable whose value was not UTF-8, as if it were unset.
 
 None of this could be fixed by adding: a second, correct method beside `bytes()` would leave the
 wrong one where every reader looks first.
@@ -43,6 +46,9 @@ wrong one where every reader looks first.
 - **`fs.read_file_bytes` returns a string.** It differs from `fs.read_file` only in that
   `read_file` fails on a file that is not UTF-8.
 - **`fs.write_file`, `set_body`, `crypto.hash` and `crypto.base64` take and give exact bytes.**
+- **An HTTP response's header values, and `utils.env.get`, give exact bytes.** On Windows, where
+  the environment is UTF-16 and has no bytes of its own, a value that is not valid Unicode is an
+  error. Names, of headers and of variables, stay text: header names are ASCII by the protocol.
 - **A table of byte values is still accepted as input** where Astra accepted one, since refusing it
   would break callers and gain nothing.
 
