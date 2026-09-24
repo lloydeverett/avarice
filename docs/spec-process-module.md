@@ -195,8 +195,11 @@ string holding exactly those bytes.
 - An HTTP response's header values, through `execute` and `execute_streaming` alike, and
   `utils.env.get`'s value, reach Lua as their exact bytes. Outside Unix a variable whose value is
   not valid Unicode is an error naming it, since the environment there is UTF-16. What a script
-  writes itself stays text: a request's header names and values, and a variable's name, must be
-  UTF-8.
+  writes itself stays text: a request's URL, header names and values, and a variable's name, must
+  be UTF-8, in every form they can be given. A file to upload is found by its path's exact bytes
+  on Unix, and outside Unix a path that is not valid Unicode is an error; a file whose own name is
+  not UTF-8 is an error, since the name is sent as text. A file to upload that cannot be read is
+  an error when the request is sent, rather than left out of it (ADR 0017).
 - Rust-side, this means taking Lua strings as byte strings rather than as `String`, and returning
   byte slices as Lua strings rather than as vectors or lossily converted text.
 - Every changed Astra-derived file records the change under `Changes from the original:`.

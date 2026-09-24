@@ -33,6 +33,11 @@ Astra treats bytes as text or as tables of numbers, and both lose. Before this d
   HTTP allows. Through `execute_streaming`, a value became `""` altogether if it held anything but
   visible ASCII, even valid UTF-8 such as `café`.
 - `utils.env.get` gave `nil` for a variable whose value was not UTF-8, as if it were unset.
+- `http.request` given a URL as a bare string replaced invalid UTF-8 in it, and so requested a
+  different URL, though the same URL in a table was an error. A file to upload whose path was not
+  UTF-8 was reported missing if the path was a string, and, in a `{ name, path }` table, left out
+  of the request without a word ([ADR 0017](0017-the-stdlib-raises-rather-than-leaving-input-out.md)
+  is about that).
 
 None of this could be fixed by adding: a second, correct method beside `bytes()` would leave the
 wrong one where every reader looks first.
@@ -56,7 +61,13 @@ wrong one where every reader looks first.
   the name it gives `utils.env.get`.** Each must be UTF-8, and one that is not is an error, before
   anything is sent. [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-5.5) asks new header
   fields to keep to ASCII, and a script has no reason to send anything else. A response's header
-  names stay text too: they are ASCII by the protocol.
+  names stay text too: they are ASCII by the protocol. A request's URL is text in the same way,
+  given as a string or in a table.
+- **A path to a file is the operating system's name for it**, so a file to upload is found by the
+  exact bytes of its path on Unix, where a name is bytes, and elsewhere a path that is not valid
+  Unicode is an error, as `utils.env.get`'s values are. The file's own name is sent in the request
+  as text, and reqwest can send only UTF-8 there, so a file whose own name is not UTF-8 is an
+  error rather than sent under a replaced name.
 - **A table of byte values is still accepted as input** where Astra accepted one, since refusing it
   would break callers and gain nothing.
 

@@ -9,7 +9,7 @@ mod common;
 #[cfg(feature = "stdlib-crypto")]
 use avarice_rt::FsStore;
 use avarice_rt::{Profile, Runtime, StdModules};
-#[cfg(any(feature = "stdlib-crypto", feature = "stdlib-fs"))]
+#[cfg(any(feature = "stdlib-crypto", feature = "stdlib-fs", feature = "stdlib-http"))]
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
@@ -1166,4 +1166,133 @@ fn a_streamed_response_header_value_that_is_not_utf8_reaches_lua_exactly() {
         .block_on(rt.eval("return got == 'caf\\233'", "=test"))
         .unwrap();
     assert!(exact);
+}
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn a_url_that_is_not_utf8_is_an_error_whether_given_as_a_string_or_in_a_table() {
+    // A URL is text the script writes; neither form may quietly replace what is not UTF-8.
+    assert!(holds(
+        "local http = require('http')
+         local url = 'http://example.invalid/caf\\233'
+         return not pcall(http.request, url) and not pcall(http.request, { url = url })"
+    ));
+}
+
+#[cfg(feature = "stdlib-http")]
+/// Sends a request with `set_file(<form>)`, `form` being Lua source, to the echo server, and hands
+/// back the request the server received, or the error the send raised.
+fn upload(form: &str) -> Result<Vec<u8>, String> {
+    let (url, request) = serve_echo_once();
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let error: Option<String> = rt
+        .block_on(rt.eval(
+            format!(
+                "local ok, err = pcall(function()
+                   require('http').request('{url}'):set_method('POST'):set_file({form}):execute()
+                 end)
+                 if not ok then return tostring(err) end"
+            ),
+            "=test",
+        ))
+        .unwrap();
+    match error {
+        Some(error) => Err(error),
+        None => Ok(request.recv().unwrap()),
+    }
+}
+
+#[cfg(feature = "stdlib-http")]
+/// Whether the request the echo server received carries `contents`.
+fn carries(request: &[u8], contents: &[u8]) -> bool {
+    request.windows(contents.len()).any(|w| w == contents)
+}
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn set_file_uploads_each_entry_of_a_table_or_a_list() {
+    let dir = TempDir::new();
+    let one = dir.write("one.txt", "FIRST-FILE");
+    let two = dir.write("two.txt", "SECOND-FILE");
+    for (form, expected) in [
+        (format!("{one:?}"), &["FIRST-FILE"][..]),
+        (format!("{{ name = 'f', path = {one:?} }}"), &["FIRST-FILE"][..]),
+        (
+            format!("{{ {{ name = 'f', path = {one:?} }}, {{ name = 'g', path = {two:?} }} }}"),
+            &["FIRST-FILE", "SECOND-FILE"][..],
+        ),
+    ] {
+        let request = upload(&form).unwrap();
+        for contents in expected {
+            assert!(carries(&request, contents.as_bytes()), "{form}: no {contents}");
+        }
+    }
+}
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn a_file_to_upload_that_cannot_be_read_is_an_error_when_the_request_is_sent() {
+    // ADR 0017: Astra sent the request without such an entry, and it succeeded.
+    let dir = TempDir::new();
+    let good = dir.write("good.txt", "GOOD-FILE");
+    for (form, message) in [
+        ("{ name = 'f' }".to_string(), "needs a string `path`"),
+        (format!("{{ path = {good:?} }}"), "needs a string `name`"),
+        (
+            format!("{{ {{ name = 'f', path = {good:?} }}, {{ name = 'g' }} }}"),
+            "needs a string `path`",
+        ),
+        (
+            format!("{{ {{ name = 'f', path = {good:?} }}, 'not an entry' }}"),
+            "something other than a table",
+        ),
+        // A `name` makes a table one entry, so a list must not have one.
+        (
+            format!("{{ name = 'x', {{ name = 'f', path = {good:?} }} }}"),
+            "needs a string `path`",
+        ),
+        ("5".to_string(), "a path, a `{ name, path }` table, or a list of them"),
+    ] {
+        match upload(&form) {
+            Ok(_) => panic!("{form} was sent without the file"),
+            Err(error) => assert!(error.contains(message), "{form}: {error}"),
+        }
+    }
+}
+
+#[cfg(all(unix, feature = "stdlib-http"))]
+#[test]
+fn a_file_in_a_directory_whose_name_is_not_utf8_is_found_by_its_exact_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new();
+    // `caf` and then E9: Latin-1 for `café`, which Linux allows in a name.
+    let latin1 = dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    std::fs::create_dir(&latin1).unwrap();
+    std::fs::write(latin1.join("in.txt"), "IN-A-LATIN1-DIRECTORY").unwrap();
+    let path = format!("{:?} .. '/caf\\233/in.txt'", dir.path());
+    for form in [path.clone(), format!("{{ name = 'f', path = {path} }}")] {
+        let request = upload(&form).unwrap();
+        assert!(carries(&request, b"IN-A-LATIN1-DIRECTORY"), "{form}");
+    }
+}
+
+#[cfg(all(unix, feature = "stdlib-http"))]
+#[test]
+fn a_file_whose_own_name_is_not_utf8_is_an_error_since_its_name_is_sent_as_text() {
+    // The name goes into the request as text, and reqwest can send only UTF-8 there, so it would
+    // otherwise be sent with U+FFFD in place of what is not UTF-8.
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new();
+    std::fs::write(
+        dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt")),
+        "LATIN1-NAMED-FILE",
+    )
+    .unwrap();
+    let path = format!("{:?} .. '/caf\\233.txt'", dir.path());
+    for form in [path.clone(), format!("{{ name = 'f', path = {path} }}")] {
+        match upload(&form) {
+            Ok(_) => panic!("{form} was sent"),
+            Err(error) => assert!(error.contains("is not UTF-8"), "{form}: {error}"),
+        }
+    }
 }

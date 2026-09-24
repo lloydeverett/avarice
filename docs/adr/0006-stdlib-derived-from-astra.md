@@ -216,4 +216,6 @@ of how a file differs from Astra's.
 
 The first is [ADR 0015](0015-lua-strings-carry-bytes.md): Astra's buffers, `fs`, `http` and
 `crypto` turned bytes into tables of numbers or replaced invalid UTF-8, and the stdlib now passes
-bytes through exactly.
+bytes through exactly. The second is
+[ADR 0017](0017-the-stdlib-raises-rather-than-leaving-input-out.md): `http` sent a request without
+a file to upload that it could not read, and now raises.

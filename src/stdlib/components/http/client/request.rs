@@ -15,10 +15,35 @@
 //     in place of a `HashMap<String, String>`, and its `map` and `collect` changed to match; its
 //     signature, now longer than a line, is wrapped as `rustfmt` would. Header names are ASCII by
 //     the protocol, and stay `String`. This alters what Astra does.
+//   - Made a URL given to `http.request` as a bare string an error if it is not UTF-8, as it
+//     already was in the table form, where Astra took `to_string_lossy()` of it and so quietly
+//     requested a different URL (ADR 0015). The string form's `url` is
+//     `lua.unpack(mlua::Value::String(..))`, the conversion the table form's `details.get("url")`
+//     makes. This alters what Astra does.
+//   - Made the path of a file to upload, given as a string or in a `{ name, path }` table, its
+//     exact bytes on Unix, where a file name is bytes, and elsewhere an error if it is not valid
+//     Unicode (ADR 0015). A file whose own name is not UTF-8 is an error on every platform: the
+//     request carries the name as text, which reqwest can send only as UTF-8, and would otherwise
+//     carry U+FFFD in place of what is not. Astra took `to_string_lossy()` of a string path, so a
+//     file whose path was not UTF-8 was reported missing, and in a table, where `path` was read as
+//     a `String`, such an entry was left out (see the next item). A new private function at the
+//     end of the file, `upload_path`, makes the path and checks the name; the string branch calls
+//     it in place of `PathBuf::from(&path.to_string_lossy())`, and `parse_table` reads `path` as
+//     an `mlua::LuaString` and calls it, collecting a `Vec<(String, PathBuf)>` in place of a
+//     `Vec<(String, String)>`. This alters what Astra does.
+//   - Made a file to upload that cannot be read an error when the request is sent (ADR 0017),
+//     where Astra sent the request without it. Astra read a table as one `{ name, path }` entry
+//     and, if that failed, as a list, whose non-table values `pairs(..).flatten()` skipped and
+//     whose failing entries `let _ = parse_table(..)` ignored; and its `_ => {}` arm ignored a
+//     value that was neither a string nor a table. Now a table with a `name` or `path` key is one
+//     entry, any other table a list, and every error propagates, with `ErrorContext::context`
+//     (added to the `mlua` import) saying which field or entry was wrong; a comment says which
+//     reading is which. `nil` still means no file, in a `mlua::Value::Nil` arm, and any other
+//     value is an error, in a new `_` arm. This alters what Astra does.
 //   - Everything else is unchanged.
 
 use crate::components::{AstraBuffer, astra_serde::sanetize_lua_input};
-use mlua::{ExternalResult, LuaSerdeExt};
+use mlua::{ErrorContext, ExternalResult, LuaSerdeExt};
 use reqwest::{Client, RequestBuilder};
 use std::collections::HashMap;
 
@@ -43,7 +68,7 @@ impl HTTPClientRequest {
     pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
         let function = lua.create_function(|lua, details: mlua::Value| match details {
             mlua::Value::String(details) => Ok(Self {
-                url: details.to_string_lossy(),
+                url: lua.unpack(mlua::Value::String(details))?,
                 method: "GET".to_string(),
                 headers: HashMap::new(),
                 body: None,
@@ -106,11 +131,17 @@ impl HTTPClientRequest {
             let mut files = Vec::new();
 
             fn parse_table(
-                files: &mut Vec<(String, String)>,
+                files: &mut Vec<(String, std::path::PathBuf)>,
                 file_details: &mlua::Table,
             ) -> mlua::Result<()> {
-                let filename = file_details.get::<String>("name")?;
-                let path = file_details.get::<String>("path")?;
+                let filename = file_details
+                    .get::<String>("name")
+                    .context("a file to upload needs a string `name`")?;
+                let path = upload_path(
+                    &file_details
+                        .get::<mlua::LuaString>("path")
+                        .context("a file to upload needs a string `path`")?,
+                )?;
 
                 files.push((filename, path));
 
@@ -119,7 +150,7 @@ impl HTTPClientRequest {
 
             match file_field {
                 mlua::Value::String(path) => {
-                    let path = std::path::PathBuf::from(&path.to_string_lossy());
+                    let path = upload_path(path)?;
                     let path_filename = path.clone();
 
                     let filename = path_filename
@@ -131,11 +162,15 @@ impl HTTPClientRequest {
                     file_form = file_form.file(filename, path).await?;
                 }
                 mlua::Value::Table(file_details) => {
-                    if parse_table(&mut files, file_details).is_err() {
-                        for (_, file_details) in
-                            file_details.pairs::<mlua::Value, mlua::Table>().flatten()
-                        {
-                            let _ = parse_table(&mut files, &file_details);
+                    // One `{ name, path }`, or a list of them.
+                    if file_details.contains_key("name")? || file_details.contains_key("path")? {
+                        parse_table(&mut files, file_details)?;
+                    } else {
+                        for pair in file_details.pairs::<mlua::Value, mlua::Table>() {
+                            let (_, file_details) = pair.context(
+                                "a list of files to upload holds something other than a table",
+                            )?;
+                            parse_table(&mut files, &file_details)?;
                         }
                     }
 
@@ -143,7 +178,12 @@ impl HTTPClientRequest {
                         file_form = file_form.file(filename, path).await?;
                     }
                 }
-                _ => {}
+                mlua::Value::Nil => {}
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "a file to upload is a path, a `{ name, path }` table, or a list of them",
+                    ));
+                }
             }
 
             client = client.multipart(file_form)
@@ -220,5 +260,31 @@ impl HTTPClientRequest {
                 AstraBuffer::new(bytes::Bytes::new())
             },
         }
+    }
+}
+
+/// A path to upload, from a Lua string. On Unix, where a file name is bytes, it is the string's
+/// exact bytes; elsewhere it is the string if that is valid Unicode, and an error if not. Either
+/// way the file's own name, which the request carries as text, must be UTF-8.
+fn upload_path(path: &mlua::LuaString) -> mlua::Result<std::path::PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&path.as_bytes()));
+        if path.file_name().is_some_and(|name| name.to_str().is_none()) {
+            return Err(mlua::Error::runtime(format!(
+                "the name of the file to upload at {} is not UTF-8, and is sent as text",
+                path.display()
+            )));
+        }
+        Ok(path)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(path
+            .to_str()
+            .context("the path of a file to upload is not valid Unicode")?
+            .to_owned()
+            .into())
     }
 }
