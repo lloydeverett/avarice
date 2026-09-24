@@ -30,7 +30,8 @@ Astra treats bytes as text or as tables of numbers, and both lose. Before this d
   `crypto.base64.decode` replaced invalid UTF-8 in its output, so `/wAB` came back as
   `EF BF BD 00 01` and not as `FF 00 01`.
 - An HTTP response's header values replaced bytes that are not UTF-8, such as Latin-1 text, which
-  HTTP allows; through `execute_streaming`, such a value became `""` altogether.
+  HTTP allows. Through `execute_streaming`, a value became `""` altogether if it held anything but
+  visible ASCII, even valid UTF-8 such as `café`.
 - `utils.env.get` gave `nil` for a variable whose value was not UTF-8, as if it were unset.
 
 None of this could be fixed by adding: a second, correct method beside `bytes()` would leave the
@@ -46,9 +47,16 @@ wrong one where every reader looks first.
 - **`fs.read_file_bytes` returns a string.** It differs from `fs.read_file` only in that
   `read_file` fails on a file that is not UTF-8.
 - **`fs.write_file`, `set_body`, `crypto.hash` and `crypto.base64` take and give exact bytes.**
-- **An HTTP response's header values, and `utils.env.get`, give exact bytes.** On Windows, where
-  the environment is UTF-16 and has no bytes of its own, a value that is not valid Unicode is an
-  error. Names, of headers and of variables, stay text: header names are ASCII by the protocol.
+- **What arrives from outside gives exact bytes: an HTTP response's header values, and the value
+  `utils.env.get` reads.** A script does not choose these, so nothing about them can be assumed,
+  and nearly all are ASCII or UTF-8 anyway; `utf8.len(value) ~= nil` checks. Outside Unix, where
+  the environment is UTF-16 and a value has no bytes of its own, a value that is not valid Unicode
+  is an error naming the variable.
+- **What a script writes itself stays text: the header names and values it gives a request, and
+  the name it gives `utils.env.get`.** Each must be UTF-8, and one that is not is an error, before
+  anything is sent. [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-5.5) asks new header
+  fields to keep to ASCII, and a script has no reason to send anything else. A response's header
+  names stay text too: they are ASCII by the protocol.
 - **A table of byte values is still accepted as input** where Astra accepted one, since refusing it
   would break callers and gain nothing.
 
@@ -59,6 +67,13 @@ ADR 0006 requires.
 
 **Adding `Buffer:raw()` beside Astra's methods** kept to ADR 0006's rule and was rejected. It fixed
 one method of six, and left `bytes()` returning a table under the name anyone would reach for.
+
+**Response header values that must be UTF-8**, so a script could treat every header as text,
+was rejected, because nothing good can be done with a value that is not. Failing the request loses
+its status and body over one odd cookie. Dropping the header, or replacing the bytes, is the silent
+loss this decision exists to end. Decoding as Latin-1, as Python's `http.client` and Node do,
+always gives valid UTF-8 and can be undone, but turns a raw UTF-8 value, the commonest non-ASCII
+one, into mojibake (`café` as `cafÃ©`), and a script cannot tell which values were decoded.
 
 **Fixing `Buffer` alone**, which the `process` module needs, was rejected. The same defect is in
 `fs`, `http` and `crypto`, and a stdlib where some functions keep bytes and others do not is harder

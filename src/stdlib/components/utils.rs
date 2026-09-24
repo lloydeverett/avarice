@@ -24,10 +24,11 @@
 //     Nothing Astra does is altered: these are additions.
 //   - Made `getenv` give a value that is not UTF-8 as its exact bytes (ADR 0015), where Astra's
 //     `std::env::var` failed on it and `getenv` gave `nil`, as if the variable were unset. It calls
-//     `std::env::var_os` in place of `std::env::var`, and a new private function, `env_value`,
-//     makes the Lua string in place of `lua.to_value_with`: on Unix from the value's bytes, and
-//     elsewhere, where the environment is UTF-16 and a value has no bytes of its own, from the
-//     value if it is valid Unicode, raising an error if not. This alters what Astra does.
+//     `std::env::var_os(&key)` in place of `std::env::var(key)`, and a new private function,
+//     `env_value`, makes the Lua string in place of `lua.to_value_with`: on Unix from the value's
+//     bytes, and elsewhere, where the environment is UTF-16 and a value has no bytes of its own,
+//     from the value if it is valid Unicode, raising an error naming the variable if not. The name
+//     stays a `String`: a script writes it. This alters what Astra does.
 //   - Everything else, including `tokio::spawn` for tasks, is unchanged.
 
 use mlua::{AnyUserData, LuaSerdeExt, MetaMethod, UserData};
@@ -49,8 +50,8 @@ pub fn getenv(lua: &mlua::Lua) -> mlua::Result<()> {
     lua.globals().set(
         "astra_internal__getenv",
         lua.create_function(|lua, key: String| {
-            if let Some(value) = std::env::var_os(key) {
-                env_value(lua, value)
+            if let Some(value) = std::env::var_os(&key) {
+                env_value(lua, &key, value)
             } else {
                 Ok(mlua::Value::Nil)
             }
@@ -58,10 +59,14 @@ pub fn getenv(lua: &mlua::Lua) -> mlua::Result<()> {
     )
 }
 
-/// An environment variable's value as a Lua string of its exact bytes. Windows keeps the
-/// environment as UTF-16, which has no such bytes, so there a value that is not valid Unicode is
-/// an error rather than a guess.
-fn env_value(lua: &mlua::Lua, value: std::ffi::OsString) -> mlua::Result<mlua::Value> {
+/// The value of the environment variable `key` as a Lua string of its exact bytes. Windows keeps
+/// the environment as UTF-16, which has no such bytes, so there a value that is not valid Unicode
+/// is an error rather than a guess.
+fn env_value(
+    lua: &mlua::Lua,
+    #[cfg_attr(unix, allow(unused_variables))] key: &str,
+    value: std::ffi::OsString,
+) -> mlua::Result<mlua::Value> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -71,9 +76,9 @@ fn env_value(lua: &mlua::Lua, value: std::ffi::OsString) -> mlua::Result<mlua::V
     {
         match value.into_string() {
             Ok(value) => lua.create_string(value).map(mlua::Value::String),
-            Err(_) => Err(mlua::Error::runtime(
-                "the environment variable's value is not valid Unicode",
-            )),
+            Err(_) => Err(mlua::Error::runtime(format!(
+                "the value of the environment variable {key} is not valid Unicode"
+            ))),
         }
     }
 }

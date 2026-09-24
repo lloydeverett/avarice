@@ -750,7 +750,8 @@ fn an_http_request_does_not_print_its_headers_or_body() {
 #[test]
 fn an_http_response_prints_its_status_and_url_and_its_body_prints_its_length() {
     let url = serve_once(
-        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nSet-Cookie: session=SECRET\r\nConnection: close\r\n\r\nhello",
+        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nSet-Cookie: session=SECRET\r\n\
+          Connection: close\r\n\r\nhello",
     );
     let dir = TempDir::new();
     let printed = printed_in_fs(

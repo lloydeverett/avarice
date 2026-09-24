@@ -17,11 +17,11 @@
 //     purpose: a request's headers are where a token lives, and a body can be any size. Nothing
 //     Astra does is altered: these are additions.
 //   - Made `execute_streaming` give each response header value as its exact bytes (ADR 0015), with
-//     `v.as_bytes().into()`, where Astra gave `v.to_str().unwrap_or_default()`, which silently
-//     turned a whole value into `""` if it held any byte that is not visible ASCII. The
-//     `headers` field of `HTTPClientResponse` is a `HashMap<String, mlua::BString>` in place of a
-//     `HashMap<String, String>` to hold them, as `headers_parser` in `request.rs` now gives for
-//     `execute`. This alters what Astra does.
+//     `v.as_bytes().into()`, where Astra gave `v.to_str().unwrap_or_default().to_string()`,
+//     which silently turned a whole value into `""` if it held any byte that is not visible
+//     ASCII, even valid UTF-8 such as `café`. The `headers` field of `HTTPClientResponse` is a
+//     `HashMap<String, mlua::BString>` in place of a `HashMap<String, String>` to hold them, as
+//     `headers_parser` in `request.rs` now gives for `execute`. This alters what Astra does.
 //   - Everything else is unchanged.
 
 use crate::components::AstraBuffer;
