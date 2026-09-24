@@ -498,3 +498,23 @@ fn requiring_it_sets_no_globals() {
     );
     assert_eq!(got, 0);
 }
+
+#[test]
+fn extra_arguments_raise_rather_than_being_dropped() {
+    assert!(
+        raises("dt.date(2024, 1, 2, 9, 30)")
+            .contains("datetime.date: expected at most 3 arguments, got 5")
+    );
+    assert!(
+        raises("dt.date(2024, 1, 2):year(2025)")
+            .contains("Date:year: expected no arguments, got 1")
+    );
+    assert!(
+        raises("dt.date(2024, 1, 2):with({ day = 3 }, { month = 4 })")
+            .contains("Date:with: expected at most 1 argument, got 2")
+    );
+    assert!(
+        raises("dt.Timestamp.parse('2024-01-01T00:00:00Z', 'extra')").contains("Timestamp.parse")
+    );
+    assert!(raises("dt.sleep(1, 2)").contains("datetime.sleep"));
+}

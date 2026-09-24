@@ -48,6 +48,10 @@ hard to review, a copy that no longer matches its original, cannot arise when th
   method names, because every method raises on failure
   ([ADR 0017](0017-the-stdlib-raises-rather-than-leaving-input-out.md)). Builders become an
   optional options table. Values are immutable, and operators are metamethods.
+- **An argument too many raises.** Lua drops arguments past the last one a function takes, so
+  `dt.date(2024, 1, 2, 9, 30)` would be a Date that has quietly lost its time, and
+  `d:year(2025)` would read the year rather than set it. Both are mistakes that ADR 0017 says
+  should raise, so every function here does.
 - **Time zones come from jiff's default features.** These read the system's zoneinfo where there
   is one, and use bundled data on Windows, where there is none. Like jiff, an unknown system zone
   falls back to UTC, and `TimeZone.try_system` is there for a program that would rather raise.

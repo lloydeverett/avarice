@@ -11,6 +11,7 @@
 --     `days_since`.
 --   - Numbers are integers. A float with a fractional part raises, except where jiff takes or gives
 --     an `f64`.
+--   - An argument past the last one a function takes raises, where Lua would drop it.
 -- Units are jiff's in lower case: "year", "month", "week", "day", "hour", "minute", "second",
 -- "millisecond", "microsecond", "nanosecond". Rounding modes are too, in snake case: "ceil",
 -- "floor", "expand", "trunc", "half_ceil", "half_floor", "half_expand", "half_trunc", "half_even".
@@ -86,6 +87,46 @@
 ---@field microseconds? integer
 ---@field nanoseconds? integer
 
+---The getters a Date, a DateTime and a Zoned share.
+---@class datetime.DateParts
+local DateParts = {}
+---@return integer
+function DateParts:year() end
+---@return integer
+function DateParts:month() end
+---@return integer
+function DateParts:day() end
+---@return datetime.Weekday
+function DateParts:weekday() end
+---@return integer
+function DateParts:day_of_year() end
+---@return integer
+function DateParts:day_of_year_no_leap() end
+---@return integer
+function DateParts:days_in_month() end
+---@return integer
+function DateParts:days_in_year() end
+---@return boolean
+function DateParts:in_leap_year() end
+
+---The getters a Time, a DateTime and a Zoned share.
+---@class datetime.TimeParts
+local TimeParts = {}
+---@return integer
+function TimeParts:hour() end
+---@return integer
+function TimeParts:minute() end
+---@return integer
+function TimeParts:second() end
+---@return integer
+function TimeParts:millisecond() end
+---@return integer
+function TimeParts:microsecond() end
+---@return integer
+function TimeParts:nanosecond() end
+---@return integer
+function TimeParts:subsec_nanosecond() end
+
 ---An instant, with no time zone. `tostring` gives RFC 3339 in UTC.
 ---@class datetime.Timestamp
 ---@operator add(datetime.Duration): datetime.Timestamp
@@ -147,7 +188,7 @@ function Timestamp:to_zoned(tz) end
 function Timestamp:in_tz(name) end
 
 ---An instant in a time zone. `tostring` gives RFC 9557, with the zone in brackets.
----@class datetime.Zoned
+---@class datetime.Zoned: datetime.DateParts, datetime.TimeParts
 ---@operator add(datetime.Duration): datetime.Zoned
 ---@operator sub(datetime.Duration): datetime.Zoned
 ---@operator sub(datetime.Zoned): datetime.Span
@@ -181,38 +222,6 @@ function Zoned:strftime(format) end
 ---@param fields datetime.ZonedFields
 ---@return datetime.Zoned
 function Zoned:with(fields) end
----@return integer
-function Zoned:year() end
----@return integer
-function Zoned:month() end
----@return integer
-function Zoned:day() end
----@return datetime.Weekday
-function Zoned:weekday() end
----@return integer
-function Zoned:day_of_year() end
----@return integer
-function Zoned:day_of_year_no_leap() end
----@return integer
-function Zoned:days_in_month() end
----@return integer
-function Zoned:days_in_year() end
----@return boolean
-function Zoned:in_leap_year() end
----@return integer
-function Zoned:hour() end
----@return integer
-function Zoned:minute() end
----@return integer
-function Zoned:second() end
----@return integer
-function Zoned:millisecond() end
----@return integer
-function Zoned:microsecond() end
----@return integer
-function Zoned:nanosecond() end
----@return integer
-function Zoned:subsec_nanosecond() end
 ---@return datetime.Zoned
 function Zoned:first_of_month() end
 ---@return datetime.Zoned
@@ -257,7 +266,7 @@ function Zoned:with_time_zone(tz) end
 function Zoned:in_tz(name) end
 
 ---A calendar date. `tostring` gives `2024-01-02`.
----@class datetime.Date
+---@class datetime.Date: datetime.DateParts
 ---@operator add(datetime.Duration): datetime.Date
 ---@operator sub(datetime.Duration): datetime.Date
 ---@operator sub(datetime.Date): datetime.Span
@@ -288,24 +297,6 @@ function Date:strftime(format) end
 ---@param fields datetime.DateFields
 ---@return datetime.Date
 function Date:with(fields) end
----@return integer
-function Date:year() end
----@return integer
-function Date:month() end
----@return integer
-function Date:day() end
----@return datetime.Weekday
-function Date:weekday() end
----@return integer
-function Date:day_of_year() end
----@return integer
-function Date:day_of_year_no_leap() end
----@return integer
-function Date:days_in_month() end
----@return integer
-function Date:days_in_year() end
----@return boolean
-function Date:in_leap_year() end
 ---@return datetime.Date
 function Date:first_of_month() end
 ---@return datetime.Date
@@ -347,7 +338,7 @@ function Date:to_zoned(tz, options) end
 function Date:in_tz(name, options) end
 
 ---A time of day. `tostring` gives `03:04:05`.
----@class datetime.Time
+---@class datetime.Time: datetime.TimeParts
 ---@operator add(datetime.Duration): datetime.Time
 ---@operator sub(datetime.Duration): datetime.Time
 ---@operator sub(datetime.Time): datetime.Span
@@ -381,20 +372,6 @@ function Time:strftime(format) end
 ---@param fields datetime.TimeFields
 ---@return datetime.Time
 function Time:with(fields) end
----@return integer
-function Time:hour() end
----@return integer
-function Time:minute() end
----@return integer
-function Time:second() end
----@return integer
-function Time:millisecond() end
----@return integer
-function Time:microsecond() end
----@return integer
-function Time:nanosecond() end
----@return integer
-function Time:subsec_nanosecond() end
 ---@param year integer
 ---@param month integer
 ---@param day integer
@@ -405,7 +382,7 @@ function Time:on(year, month, day) end
 function Time:to_datetime(date) end
 
 ---A date and a time of day, with no time zone. `tostring` gives `2024-01-02T03:04:05`.
----@class datetime.DateTime
+---@class datetime.DateTime: datetime.DateParts, datetime.TimeParts
 ---@operator add(datetime.Duration): datetime.DateTime
 ---@operator sub(datetime.Duration): datetime.DateTime
 ---@operator sub(datetime.DateTime): datetime.Span
@@ -439,38 +416,6 @@ function DateTime:strftime(format) end
 ---@param fields datetime.DateTimeFields
 ---@return datetime.DateTime
 function DateTime:with(fields) end
----@return integer
-function DateTime:year() end
----@return integer
-function DateTime:month() end
----@return integer
-function DateTime:day() end
----@return datetime.Weekday
-function DateTime:weekday() end
----@return integer
-function DateTime:day_of_year() end
----@return integer
-function DateTime:day_of_year_no_leap() end
----@return integer
-function DateTime:days_in_month() end
----@return integer
-function DateTime:days_in_year() end
----@return boolean
-function DateTime:in_leap_year() end
----@return integer
-function DateTime:hour() end
----@return integer
-function DateTime:minute() end
----@return integer
-function DateTime:second() end
----@return integer
-function DateTime:millisecond() end
----@return integer
-function DateTime:microsecond() end
----@return integer
-function DateTime:nanosecond() end
----@return integer
-function DateTime:subsec_nanosecond() end
 ---@return datetime.DateTime
 function DateTime:first_of_month() end
 ---@return datetime.DateTime
