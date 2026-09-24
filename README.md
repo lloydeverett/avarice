@@ -4,7 +4,7 @@ An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates
 command-line interpreter, `avrt`, built on the runtime.
 
 - **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
-  and `dirs`, each behind its own Cargo feature. Most are taken from
+  and `dirs`, each behind its own Cargo feature. Most are adapted from
   [Astra](https://github.com/ArkForgeLabs/Astra).
 - **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
   one makes can be overridden. The sandbox has no `io`, no `os` and no binary chunks, and caps
