@@ -313,6 +313,9 @@ impl ModuleStore for SqliteStore {
     `require`. A cancel doesn't stop it either.
   - **An async Rust function.** Its time counts, but the wait isn't cut short: the chunk stops when
     it next runs Lua. A cancel does end the wait.
+- **The memory cap counts only what Lua allocates.** Memory that Rust code allocates for itself,
+  such as a host function's working buffers or what a userdata's value owns on the heap, is not
+  counted and not capped.
 
 ## Limitations / WIP
 
