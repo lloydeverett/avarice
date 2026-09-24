@@ -128,14 +128,38 @@ print(serde.csv.decode("a,b\n1,2\n").body)
 
 ### `datetime`
 
-```lua
-local datetime = require("datetime")
+Built on [jiff](https://docs.rs/jiff), with jiff's types and method names, so jiff's documentation
+is the reference. This module is original to avarice-rt rather than Astra's, so it has no Astra
+header ([ADR 0019](docs/adr/0019-datetime-is-ours-and-built-on-jiff.md)). Values are immutable,
+and anything that fails raises. `until` is a Lua keyword, so jiff's `until` and `since` are
+`span_until` and `span_since` here.
 
-print(datetime.new():to_iso_string())                         -- now
-print(datetime.new(2026, 9, 24):add_days(7):to_date_string()) -- 2026-10-01
-print(datetime.new("2026-09-24T12:00:00Z"):get_year())        -- parse
-datetime.sleep(100)                                           -- milliseconds
+```lua
+local dt = require("datetime")
+
+local now = dt.Zoned.now()                       -- in the system's time zone
+print(now, now:year(), now:weekday())            -- 2026-09-24T12:00:00+01:00[Europe/London] ...
+print(dt.date(2026, 1, 31) + dt.span { months = 1 })            -- 2026-02-28
+print(dt.date(2026, 3, 1) - dt.date(2026, 1, 1))                -- P59D
+
+local meeting = dt.datetime(2026, 3, 9, 9, 30):in_tz("America/New_York")
+print(meeting:with_time_zone(dt.TimeZone.get("Asia/Tokyo")))   -- 2026-03-09T22:30:00+09:00[...]
+
+-- 02:30 on 2026-03-08 does not exist in New York. By default it moves forward; `reject` raises.
+local gap = dt.datetime(2026, 3, 8, 2, 30)
+print(gap:in_tz("America/New_York"))                            -- 2026-03-08T03:30:00-04:00[...]
+print(pcall(gap.in_tz, gap, "America/New_York", { disambiguation = "reject" }))  -- false ...
+
+local start = dt.Timestamp.parse("2026-01-15T00:00:00Z")
+print(start:span_until(dt.Timestamp.now(), { largest = "hour" }))
+print(dt.Span.parse("5 days 3 hours"):get_days(), dt.Weekday.from_name("fri"):next())
+print(dt.date(2026, 9, 24):strftime("%A %-d %B %Y"))              -- Thursday 24 September 2026
+
+dt.sleep(100)                                    -- milliseconds, or a SignedDuration or Span
 ```
+
+`serde` drops a datetime inside a table it encodes, as it does any userdata. Call `tostring` on
+the datetime first, and parse the string back with the type's `parse`.
 
 ### `utils`
 
@@ -329,4 +353,5 @@ impl ModuleStore for SqliteStore {
 ## Licence
 
 Apache License 2.0; see [LICENSE](LICENSE). The stdlib files taken from Astra are under the same
-licence, and each has a header saying where it came from and what changed.
+licence, and each has a header saying where it came from and what changed. `datetime`, `dirs` and
+`process` are original to avarice-rt, and their files say so instead.

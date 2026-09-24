@@ -9,6 +9,8 @@
 //! module, `stores`, has no Rust half at all: it is **pure**, and that is what sandbox mode
 //! registers (ADR 0007). `dirs` and `process` follow the same two-layer shape but are original to
 //! avarice-rt, not Astra's (ADRs 0014 and 0016); they have Rust halves, so they are not pure.
+//! `datetime` is original too (ADR 0019), and differs in one more way: its Rust half sets no
+//! globals, and is handed to its Lua file as a value instead.
 //!
 //! Every module is behind a Cargo feature that compiles it in (ADR 0007). The types here have all
 //! ten modules in every build, so what an embedder matches on does not vary with features; what
@@ -36,7 +38,7 @@ pub enum StdModule {
     Crypto,
     /// JSON, JSON5, YAML, TOML, INI, CSV and XML encoding and decoding.
     Serde,
-    /// Dates and times, built on chrono.
+    /// Dates and times, built on jiff. Original to avarice-rt, not derived from Astra (ADR 0019).
     Datetime,
     /// Tasks, `uuid` and `env.get`.
     Utils,
@@ -353,69 +355,87 @@ impl FromIterator<StdModule> for StdModules {
     }
 }
 
+/// What [`load`] runs to build a module: the Lua source of its wrapper, and the value, if any,
+/// that the wrapper is handed as its `...`.
+struct Layer {
+    source: &'static str,
+    /// The module's Rust half as a value. Astra's modules have none: their Rust halves set
+    /// `astra_internal__*` globals instead. `datetime` is ours, and hands its over (ADR 0019).
+    core: Option<Value>,
+}
+
+impl From<&'static str> for Layer {
+    fn from(source: &'static str) -> Self {
+        Layer { source, core: None }
+    }
+}
+
 /// Registers `module`'s Rust primitives, and returns the Lua source of its wrapper.
 ///
 /// A module that is not compiled in is an error naming the feature, not a panic: [`loader`] is
 /// public, and hands out a loader for any variant.
 ///
 /// [`loader`]: super::loader
-fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static str> {
+fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
     // `lua` is only used by a module that is compiled in.
     let _ = lua;
     match module {
         #[cfg(feature = "stdlib-http")]
         StdModule::Http => {
             super::components::http::client::HTTPClientRequest::register_to_lua(lua)?;
-            Ok(include_str!("lua/http.lua"))
+            Ok(include_str!("lua/http.lua").into())
         }
         #[cfg(feature = "stdlib-fs")]
         StdModule::Fs => {
             super::components::file_system::register_to_lua(lua)?;
             super::components::file_system::GlobResult::register_to_lua(lua)?;
-            Ok(include_str!("lua/fs.lua"))
+            Ok(include_str!("lua/fs.lua").into())
         }
         #[cfg(feature = "stdlib-crypto")]
         StdModule::Crypto => {
             super::components::crypto::register_to_lua(lua)?;
-            Ok(include_str!("lua/crypto.lua"))
+            Ok(include_str!("lua/crypto.lua").into())
         }
         #[cfg(feature = "stdlib-serde")]
         StdModule::Serde => {
             super::components::astra_serde::register_to_lua(lua)?;
-            Ok(include_str!("lua/serde.lua"))
+            Ok(include_str!("lua/serde.lua").into())
         }
         #[cfg(feature = "stdlib-datetime")]
         StdModule::Datetime => {
-            super::components::datetime::AstraDateTime::register_to_lua(lua)?;
-            Ok(include_str!("lua/datetime.lua"))
+            // Original to avarice-rt: no Astra file to point at, and no globals.
+            Ok(Layer {
+                source: include_str!("lua/datetime.lua"),
+                core: Some(super::components::datetime::core(lua)?),
+            })
         }
         #[cfg(feature = "stdlib-utils")]
         StdModule::Utils => {
             super::components::utils::register_to_lua(lua)?;
-            Ok(include_str!("lua/utils.lua"))
+            Ok(include_str!("lua/utils.lua").into())
         }
         // Astra's `stores` has no Rust half: it is Lua all the way down, and so it is pure.
         #[cfg(feature = "stdlib-stores")]
-        StdModule::Stores => Ok(include_str!("lua/stores.lua")),
+        StdModule::Stores => Ok(include_str!("lua/stores.lua").into()),
         // The regex primitive is set by Astra's `utils` Rust half, alongside the tasks, so
         // `validation` sets it too rather than lean on `utils` having been built first. Setting
         // it twice is harmless.
         #[cfg(feature = "stdlib-validation")]
         StdModule::Validation => {
             super::components::utils::AstraRegex::register_to_lua(lua)?;
-            Ok(include_str!("lua/validation.lua"))
+            Ok(include_str!("lua/validation.lua").into())
         }
         // Original to avarice-rt: no Astra file to point at.
         #[cfg(feature = "stdlib-dirs")]
         StdModule::Dirs => {
             super::components::dirs::register_to_lua(lua)?;
-            Ok(include_str!("lua/dirs.lua"))
+            Ok(include_str!("lua/dirs.lua").into())
         }
         // Original to avarice-rt: no Astra file to point at.
         #[cfg(feature = "stdlib-process")]
         StdModule::Process => {
             super::components::process::register_to_lua(lua)?;
-            Ok(include_str!("lua/process.lua"))
+            Ok(include_str!("lua/process.lua").into())
         }
         // Only reached by a module whose feature is off; in a build with every feature on, every
         // variant has an arm above.
@@ -426,14 +446,16 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static st
 
 /// Builds `module`'s value: registers its primitives, then runs its Lua layer.
 pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
-    let source = register_and_source(lua, module)?;
+    let Layer { source, core } = register_and_source(lua, module)?;
     // Named so a traceback through a stdlib module says where it came from. Text only: the
     // sources are embedded, and a chunk that is not text is not one of ours.
     let chunk = lua
         .load(source)
         .set_name(format!("=[avarice-rt stdlib {}]", module.name()))
         .set_mode(mlua::chunk::ChunkMode::Text);
-    if defines_globals(module) {
+    if let Some(core) = core {
+        chunk.call(core)
+    } else if defines_globals(module) {
         chunk.set_environment(private_globals(lua)?).eval()
     } else {
         chunk.eval()

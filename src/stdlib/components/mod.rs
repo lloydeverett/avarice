@@ -40,6 +40,9 @@
 //     from the buffer changes below.
 //   - Added `pub mod dirs;`, behind `stdlib-dirs`, for a module that owes Astra nothing (ADR 0014).
 //     Nothing Astra does is altered: this is an addition, like the module declarations above it.
+//   - Added a comment above `pub mod datetime;` saying that the module it declares is no longer
+//     Astra's (ADR 0019). The declaration itself is unchanged. Nothing Astra does is altered: this
+//     is an addition.
 //   - Added `pub mod process;`, behind `stdlib-process`, for another module that owes Astra nothing
 //     (ADR 0016), and which uses `AstraBuffer` for the output it captures and takes either buffer
 //     as input. `stdlib-process` turns on `_astra_buffers`. Nothing Astra does is altered: this is
@@ -69,6 +72,7 @@ use mlua::{ExternalError, FromLua, LuaSerdeExt};
 pub mod astra_serde;
 #[cfg(feature = "stdlib-crypto")]
 pub mod crypto;
+// Original to avarice-rt since ADR 0019, and no longer Astra's; see its own header.
 #[cfg(feature = "stdlib-datetime")]
 pub mod datetime;
 // Original to avarice-rt, not Astra's; see its own header and ADR 0014.

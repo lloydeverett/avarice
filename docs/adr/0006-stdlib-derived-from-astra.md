@@ -15,6 +15,8 @@ status: accepted
 > directory of `avarice-rt`, licenses the whole project Apache-2.0 with one `LICENSE` at the root,
 > and folds the crate's `README.md` into the root one; where the text below calls it a crate, says
 > the licence is its boundary, or points at its README, it wins.
+> [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) takes `datetime` out of this ADR's scope:
+> it is written from scratch on `jiff`, and the header rule does not apply to it.
 > Where the text below says otherwise, or mentions `jiff`, `NOTICE`, or files without a header, or
 > says validation is not taken, the amendments at the end win.
 
@@ -149,7 +151,8 @@ a header would make it not identical, and put its attribution in `NOTICE` and `U
 instead. That put the attribution in the wrong place: a reader of `crypto.rs` saw nothing to say
 whose it was or under what licence. It is reversed.
 
-- **Every file under `src/components/` and `lua/` opens with a header** naming the Astra file, the
+- **Every file under `src/components/` and `lua/` that is derived from Astra opens with a header**
+  naming the Astra file, the
   version and commit, the copyright holder and the licence, and a `Changes from the original:`
   list. A file that is otherwise unchanged says `none`, and is byte-for-byte Astra's below its
   header. So the earlier rule that the list is never empty holds again; the rule about changes
@@ -160,6 +163,11 @@ whose it was or under what licence. It is reversed.
   headers now carry, and are redundant with them: the Astra commit is named in each header, and
   stripping a header leaves Astra's file, so there is nothing to checksum. What it held besides
   attribution, what is not taken and how `validation` is loaded, is in the crate's `README.md`.
+- **A file there that is not derived from Astra carries no Astra header.** It says at the top
+  that it is original to avarice-rt, and has no `Changes from the original:` list, because there
+  is no original. `dirs` and `process`, in both directories, were already like this. `datetime` joined them when
+  [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) rewrote it (this exception was added to
+  the rule then).
 - **`src/lib.rs` and `src/modules.rs` are this crate's own** and carry no header. They make the
   same registration calls Astra's `register_components` makes, which the API leaves no other way to
   spell, and share no other expression with Astra.

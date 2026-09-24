@@ -389,34 +389,6 @@ fn decoding_malformed_json_is_an_error_a_script_can_pcall() {
     assert!(failed);
 }
 
-// -- datetime ----------------------------------------------------------------------------------
-
-#[cfg(feature = "stdlib-datetime")]
-#[test]
-fn datetime_parses_and_formats_an_instant() {
-    let rt = Runtime::new(Profile::Trusted).unwrap();
-    let got: String = rt
-        .block_on(rt.eval(
-            r#"return tostring(require("datetime").new("2024-01-02T03:04:05Z"))"#,
-            "=test",
-        ))
-        .unwrap();
-    assert_eq!(got, "2024-01-02T03:04:05+00:00");
-}
-
-#[cfg(feature = "stdlib-datetime")]
-#[test]
-fn datetime_builds_from_civil_fields() {
-    let rt = Runtime::new(Profile::Trusted).unwrap();
-    let got: String = rt
-        .block_on(rt.eval(
-            r#"return tostring(require("datetime").new(2024, 1, 2, 3, 4, 5))"#,
-            "=test",
-        ))
-        .unwrap();
-    assert_eq!(got, "2024-01-02T03:04:05+00:00");
-}
-
 // -- Reaching the rest -------------------------------------------------------------------------
 
 #[cfg(feature = "stdlib-utils")]

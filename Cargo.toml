@@ -60,7 +60,8 @@ stdlib-http = [
 stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
 stdlib-crypto = ["dep:sha2", "dep:sha3", "dep:base64"]
 stdlib-serde = ["_astra_serde"]
-stdlib-datetime = ["dep:chrono"]
+# `datetime` is original to avarice-rt, built on jiff (ADR 0019).
+stdlib-datetime = ["dep:jiff"]
 stdlib-utils = ["_astra_utils"]
 # Astra's `stores` has no Rust half, so there is nothing for it to pull in.
 stdlib-stores = []
@@ -167,7 +168,6 @@ sha2 = { version = "0.11.0", optional = true }
 sha3 = { version = "0.12.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 bytes = { version = "1.12.0", features = ["serde"], optional = true }
-chrono = { version = "0.4.45", features = ["serde"], optional = true }
 
 # runtime
 futures = { version = "0.3.32", optional = true }
@@ -178,6 +178,11 @@ pastey = { version = "0.2.3", optional = true }
 # `dirs`'s own dependency. Unlike its neighbours above, this one is not Astra's: `dirs` is original
 # to avarice-rt (ADR 0014), and `etcetera` is the crate that computes its paths.
 etcetera = { version = "0.11", optional = true }
+
+# `datetime`'s own dependency, not Astra's either (ADR 0019). jiff's default features read the
+# system's zoneinfo where there is one and bundle the time zone database on Windows, where there is
+# none (`tzdb-bundle-platform`).
+jiff = { version = "0.2.37", optional = true }
 
 # `process`'s own dependencies, not Astra's either (ADR 0016). `which` searches `PATH`, honouring
 # `PATHEXT` on Windows; `libc` is Unix-only, for `kill`.
