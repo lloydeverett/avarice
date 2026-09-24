@@ -361,12 +361,15 @@ struct Layer {
     source: &'static str,
     /// The module's Rust half as a value. Astra's modules have none: their Rust halves set
     /// `astra_internal__*` globals instead. `datetime` is ours, and hands its over (ADR 0019).
-    core: Option<Value>,
+    rust_half: Option<Value>,
 }
 
 impl From<&'static str> for Layer {
     fn from(source: &'static str) -> Self {
-        Layer { source, core: None }
+        Layer {
+            source,
+            rust_half: None,
+        }
     }
 }
 
@@ -406,7 +409,7 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
             // Original to avarice-rt: no Astra file to point at, and no globals.
             Ok(Layer {
                 source: include_str!("lua/datetime.lua"),
-                core: Some(super::components::datetime::core(lua)?),
+                rust_half: Some(super::components::datetime::rust_half(lua)?),
             })
         }
         #[cfg(feature = "stdlib-utils")]
@@ -446,15 +449,15 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
 
 /// Builds `module`'s value: registers its primitives, then runs its Lua layer.
 pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
-    let Layer { source, core } = register_and_source(lua, module)?;
+    let Layer { source, rust_half } = register_and_source(lua, module)?;
     // Named so a traceback through a stdlib module says where it came from. Text only: the
     // sources are embedded, and a chunk that is not text is not one of ours.
     let chunk = lua
         .load(source)
         .set_name(format!("=[avarice-rt stdlib {}]", module.name()))
         .set_mode(mlua::chunk::ChunkMode::Text);
-    if let Some(core) = core {
-        chunk.call(core)
+    if let Some(rust_half) = rust_half {
+        chunk.call(rust_half)
     } else if defines_globals(module) {
         chunk.set_environment(private_globals(lua)?).eval()
     } else {
@@ -467,7 +470,8 @@ pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
 /// Astra's `validation.lua` does: `number`, `struct`, `regex` and a dozen more. Run as a plain
 /// chunk it would put them in every program's globals as soon as anything required it, and would
 /// break the day a program reused one of those names. Running it against a table of its own keeps
-/// the file as it is. This is the only place a module is loaded other than Astra's way.
+/// the file as it is. This is the only one of Astra's modules loaded other than Astra's way;
+/// `datetime`, which is not Astra's, is the other exception (see [`Layer`]).
 const fn defines_globals(module: StdModule) -> bool {
     matches!(module, StdModule::Validation)
 }

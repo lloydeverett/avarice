@@ -152,9 +152,8 @@ instead. That put the attribution in the wrong place: a reader of `crypto.rs` sa
 whose it was or under what licence. It is reversed.
 
 - **Every file under `src/components/` and `lua/` that is derived from Astra opens with a header**
-  naming the Astra file, the
-  version and commit, the copyright holder and the licence, and a `Changes from the original:`
-  list. A file that is otherwise unchanged says `none`, and is byte-for-byte Astra's below its
+  naming the Astra file, the version and commit, the copyright holder and the licence, and a
+  `Changes from the original:` list. A file that is otherwise unchanged says `none`, and is byte-for-byte Astra's below its
   header. So the earlier rule that the list is never empty holds again; the rule about changes
   being removals and respellings only is unchanged.
 - **`NOTICE` is deleted.** Astra ships none, so none is inherited (§4(d)), and the copyright line

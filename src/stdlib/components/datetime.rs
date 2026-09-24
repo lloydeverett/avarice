@@ -10,7 +10,7 @@
 //! are integers, and a float with a fractional part raises, except where jiff itself takes or gives
 //! an `f64`.
 //!
-//! Nothing here sets a global. [`core`] builds a table of the types' constructors, and `modules.rs`
+//! Nothing here sets a global. [`rust_half`] builds a table of the types' constructors, and `modules.rs`
 //! hands it to `lua/datetime.lua`, which returns it as the module.
 
 use std::fmt::Display;
@@ -24,7 +24,7 @@ type Result<T> = mlua::Result<T>;
 
 /// Builds the table `lua/datetime.lua` returns: one table of constructors per type, the
 /// shorthands, and `sleep`.
-pub fn core(lua: &Lua) -> Result<Value> {
+pub fn rust_half(lua: &Lua) -> Result<Value> {
     let module = lua.create_table()?;
     module.set("Timestamp", timestamp_table(lua)?)?;
     module.set("Zoned", zoned_table(lua)?)?;

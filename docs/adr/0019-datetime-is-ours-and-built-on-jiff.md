@@ -51,7 +51,7 @@ hard to review, a copy that no longer matches its original, cannot arise when th
 - **Time zones come from jiff's default features.** These read the system's zoneinfo where there
   is one, and use bundled data on Windows, where there is none. Like jiff, an unknown system zone
   falls back to UTC, and `TimeZone.try_system` is there for a program that would rather raise.
-- **The Rust core is handed to the Lua file as a value**, not through `astra_internal__`
+- **The Rust half is handed to the Lua file as a value**, not through `astra_internal__`
   globals, which were Astra's convention and are not ours to extend.
 
 ## Considered options
