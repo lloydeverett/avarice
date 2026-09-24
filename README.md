@@ -131,9 +131,9 @@ print(serde.csv.decode("a,b\n1,2\n").body)
 ```lua
 local datetime = require("datetime")
 
-print(datetime.new():to_iso_string())                        -- now
+print(datetime.new():to_iso_string())                         -- now
 print(datetime.new(2026, 9, 24):add_days(7):to_date_string()) -- 2026-10-01
-print(datetime.new("2026-09-24T12:00:00Z"):get_year())       -- parse
+print(datetime.new("2026-09-24T12:00:00Z"):get_year())        -- parse
 datetime.sleep(100)                                           -- milliseconds
 ```
 
