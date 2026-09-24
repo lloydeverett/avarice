@@ -128,38 +128,16 @@ print(serde.csv.decode("a,b\n1,2\n").body)
 
 ### `datetime`
 
-Built on [jiff](https://docs.rs/jiff), with jiff's types and method names, so jiff's documentation
-is the reference. This module is original to avarice-rt rather than Astra's, so it has no Astra
-header ([ADR 0019](docs/adr/0019-datetime-is-ours-and-built-on-jiff.md)). Values are immutable,
-and anything that fails raises, as does an argument too many. `until` is a Lua keyword, so jiff's
-`until` and `since` are `span_until` and `span_since` here.
-
 ```lua
-local dt = require("datetime")
+local dt = require("datetime")   -- jiff's types and methods; see https://docs.rs/jiff
 
-local now = dt.Zoned.now()                       -- in the system's time zone
-print(now, now:year(), now:weekday())            -- 2026-09-24T12:00:00+01:00[Europe/London] ...
-print(dt.date(2026, 1, 31) + dt.span { months = 1 })            -- 2026-02-28
-print(dt.date(2026, 3, 1) - dt.date(2026, 1, 1))                -- P59D
-
-local meeting = dt.datetime(2026, 3, 9, 9, 30):in_tz("America/New_York")
-print(meeting:with_time_zone(dt.TimeZone.get("Asia/Tokyo")))   -- 2026-03-09T22:30:00+09:00[...]
-
--- 02:30 on 2026-03-08 does not exist in New York. By default it moves forward; `reject` raises.
-local gap = dt.datetime(2026, 3, 8, 2, 30)
-print(gap:in_tz("America/New_York"))                            -- 2026-03-08T03:30:00-04:00[...]
-print(pcall(gap.in_tz, gap, "America/New_York", { disambiguation = "reject" }))  -- false ...
-
-local start = dt.Timestamp.parse("2026-01-15T00:00:00Z")
-print(start:span_until(dt.Timestamp.now(), { largest = "hour" }))
-print(dt.Span.parse("5 days 3 hours"):get_days(), dt.Weekday.from_name("fri"):next())
-print(dt.date(2026, 9, 24):strftime("%A %-d %B %Y"))              -- Thursday 24 September 2026
-
-dt.sleep(100)                                    -- milliseconds, or a SignedDuration or Span
+local now = dt.Zoned.now()
+print(now, now:year(), now:weekday())
+print(dt.date(2026, 1, 31) + dt.span { months = 1 })   -- 2026-02-28
+print(dt.datetime(2026, 3, 9, 9, 30):in_tz("America/New_York"))
+print(dt.Timestamp.parse("2026-01-15T00:00:00Z"):span_until(dt.Timestamp.now()))   -- jiff's `until`
+print(dt.date(2026, 9, 24):strftime("%A %-d %B %Y"))   -- Thursday 24 September 2026
 ```
-
-`serde` drops a datetime inside a table it encodes, as it does any userdata. Call `tostring` on
-the datetime first, and parse the string back with the type's `parse`.
 
 ### `utils`
 
