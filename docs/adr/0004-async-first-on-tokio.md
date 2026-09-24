@@ -4,10 +4,12 @@ status: accepted
 
 # Async-first, on a current-thread tokio runtime the core owns
 
-> **Amended 2026-09-20 and 2026-09-21; the amendments at the end win.** `send` is on, so `Runtime`
-> is `Send + Sync` and its lazy-module loaders must be too, there is no `LocalSet`, and Ctrl-C is
-> not "selected against the running evaluation" but reaches it through the `CancelHandle`. The
-> text below is the original decision and still says otherwise on each of those points.
+> **Amended 2026-09-20, 2026-09-21 and 2026-09-24; the amendments at the end win.** `send` is on,
+> so `Runtime` is `Send + Sync` and its lazy-module loaders must be too, there is no `LocalSet`,
+> Ctrl-C is not "selected against the running evaluation" but reaches it through the
+> `CancelHandle`, and a time limit's clock runs while a chunk waits but does not cut the wait
+> short. The text below is the original decision, and says otherwise on the rest of those points
+> or leaves them unclear.
 
 `Runtime` has no synchronous entry points. `exec` and `eval` are gone, replaced
 by async ones, and the core crate owns a current-thread tokio runtime with a

@@ -23,7 +23,11 @@ const AVRT: &str = env!("CARGO_BIN_EXE_avrt");
 /// A trusted runtime with `process` and `utils` required, `AVRT` set to the binary's path, and
 /// `avrt(source, fields)`, a Command that runs `source` in it with `fields` added.
 fn runtime() -> Runtime {
-    let rt = Runtime::new(Profile::Trusted).unwrap();
+    prepared(Runtime::new(Profile::Trusted).unwrap())
+}
+
+/// `rt`, prepared as [`runtime`] prepares its own.
+fn prepared(rt: Runtime) -> Runtime {
     rt.lua().globals().set("AVRT", AVRT).unwrap();
     rt.block_on(rt.exec(
         r#"
@@ -372,6 +376,56 @@ fn a_file_that_is_not_executable_is_a_start_error_saying_permission_denied() {
         ),
     );
     assert_eq!(reason, "permission_denied");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_on_the_path_that_is_not_executable_is_a_start_error_saying_permission_denied() {
+    let rt = runtime();
+    let dir = TempDir::new();
+    dir.write("plain", "not a program");
+    let reason: String = eval(
+        &rt,
+        &format!(
+            r#"return select(2, pcall(process.run, {{ "plain", env = {{ PATH = {} }} }})).reason"#,
+            path_string(dir.path())
+        ),
+    );
+    assert_eq!(reason, "permission_denied");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_program_on_the_path_is_found_past_a_file_of_its_name_that_cannot_run() {
+    let copy = avrt_copy();
+    let dir = TempDir::new();
+    dir.write("avrt-copy", "not a program");
+    let rt = runtime();
+    let output: String = eval(
+        &rt,
+        &format!(
+            r#"return process.run({{ "avrt-copy", "-e", "io.write('found')",
+                 env = {{ PATH = {} }} }}).stdout:bytes()"#,
+            lua_string(&format!("{}:{}", dir.path().display(), copy.path().display()))
+        ),
+    );
+    assert_eq!(output, "found");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_on_the_path_is_not_the_program() {
+    let dir = TempDir::new();
+    std::fs::create_dir(dir.path().join("tool")).unwrap();
+    let rt = runtime();
+    let reason: String = eval(
+        &rt,
+        &format!(
+            r#"return select(2, pcall(process.run, {{ "tool", env = {{ PATH = {} }} }})).reason"#,
+            path_string(dir.path())
+        ),
+    );
+    assert_eq!(reason, "not_found");
 }
 
 #[test]
@@ -860,6 +914,40 @@ fn a_child_counts_as_a_task_until_it_exits() {
 }
 
 #[test]
+fn a_child_being_fed_counts_as_one_task() {
+    // More input than a pipe holds, which the Child does not read at first.
+    let rt = runtime();
+    rt.block_on(rt.exec(
+        r#"process.spawn(avrt([[require("utils").spawn_timeout(function() io.read("a") end, 300)]],
+             { stdin = ("x"):rep(1 << 20) }))"#,
+        "=spawn",
+    ))
+    .unwrap();
+    assert_eq!(rt.outstanding_tasks(), 1);
+    rt.block_on(rt.wait_for_tasks()).unwrap();
+}
+
+#[test]
+fn feeding_a_child_ends_when_it_exits_though_a_program_it_started_holds_its_input() {
+    // Only the Child is managed (ADR 0016). This one starts a program that inherits its input,
+    // never reads it and outlives it; the feed it would block is not waited for.
+    let rt = runtime();
+    let started = Instant::now();
+    rt.block_on(rt.exec(
+        r#"process.spawn(avrt([[
+          require("process").spawn({ os.getenv("AVRT"), "-e",
+            "require('utils').spawn_timeout(function() end, 5000)",
+            stdin = "inherit", stdout = "null", stderr = "null" })
+          os.exit(0)
+        ]], { env = { AVRT = AVRT }, stdin = ("x"):rep(1 << 20) }))"#,
+        "=spawn",
+    ))
+    .unwrap();
+    rt.block_on(rt.wait_for_tasks()).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+}
+
+#[test]
 fn wait_for_tasks_waits_for_a_child_to_finish() {
     let dir = TempDir::new();
     let done = dir.path().join("done");
@@ -940,35 +1028,58 @@ fn a_cancelled_run_kills_its_child() {
     // the Child has to die with `run` itself and not whenever its watching task next runs.
     let beat = Heartbeat::new();
     let cancel = CancelHandle::new();
-    let rt = Runtime::builder(Profile::Trusted)
-        .cancel_handle(cancel.clone())
-        .build()
-        .unwrap();
-    rt.lua().globals().set("AVRT", AVRT).unwrap();
-    let source = format!(
-        r#"
-        local process = require("process")
-        local function avrt(source, fields)
-          local command = {{ AVRT, "-e", source }}
-          for key, value in pairs(fields or {{}}) do command[key] = value end
-          return command
-        end
-        process.run({})
-        "#,
-        beating(&beat)
-    );
+    let rt = cancellable(&cancel);
     let result = std::thread::scope(|scope| {
         scope.spawn(|| {
             assert!(beat.beats());
             cancel.cancel();
         });
-        rt.block_on(rt.exec(source, "=run"))
+        rt.block_on(rt.exec(format!("process.run({})", beating(&beat)), "=run"))
     });
     match result.unwrap_err() {
         avarice_rt::Error::Lua(err) => assert!(avarice_rt::was_cancelled(&err), "{err}"),
         other => panic!("expected a Lua error, got {other:?}"),
     }
     assert!(beat.stops());
+}
+
+#[test]
+fn a_cancelled_execution_an_embedder_drives_kills_the_child_it_was_waiting_for() {
+    // Under `enter` the embedder drops the future, not the runtime, and cannot then collect what
+    // it left: Lua refuses to run while cancelled. The Execution's end has to.
+    let beat = Heartbeat::new();
+    let cancel = CancelHandle::new();
+    let rt = cancellable(&cancel);
+    let execution = rt.enter().unwrap();
+    let mut chunk = Box::pin(
+        rt.load(format!("process.run({})", beating(&beat)), "=run")
+            .exec_async(),
+    );
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            assert!(beat.beats());
+            cancel.cancel();
+        });
+        rt.block_on(async {
+            while !cancel.is_cancelled() {
+                let _ = tokio::time::timeout(Duration::from_millis(10), chunk.as_mut()).await;
+            }
+        });
+    });
+    drop(chunk);
+    assert!(beat.beats(), "nothing has freed the Child yet");
+    drop(execution);
+    assert!(beat.stops());
+}
+
+/// A runtime prepared as [`runtime`]'s is, which `cancel` cancels.
+fn cancellable(cancel: &CancelHandle) -> Runtime {
+    prepared(
+        Runtime::builder(Profile::Trusted)
+            .cancel_handle(cancel.clone())
+            .build()
+            .unwrap(),
+    )
 }
 
 // Printing.

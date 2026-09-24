@@ -60,7 +60,8 @@ string holding exactly those bytes.
 6. As a script author, I want the error raised by `check` to carry the Output, so that a `pcall`
    still gives me the stdout and stderr of the failed program.
 7. As a script author, I want an uncaught `check` error to print as a readable message naming the
-   program, its exit code and the last line of its stderr, so that a failing script says why.
+   program and its exit code, or the signal that killed it, so that a failing script says what
+   failed without printing what its stderr may hold, which the error's Output keeps.
 8. As a script author, I want to give a program input as a string or Buffer, so that I can pipe
    data through a filter program without a temporary file.
 9. As a script author, I want a program's stdin to be empty by default under `run`, so that a
@@ -312,6 +313,9 @@ token and all. The whole of stderr is in `output.stderr`, as Python's `CalledPro
   `wait_for_tasks` waits for them, so `avrt` does not exit while one runs and the REPL waits between
   prompts; `abort_tasks` (Ctrl-C) drops the watching tasks and so kills the Children; dropping the
   `Runtime` does the same.
+- Bytes given as `stdin` are fed by the watching task, until they are all written or the Child
+  exits, so a Child counts as one task however it is fed. A program the Child started that holds
+  its input open is not fed further, nor waited for.
 - Garbage-collecting the Lua handle does not kill the Child. It closes Lua's ends of any pipes,
   so a Child writing to them gets a broken pipe.
 - Only the Child itself is ever killed; programs it started are not.

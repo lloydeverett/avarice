@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use mlua::{HookTriggers, Lua, VmState};
+use mlua::{HookTriggers, Lua, VmState, WeakLua};
 use tokio::sync::Notify;
 
 use crate::error::{Cancelled, TimedOut};
@@ -159,7 +159,7 @@ impl Limits {
     /// through. A tripped limit would otherwise stop the collection as mlua enters it, through a
     /// protected call, before anything is collected. Nothing else the collection runs is hooked
     /// anyway: Lua 5.4 turns hooks off inside a finalizer.
-    pub(crate) fn cleaning_up(&self, f: impl FnOnce()) {
+    fn cleaning_up(&self, f: impl FnOnce()) {
         /// Clears the flag however `f` ends, a panic included, so that the limits cannot stay off.
         struct Done<'a>(&'a SyncCell<bool>);
         impl Drop for Done<'_> {
@@ -300,17 +300,41 @@ pub(crate) async fn unless_cancelled<T>(
 #[must_use = "limits apply only while the Execution guard is held"]
 pub struct Execution {
     limits: Arc<Limits>,
+    lua: WeakLua,
 }
 
 impl Execution {
-    pub(crate) fn new(limits: Arc<Limits>) -> Self {
+    pub(crate) fn new(limits: Arc<Limits>, lua: &Lua) -> Self {
         limits.enter();
-        Execution { limits }
+        Execution {
+            limits,
+            lua: lua.weak(),
+        }
+    }
+
+    /// Frees what an execution stopped by a cancel or a limit was waiting on.
+    ///
+    /// A chunk stopped while it waits on the stdlib, for a Child or a response, is stopped inside
+    /// mlua's poller, the Lua that drives a Rust future, or dropped there; either way the future
+    /// is left on the dead coroutine's stack until the garbage collector frees it, and until then
+    /// the Child runs and the request goes on. So the stack is collected now, which Lua would
+    /// refuse anyone else while the limit stays tripped. A collection that fails leaves the
+    /// future for the next.
+    fn release_what_was_stopped(&self) {
+        if let Some(lua) = self.lua.try_upgrade() {
+            self.limits.cleaning_up(|| {
+                let _ = lua.gc_collect();
+            });
+        }
     }
 }
 
 impl Drop for Execution {
     fn drop(&mut self) {
+        let outermost = self.limits.depth.get() == 1;
+        if outermost && self.limits.stopped().is_some() {
+            self.release_what_was_stopped();
+        }
         self.limits.leave();
     }
 }

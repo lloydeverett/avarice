@@ -13,7 +13,7 @@
 //! What fails to start, fails a `check` or times out is not raised here: the primitives return
 //! `nil`, the error's fields and its message, and `process.lua` raises them as a table.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
@@ -463,6 +463,7 @@ type ReadStream = BufReader<Box<dyn AsyncRead + Send + Unpin>>;
 /// A Child that has started, with its streams not yet handed to anyone.
 struct Started {
     shared: Arc<Shared>,
+    /// `None` if piped only to be fed, which the watching task does.
     stdin: Option<ChildStdin>,
     stdout: Option<ReadStream>,
     stderr: Option<ReadStream>,
@@ -585,78 +586,93 @@ async fn start(command: &Command) -> Result<Started, StartFailure> {
     }
     let program = resolve(command)?;
 
-    let mut child = tokio::process::Command::new(&program);
+    let mut builder = tokio::process::Command::new(&program);
     #[cfg(unix)]
-    child.arg0(&command.program_os);
-    child.args(&command.args).kill_on_drop(true);
+    builder.arg0(&command.program_os);
+    builder.args(&command.args).kill_on_drop(true);
     if let Some(cwd) = &command.cwd {
-        child.current_dir(cwd);
+        builder.current_dir(cwd);
     }
     if command.clear_env {
-        child.env_clear();
+        builder.env_clear();
     }
     for (key, value) in &command.env {
         match value {
-            Some(value) => child.env(key, value),
-            None => child.env_remove(key),
+            Some(value) => builder.env(key, value),
+            None => builder.env_remove(key),
         };
     }
 
-    child.stdin(match &command.stdin {
+    builder.stdin(match &command.stdin {
         Stdin::Setting(stream) => stdio(*stream),
         Stdin::Feed(_) => Stdio::piped(),
     });
     let mut merged = None;
     match command.stderr {
         Stderr::Setting(stream) => {
-            child.stdout(stdio(command.stdout));
-            child.stderr(stdio(stream));
+            builder.stdout(stdio(command.stdout));
+            builder.stderr(stdio(stream));
         }
         Stderr::Stdout => match command.stdout {
             StreamSetting::Pipe => {
                 let (reader, writer) = std::io::pipe()?;
-                child.stdout(writer.try_clone()?);
-                child.stderr(writer);
+                builder.stdout(writer.try_clone()?);
+                builder.stderr(writer);
                 merged = Some(reader);
             }
             StreamSetting::Inherit => {
-                child.stdout(Stdio::inherit());
-                child.stderr(host_stdout()?);
+                builder.stdout(Stdio::inherit());
+                builder.stderr(host_stdout()?);
             }
             StreamSetting::Null => {
-                child.stdout(Stdio::null());
-                child.stderr(Stdio::null());
+                builder.stdout(Stdio::null());
+                builder.stderr(Stdio::null());
             }
         },
     }
 
-    let mut spawned = child.spawn()?;
-    // The Command holds our copy of a merged pipe's writing end, which would keep it open.
-    drop(child);
+    let mut child = builder.spawn()?;
+    // The builder holds our copy of a merged pipe's writing end, which would keep it open.
+    drop(builder);
 
-    let stdin = spawned.stdin.take();
+    let mut stdin = child.stdin.take();
+    let feeding = match &command.stdin {
+        Stdin::Feed(bytes) => stdin.take().map(|stdin| feed(stdin, bytes.clone())),
+        Stdin::Setting(_) => None,
+    };
     let stdout = match merged {
         Some(reader) => Some(buffered(merged_reader(reader)?)),
-        None => spawned.stdout.take().map(|s| buffered(Box::new(s))),
+        None => child.stdout.take().map(|s| buffered(Box::new(s))),
     };
-    let stderr = spawned.stderr.take().map(|s| buffered(Box::new(s)));
-    let pid = spawned.id().unwrap_or_default();
+    let stderr = child.stderr.take().map(|s| buffered(Box::new(s)));
+    let pid = child.id().unwrap_or_default();
 
     let (report, status) = watch::channel(None);
     let shared = Arc::new(Shared {
-        child: std::sync::Mutex::new(spawned),
+        child: std::sync::Mutex::new(child),
         pid,
         program: command.display(),
         status,
     });
     let watching = KillOnDrop(shared.clone());
     tokio::spawn(async move {
-        let status = std::future::poll_fn(|cx| {
+        let exited = std::future::poll_fn(|cx| {
             let mut child = watching.0.child();
             let wait = child.wait();
             std::pin::pin!(wait).poll(cx)
-        })
-        .await;
+        });
+        let status = match feeding {
+            None => exited.await,
+            // Fed until it has all been written or the Child exits, whichever is first: only the
+            // Child is managed, and a program it started may hold its input open for ever.
+            Some(feeding) => {
+                let mut exited = std::pin::pin!(exited);
+                tokio::select! {
+                    status = exited.as_mut() => status,
+                    () = feeding => exited.await,
+                }
+            }
+        };
         let _ = report.send(Some(status.map_err(|e| e.to_string())));
         drop(watching);
     });
@@ -678,19 +694,17 @@ fn resolve(command: &Command) -> Result<PathBuf, StartFailure> {
         None => std::env::current_dir()?,
     };
     let program = Path::new(&command.program_os);
-    let found = match which::which_in(program, path, &base) {
+    let found = match which::which_in(program, path.as_deref(), &base) {
         Ok(found) => found,
-        // A file that is there but cannot be run: the operating system says why when it is
-        // started, where `which` would only say it is not found.
-        Err(_) if program.components().count() > 1 && base.join(program).exists() => {
-            base.join(program)
-        }
-        Err(_) => {
-            return Err(StartFailure {
-                reason: Reason::NotFound,
-                message: "program not found".to_owned(),
-            });
-        }
+        Err(_) => match unrunnable(program, path.as_deref(), &base) {
+            Some(file) => file,
+            None => {
+                return Err(StartFailure {
+                    reason: Reason::NotFound,
+                    message: "program not found".to_owned(),
+                });
+            }
+        },
     };
     // A relative `cwd` gives a relative path, which the Child's own working directory would
     // otherwise be taken to be relative to.
@@ -699,6 +713,24 @@ fn resolve(command: &Command) -> Result<PathBuf, StartFailure> {
     } else {
         found
     })
+}
+
+/// A file that is there but that `which` passed over because it cannot be run, so that starting it
+/// has the operating system say why, where `which` would only say it is not found. A path with a
+/// separator names one; a bare name is searched for on `path` as `execvp` does, where only a file
+/// will do. On Windows a bare name only names a program with an extension from `PATHEXT`, which
+/// `which` has tried, and a file without one is not a program at all.
+fn unrunnable(program: &Path, path: Option<&OsStr>, base: &Path) -> Option<PathBuf> {
+    if program.components().count() > 1 {
+        let file = base.join(program);
+        return file.exists().then_some(file);
+    }
+    if cfg!(windows) {
+        return None;
+    }
+    std::env::split_paths(path?)
+        .map(|dir| base.join(dir).join(program))
+        .find(|file| file.is_file())
 }
 
 /// The `PATH` the Child will get, after `env` and `clear_env`.
@@ -799,23 +831,19 @@ async fn run(lua: &Lua, command: Value) -> mlua::Result<MultiValue> {
         stdout,
         stderr,
     } = started;
-    // If this future is dropped, by an aborted task, a cancel or a time limit, so is the Child.
+    // If this future is dropped, by an aborted task or a cancel, so is the Child.
     let _kill = KillOnDrop(shared.clone());
+    // Only piped here by `stdio = "pipe"`, since `stdin = "pipe"` is refused: closed at once. Bytes
+    // to feed are fed by the watching task.
+    drop(stdin);
 
-    let feed = match &command.stdin {
-        Stdin::Feed(bytes) => bytes.clone(),
-        // Piped by `stdio = "pipe"`, since `stdin = "pipe"` is refused: closed at once.
-        Stdin::Setting(_) => Bytes::new(),
-    };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let collect = async {
-        let (fed, stdout, stderr, status) = tokio::join!(
-            feed_stdin(stdin, feed),
+        let (stdout, stderr, status) = tokio::join!(
             drain(stdout, &mut out),
             drain(stderr, &mut err),
             shared.exit_status(),
         );
-        fed?;
         stdout?;
         stderr?;
         status
@@ -852,17 +880,10 @@ async fn run(lua: &Lua, command: Value) -> mlua::Result<MultiValue> {
 }
 
 /// Writes `bytes` to a Child's input and closes it. A Child that exits or closes its input before
-/// reading it all has chosen not to, and is not an error, as in Python's `communicate`.
-async fn feed_stdin(stdin: Option<ChildStdin>, bytes: Bytes) -> mlua::Result<()> {
-    let Some(mut stdin) = stdin else {
-        return Ok(());
-    };
-    match stdin.write_all(&bytes).await {
-        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(error(format!(
-            "process: could not write the Child's input: {e}"
-        ))),
-        _ => Ok(()),
-    }
+/// reading it all has chosen not to, and is not an error, as in Python's `communicate`; nor is any
+/// other failure to write, which only ends the Child's input early too.
+async fn feed(mut stdin: ChildStdin, bytes: Bytes) {
+    let _ = stdin.write_all(&bytes).await;
 }
 
 /// Reads a stream to its end into `into`, keeping what was read if dropped part way.
@@ -943,19 +964,12 @@ async fn spawn(lua: &Lua, command: Value) -> mlua::Result<MultiValue> {
         Ok(started) => started,
         Err(failure) => return raise(lua, &command, Failure::Start(failure)),
     };
-    let stdin = match command.stdin {
-        // Fed in the background, as its own task, so that `spawn` returns at once.
-        Stdin::Feed(bytes) => {
-            tokio::spawn(feed_stdin(started.stdin, bytes));
-            None
-        }
-        Stdin::Setting(_) => started
-            .stdin
-            .map(|stdin| Writer(Arc::new(Mutex::new(Some(stdin))))),
-    };
     let child = Child {
         shared: started.shared,
-        stdin,
+        // `None` if piped only to be fed, which the watching task does.
+        stdin: started
+            .stdin
+            .map(|stdin| Writer(Arc::new(Mutex::new(Some(stdin))))),
         stdout: started.stdout.map(|s| Reader::new(s, "stdout")),
         stderr: started.stderr.map(|s| Reader::new(s, "stderr")),
     };

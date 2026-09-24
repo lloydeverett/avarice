@@ -227,20 +227,21 @@ impl Runtime {
     ///
     /// [`exec`](Self::exec), [`eval`](Self::eval) and [`run`](Self::run) do this for themselves;
     /// call it when driving Lua through [`Runtime::lua`] in a way `run` cannot express. Nesting is
-    /// safe: an inner guard does not extend the
-    /// outer execution's budget.
+    /// safe: an inner guard does not extend the outer execution's budget.
     ///
     /// The clock keeps running while the execution awaits, so time spent waiting on a slow
     /// response counts against the budget.
     ///
+    /// If the execution was stopped, by a cancel or a limit, dropping the outermost guard frees
+    /// what a future dropped part way was waiting on, such as a Child: drop the future first.
+    ///
     /// Fails immediately if the runtime's [`CancelHandle`] is already tripped, so that a chunk
     /// too short to reach a single hook tick cannot slip past a cancel.
     pub fn enter(&self) -> Result<Execution> {
-        let execution = Execution::new(Arc::clone(&self.limits));
-        match self.limits.precheck() {
-            Some(err) => Err(err.into()),
-            None => Ok(execution),
+        if let Some(err) = self.limits.precheck() {
+            return Err(err.into());
         }
+        Ok(Execution::new(Arc::clone(&self.limits), &self.lua))
     }
 
     /// Prepares a chunk, applying this runtime's chunk rules.
@@ -267,26 +268,10 @@ impl Runtime {
     pub async fn run<T>(&self, future: impl Future<Output = mlua::Result<T>>) -> Result<T> {
         let _execution = self.enter()?;
         let outcome = unless_cancelled(self.limits.cancel_handle(), future).await;
-        if self.limits.stopped().is_some() {
-            self.release_what_was_stopped();
-        }
         match outcome {
             Some(result) => Ok(result?),
             None => Err(cancelled_error().into()),
         }
-    }
-
-    /// Frees what an execution stopped by a cancel or a limit was waiting on.
-    ///
-    /// A chunk stopped while it waits on the stdlib, for a Child or a response, is stopped inside
-    /// mlua's poller, the Lua that drives a Rust future, and the future is left on the dead
-    /// coroutine's stack until the garbage collector frees it: until then the Child runs and the
-    /// request goes on. So the stack is collected now. A collection that fails leaves the future
-    /// for the next.
-    fn release_what_was_stopped(&self) {
-        self.limits.cleaning_up(|| {
-            let _ = self.lua.gc_collect();
-        });
     }
 
     /// Runs a chunk for its side effects.
