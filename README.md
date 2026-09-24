@@ -1,14 +1,21 @@
 # avarice-rt
 
-A Lua 5.4 interpreter, `avrt`, and an embeddable Lua runtime for Rust, built on
-[mlua](https://crates.io/crates/mlua).
+An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates/mlua), and a
+command-line interpreter, `avrt`, built on the runtime.
 
-It adds two things to mlua. The first is a sandbox profile with no `io`, no `os`, no binary chunks,
-a memory cap and optional time limits. The second is a module system the host controls: Lua's
-`package` library is never opened, and `require` resolves only modules registered from Rust and
-modules in a store the host supplies. It also ships a set of optional stdlib modules (`http`, `fs`,
-`crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`, `dirs`), most of them taken from
-[Astra](https://github.com/ArkForgeLabs/Astra).
+- **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
+  one makes can be overridden. The sandbox has no `io`, no `os` and no binary chunks, and caps
+  memory at 128 MiB. The trusted profile adds `io`, `os` and every stdlib module that is compiled in.
+- **Host-controlled modules.** Lua's `package` library is never opened. `require` resolves only
+  modules registered from Rust and modules in a store the host supplies, such as a directory.
+- **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
+  and `dirs`, each behind its own Cargo feature. Most are taken from
+  [Astra](https://github.com/ArkForgeLabs/Astra).
+- **Async, on Tokio.** Chunks run as futures on a Tokio runtime, so modules can await I/O, and
+  scripts can spawn background tasks.
+- **Limits.** Time limits and cancellation apply to Lua running in coroutines and to chunks
+  waiting on I/O.
+- **The `avrt` command.** Runs scripts, or starts a REPL with history and multi-line input.
 
 Terms used in the code are defined in [CONTEXT.md](CONTEXT.md). Design decisions are recorded in
 [docs/adr](docs/adr).
