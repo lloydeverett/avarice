@@ -147,6 +147,153 @@ fn trusted_keeps_io_and_os() {
     assert!(is_nil(&rt, "package"));
 }
 
+/// Runs `setmetatable(t, mt)` with `mt` as given in Lua, and gives back its error, if any.
+fn setmetatable_error(rt: &Runtime, mt: &str) -> Option<String> {
+    let source = format!("setmetatable({{}}, {mt})");
+    rt.block_on(rt.exec(&source, "=test")).err().map(|e| e.to_string())
+}
+
+/// Whether a table whose metatable has a finalizer has it run once the table is collected.
+fn runs_a_finalizer(rt: &Runtime) -> bool {
+    rt.block_on(rt.eval(
+        r#"
+        local ran = false
+        setmetatable({}, { __gc = function() ran = true end })
+        collectgarbage()
+        collectgarbage()
+        return ran
+        "#,
+        "=test",
+    ))
+    .unwrap()
+}
+
+#[test]
+fn refuses_a_lua_finalizer_where_the_script_set_it() {
+    // A finalizer runs with hooks off, so neither a time limit nor a cancel could stop one.
+    let message = setmetatable_error(&sandbox(), "{ __gc = function() end }")
+        .expect("a finalizer should be refused");
+    assert!(
+        message.contains("test:1: setmetatable: finalizers (__gc) are not allowed in this runtime"),
+        "{message}"
+    );
+}
+
+#[test]
+fn refuses_a_placeholder_that_would_mark_the_table_for_a_finalizer_set_later() {
+    // Lua marks a table for finalizing if its metatable has any `__gc` when it is set, and
+    // calls whatever function is there by the time the table is collected.
+    for placeholder in ["true", "false", "0"] {
+        assert!(
+            setmetatable_error(&sandbox(), &format!("{{ __gc = {placeholder} }}")).is_some(),
+            "__gc = {placeholder} should be refused"
+        );
+    }
+}
+
+#[test]
+fn still_sets_metatables_without_a_finalizer() {
+    let rt = sandbox();
+    let ok: bool = rt
+        .block_on(rt.eval(
+            r#"
+            local mt = { __index = { x = 1 } }
+            local t = setmetatable({}, mt)
+            return t.x == 1 and getmetatable(t) == mt and setmetatable(t, nil) == t
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(ok);
+    // An `__index` that could answer `__gc` does not count: Lua looks for it raw, and so do we.
+    assert_eq!(
+        setmetatable_error(&rt, "{ __index = { __gc = true } }"),
+        None
+    );
+}
+
+#[test]
+fn a_bad_argument_to_setmetatable_is_reported_in_lua_s_words_at_the_script_s_line() {
+    let rt = sandbox();
+    for (call, expected) in [
+        ("setmetatable(1, {})", "bad argument #1 to 'setmetatable' (table expected, got number)"),
+        (
+            "setmetatable({}, 1)",
+            "bad argument #2 to 'setmetatable' (nil or table expected, got number)",
+        ),
+        (
+            "setmetatable(setmetatable({}, { __metatable = 1 }), {})",
+            "cannot change a protected metatable",
+        ),
+    ] {
+        let err = rt.block_on(rt.exec(call, "=test")).unwrap_err().to_string();
+        assert!(err.contains(&format!("test:1: {expected}")), "{call}: {err}");
+    }
+}
+
+#[test]
+fn replacing_the_setmetatable_global_does_not_reach_past_the_refusal() {
+    let rt = sandbox();
+    let refused: bool = rt
+        .block_on(rt.eval(
+            r#"
+            local saved = setmetatable
+            setmetatable = nil
+            _G.setmetatable = function(t, mt) return saved(t, mt) end
+            return not pcall(setmetatable, {}, { __gc = function() end })
+                and not pcall(saved, {}, { __gc = function() end })
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(refused);
+    assert!(setmetatable_error(&rt, "{ __gc = function() end }").is_some());
+}
+
+#[test]
+fn replacing_the_globals_the_refusal_uses_does_not_reach_past_it() {
+    let rt = sandbox();
+    let refused: bool = rt
+        .block_on(rt.eval(
+            r#"
+            local mt = { __gc = function() end }
+            rawget = function() return nil end
+            type = function() return "number" end
+            string.gsub = function() return "" end
+            return not pcall(setmetatable, {}, mt)
+            "#,
+            "=test",
+        ))
+        .unwrap();
+    assert!(refused);
+}
+
+#[test]
+fn trusted_runs_lua_finalizers() {
+    assert!(runs_a_finalizer(&Runtime::new(Profile::Trusted).unwrap()));
+}
+
+#[test]
+fn lua_finalizers_can_be_allowed_in_the_sandbox_and_refused_in_trusted() {
+    let allowed = Runtime::builder(Profile::Sandbox)
+        .allow_lua_finalizers(true)
+        .build()
+        .unwrap();
+    assert!(runs_a_finalizer(&allowed));
+
+    let refused = Runtime::builder(Profile::Trusted)
+        .allow_lua_finalizers(false)
+        .build()
+        .unwrap();
+    assert!(setmetatable_error(&refused, "{ __gc = function() end }").is_some());
+}
+
+#[test]
+fn only_trusted_allows_lua_finalizers_by_default() {
+    assert!(!Profile::Sandbox.allows_lua_finalizers());
+    assert!(Profile::Trusted.allows_lua_finalizers());
+}
+
 #[test]
 fn caps_memory_by_default() {
     let rt = sandbox();

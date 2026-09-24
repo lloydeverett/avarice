@@ -21,9 +21,9 @@ pub enum Profile {
     ///
     /// Withholds the libraries through which Lua can reach outside its own computation — `io`,
     /// `os`, `package`, `debug` — along with the filesystem functions that hide in the base
-    /// library (`dofile`, `loadfile`). Caps memory at
-    /// [`DEFAULT_SANDBOX_MEMORY_LIMIT`], and refuses binary chunks, `load`'s `"b"` mode
-    /// included. Registers no stdlib module that has Rust behind it, and the one written only in
+    /// library (`dofile`, `loadfile`). Caps memory at [`DEFAULT_SANDBOX_MEMORY_LIMIT`], and
+    /// refuses binary chunks, `load`'s `"b"` mode included, and Lua finalizers, which no limit
+    /// could stop. Registers no stdlib module that has Rust behind it, and the one written only in
     /// Lua (`stores`), which the memory cap and the time limit govern like any other Lua. The core
     /// module `ansi` is registered here as it is everywhere.
     ///
@@ -36,9 +36,10 @@ pub enum Profile {
     ///
     /// Everything the sandbox has plus `io` and `os` and every stdlib module — `http`, `fs`,
     /// `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation` — with no memory or time
-    /// limit and binary chunks allowed. Note that `os.exit` will end the host process, that
-    /// the stdlib modules reach the network and the filesystem, and that `package` is still absent
-    /// — Lua never loads its own modules here either.
+    /// limit and binary chunks and Lua finalizers allowed. Note that `os.exit` will end the host
+    /// process, that the stdlib modules reach the network and the filesystem, that a Lua
+    /// finalizer runs with the limits off, even those set on a trusted runtime, and that
+    /// `package` is still absent — Lua never loads its own modules here either.
     Trusted,
 }
 
@@ -93,6 +94,20 @@ impl Profile {
     /// The sandbox does not: Lua's bytecode verifier is not a security boundary, and a
     /// handcrafted chunk can corrupt the VM.
     pub fn allows_binary_chunks(self) -> bool {
+        match self {
+            Profile::Sandbox => false,
+            Profile::Trusted => true,
+        }
+    }
+
+    /// Whether this profile lets Lua give a table a finalizer: a `__gc` in the metatable passed
+    /// to `setmetatable`.
+    ///
+    /// The sandbox does not. Lua runs a finalizer with hooks off, so neither a time limit nor a
+    /// cancel can stop one, and a finalizer that never returns hangs whatever triggered the
+    /// collection: the script, the host's own `gc_collect`, or dropping the runtime. Finalizers
+    /// of userdata made in Rust are not Lua finalizers, and run in every profile.
+    pub fn allows_lua_finalizers(self) -> bool {
         match self {
             Profile::Sandbox => false,
             Profile::Trusted => true,

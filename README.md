@@ -7,8 +7,9 @@ command-line interpreter, `avrt`, built on the runtime.
   `dirs` and `process`, each behind its own Cargo feature. Most are adapted from
   [Astra](https://github.com/ArkForgeLabs/Astra).
 - **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
-  one makes can be overridden. The sandbox has no `io`, no `os` and no binary chunks, and caps
-  memory at 128 MiB. The trusted profile adds `io`, `os` and every stdlib module that is compiled in.
+  one makes can be overridden. The sandbox has no `io`, no `os`, no binary chunks and no `__gc` in
+  a metatable, and caps memory at 128 MiB. The trusted profile adds all four, and every stdlib
+  module that is compiled in.
 - **Async, on Tokio.** Chunks run as futures on a Tokio runtime, so modules can await I/O, and
   scripts can spawn background tasks.
 - **Limits.** A time limit stops Lua that is running, in any coroutine. Time a chunk spends waiting,
@@ -256,8 +257,9 @@ use avarice_rt::{
 fn main() -> avarice_rt::Result<()> {
     let cancel = CancelHandle::new();
 
-    // Start from a profile: `Sandbox` (no io, os or binary chunks; 128 MiB memory cap) or
-    // `Trusted` (io, os and every stdlib module compiled in). Any setting can be overridden.
+    // Start from a profile: `Sandbox` (no io, os, binary chunks or `__gc`; 128 MiB memory cap)
+    // or `Trusted` (all of those, and every stdlib module compiled in). Any setting can be
+    // overridden.
     let rt = Runtime::builder(Profile::Sandbox)
         // Add or remove stdlib modules, from those the build's features compiled in.
         .with_std_modules(StdModules::SERDE | StdModules::CRYPTO)

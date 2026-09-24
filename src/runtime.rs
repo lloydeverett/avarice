@@ -394,6 +394,7 @@ pub struct RuntimeBuilder {
     cancel: Option<CancelHandle>,
     check_interval: u32,
     binary_chunks: bool,
+    lua_finalizers: bool,
     store: Option<Arc<dyn ModuleStore>>,
     sink: Option<Sink>,
 }
@@ -405,6 +406,7 @@ impl std::fmt::Debug for RuntimeBuilder {
             .field("memory_limit", &self.memory_limit)
             .field("time_limit", &self.time_limit)
             .field("binary_chunks", &self.binary_chunks)
+            .field("lua_finalizers", &self.lua_finalizers)
             .field("store", &self.store.as_ref().map(|s| s.describe()))
             .finish_non_exhaustive()
     }
@@ -422,6 +424,7 @@ impl RuntimeBuilder {
             cancel: None,
             check_interval: DEFAULT_CHECK_INTERVAL,
             binary_chunks: profile.allows_binary_chunks(),
+            lua_finalizers: profile.allows_lua_finalizers(),
             store: None,
             sink: None,
         }
@@ -547,6 +550,20 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Whether Lua may give a table a finalizer, with a `__gc` in the metatable it passes to
+    /// `setmetatable`. Refused, `setmetatable` raises instead.
+    ///
+    /// Leave this off for untrusted code. Lua runs a finalizer with hooks off, so the limits stand
+    /// aside while one runs: neither [`time_limit`](Self::time_limit) nor a cancel can stop it,
+    /// and one that never returns hangs whatever triggered the collection, dropping the runtime
+    /// included. The sandbox profile refuses Lua finalizers for that reason. Finalizers of
+    /// userdata made in Rust are not affected. Refusing them means little while
+    /// [binary chunks](Self::allow_binary_chunks) are allowed, since those can do anything.
+    pub fn allow_lua_finalizers(mut self, allow: bool) -> Self {
+        self.lua_finalizers = allow;
+        self
+    }
+
     /// Sets the module store `require` falls back to when no host module matches.
     pub fn store(mut self, store: impl ModuleStore) -> Self {
         self.store = Some(Arc::new(store));
@@ -615,7 +632,7 @@ impl RuntimeBuilder {
 
         install_require(&lua, Arc::clone(&modules), self.binary_chunks)?;
         install_traceback(&lua)?;
-        restrict_base_library(&lua, self.binary_chunks)?;
+        restrict_base_library(&lua, self.binary_chunks, self.lua_finalizers)?;
         let sink = self.sink.unwrap_or_else(print::default_sink);
         print::install(&lua, Arc::clone(&sink))?;
         install_stdlib_list(&lua, self.std_modules)?;
@@ -822,7 +839,8 @@ fn install_traceback(lua: &Lua) -> Result<()> {
     Ok(())
 }
 
-/// Closes the two holes in Lua's base library: filesystem access, and binary chunks.
+/// Closes the three holes in Lua's base library: filesystem access, binary chunks, and Lua
+/// finalizers.
 ///
 /// Loaded through [`Lua::load`] rather than [`Runtime::exec`] so that setting the runtime up is
 /// never subject to the runtime's own limits.
@@ -832,7 +850,11 @@ fn install_traceback(lua: &Lua) -> Result<()> {
 /// binary chunks, so unless binary chunks are allowed it is wrapped to force text mode — which
 /// makes `load(bytecode, nil, "b")` fail with Lua's own "attempt to load a binary chunk"
 /// message rather than something of our invention.
-fn restrict_base_library(lua: &Lua, binary_chunks: bool) -> Result<()> {
+///
+/// Unless Lua finalizers are allowed, `setmetatable` is wrapped to refuse a metatable with a
+/// `__gc` (ADR 0018). The wrapper keeps the only reference to the real one, so it must be
+/// installed before any Lua that could keep one of its own.
+fn restrict_base_library(lua: &Lua, binary_chunks: bool, lua_finalizers: bool) -> Result<()> {
     const DROP_FILE_FUNCTIONS: &str = r#"
         _G.dofile = nil
         _G.loadfile = nil
@@ -858,6 +880,38 @@ fn restrict_base_library(lua: &Lua, binary_chunks: bool) -> Result<()> {
         end
     "#;
 
+    // Any `__gc`, looked up raw as Lua does, marks the table for finalizing, `true` included,
+    // and Lua calls whatever function is there by the time the table is collected. Lua's own
+    // errors are raised again from the caller, and keep its words and the caller's line: a
+    // Lua function calls the real `setmetatable` so that they name it, and the position that
+    // function adds is taken off. An error with no such position, such as running out of memory
+    // or a limit, it did not raise, and goes on as it is. Every global it uses is held from the
+    // start, so that a script replacing one cannot change what it does.
+    const NO_LUA_FINALIZERS: &str = r#"
+        local setmetatable, rawget, type, pcall, error = setmetatable, rawget, type, pcall, error
+        local gsub = string.gsub
+        local function call_by_name(...)
+            return setmetatable(...)
+        end
+        _G.setmetatable = function(...)
+            local _, mt = ...
+            if type(mt) == "table" and rawget(mt, "__gc") ~= nil then
+                error("setmetatable: finalizers (__gc) are not allowed in this runtime", 2)
+            end
+            local ok, result = pcall(call_by_name, ...)
+            if ok then
+                return result
+            end
+            if type(result) == "string" then
+                local message, placed = gsub(result, "^%[avarice%-rt base library%]:%d+: ", "", 1)
+                if placed == 1 then
+                    error(message, 2)
+                end
+            end
+            error(result, 0)
+        end
+    "#;
+
     let prelude = |source: &'static str| {
         let chunk = lua.load(source).set_name("=[avarice-rt base library]");
         enforce_chunk_mode(chunk, binary_chunks).exec()
@@ -868,6 +922,9 @@ fn restrict_base_library(lua: &Lua, binary_chunks: bool) -> Result<()> {
     }
     if !binary_chunks {
         prelude(TEXT_ONLY_CHUNKS)?;
+    }
+    if !lua_finalizers {
+        prelude(NO_LUA_FINALIZERS)?;
     }
     Ok(())
 }

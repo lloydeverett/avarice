@@ -42,8 +42,9 @@ never affects the profile any other runtime is built from.
 
 The profile for Lua code the author does not vouch for. Withholds the standard
 libraries through which Lua can reach outside its own computation — `io`, `os`,
-`package`, `debug` — caps memory, and refuses binary chunks. Registers no **stdlib
-module** except the **pure** ones, and every **core module**.
+`package`, `debug` — caps memory, and refuses binary chunks and **Lua
+finalizers**. Registers no **stdlib module** except the **pure** ones, and every
+**core module**.
 
 Sandbox mode describes what avarice-rt itself puts in the runtime. It is not a
 guarantee about a runtime an embedder has since reconfigured or added **host
@@ -58,6 +59,14 @@ available, `package` and `debug` excepted, and every **stdlib module** that is
 Trusted does not mean harmless: `os.exit` ends the host process, `io` reaches
 whatever the host user can, and the stdlib modules reach the network and the
 filesystem.
+
+## Lua finalizer
+
+A function a script gives a table to run when the table is collected: the `__gc`
+of the metatable it passes to `setmetatable`.
+
+Not a finalizer of userdata made in Rust, such as a stdlib module's handle to a
+running program. Those are the host's, and run whatever the profile.
 
 ## Host module
 

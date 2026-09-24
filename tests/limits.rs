@@ -122,6 +122,23 @@ fn catching_the_error_once_does_not_buy_the_script_more_time() {
 }
 
 #[test]
+fn a_time_limit_stops_a_script_in_the_sandbox_s_setmetatable() {
+    // The sandbox's `setmetatable` catches the real one's errors to raise them again from the
+    // caller, and a check every instruction lands inside it. What stops the script is still the
+    // time limit.
+    let rt = Runtime::builder(Profile::Sandbox)
+        .time_limit(Duration::from_millis(100))
+        .check_interval(1)
+        .build()
+        .unwrap();
+    let err = lua_error(
+        rt.block_on(rt.exec("while true do setmetatable({}, {}) end", "=test"))
+            .unwrap_err(),
+    );
+    assert!(was_timed_out(&err), "{err}");
+}
+
+#[test]
 fn xpcall_cannot_swallow_a_cancel_either() {
     let cancel = CancelHandle::new();
     let rt = Runtime::builder(Profile::Sandbox)
