@@ -183,3 +183,53 @@ shown, not to the source a reader is still typing.
 
 A Rust program that depends on avarice-rt as a library to run Lua. `avrt` is
 one embedder among others, with no privileged access.
+
+## Command
+
+A description of a program to run: the program, its arguments, and the
+circumstances it runs in — working directory, environment, and what becomes of
+each of its standard streams. Describing a Command runs nothing, and one
+Command can be run any number of times.
+
+A Command names a program and hands it its arguments one by one. No shell reads
+it, so nothing in it is split, quoted, expanded or globbed.
+
+_Avoid_: command line, shell command.
+
+## Child
+
+A program running because Lua started it from a **Command**, together with
+whatever of its standard streams were handed to Lua.
+
+Not a **task**: a task is Lua work on the runtime's own thread, and a Child is
+another program entirely, which runs in parallel with every task. Like a task,
+it outlives the chunk that started it, and ends when its runtime does; it also
+outlives Lua's hold on it, so losing every reference to a Child does not end it.
+
+Only the program Lua started is the Child. Programs the Child starts in turn are
+its own business, and not Children.
+
+_Avoid_: subprocess, process (for the running thing; `process` names the module).
+
+## Output
+
+What a **Child** leaves behind once it has ended: how it exited, and what it
+wrote to its standard output and standard error.
+
+A Child that exits unsuccessfully still has an Output, and so does one killed
+for running too long, holding what it wrote before it was killed. A **Command**
+that never started has none.
+
+_Avoid_: result.
+
+## Buffer
+
+A sequence of bytes the host holds on Lua's behalf, outside the Lua state, until
+Lua asks for them. What an HTTP response's body and a **Child**'s captured
+output are.
+
+Bytes, not text: nothing about a Buffer says its contents are UTF-8, or
+characters of any encoding. Asked for, it gives them to Lua as a string holding
+exactly those bytes, since a Lua string is a sequence of bytes too.
+
+_Avoid_: body (HTTP's word for what a response carries, not for the holder).

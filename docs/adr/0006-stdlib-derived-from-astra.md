@@ -8,6 +8,9 @@ status: accepted
 > is taken after all, and every Astra file carries a header, with no `NOTICE` or `UPSTREAM.md`.
 > Amended 2026-09-21 again: a change may also be an **addition** that leaves everything Astra does
 > as it was, and the first is a `__tostring` on the `fs` userdata.
+> Amended 2026-09-24: there may be exceptions where a change alters how Astra does things, when
+> following Astra would be wrong. Each is its own ADR; the first is
+> [ADR 0015](0015-lua-strings-carry-bytes.md), on how bytes cross into and out of Lua.
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) moves the stdlib from its own crate to a
 > directory of `avarice-rt`, licenses the whole project Apache-2.0 with one `LICENSE` at the root,
 > and folds the crate's `README.md` into the root one; where the text below calls it a crate, says
@@ -201,3 +204,16 @@ The header remains the only record of what differs from Astra: a change of this 
 in the same file, or it is not made. An addition is limited to what the rule already protected. It
 does not change what a method returns, what a function raises, or what any module exposes under a
 name Astra already gave it. Anything that would, is not an addition, and the earlier rule applies.
+
+## Amendment, 2026-09-24: exceptions that alter what Astra does
+
+The rules above, removals and additions only and nothing Astra does altered, are the default and
+stay so. There may be exceptions: a place where Astra's behaviour is a defect that no addition can
+fix, because the defect lives under a name callers already use. Such an exception is its own ADR,
+saying what changes and why following Astra would be wrong, and each file it touches still records
+the change under `Changes from the original:` in its header, so the header remains the one record
+of how a file differs from Astra's.
+
+The first is [ADR 0015](0015-lua-strings-carry-bytes.md): Astra's buffers, `fs`, `http` and
+`crypto` turned bytes into tables of numbers or replaced invalid UTF-8, and the stdlib now passes
+bytes through exactly.
