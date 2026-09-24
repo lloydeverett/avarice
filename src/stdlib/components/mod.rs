@@ -23,14 +23,16 @@
 //     `stdlib-fs` and `stdlib-http`. `astra_serde` and `utils` are behind `_astra_serde` and
 //     `_astra_utils` instead, which the modules that borrow from them (`http`, `validation`) turn
 //     on without registering `serde` or `utils`. Added a comment saying so.
-//   - Put the shared items behind `_astra_buffers`, which `stdlib-http` and `stdlib-fs` turn on:
+//   - Put the shared items behind `_astra_buffers`, which `stdlib-http`, `stdlib-fs` and
+//     `stdlib-process` turn on:
 //     the `use mlua::{ExternalError, FromLua, LuaSerdeExt}` line that only they need,
 //     `astra_buffer_types!` and its two invocations `AstraBuffer` and `AstraBufferMut`, `macros`,
 //     `is_table_json` and `is_table_byte_array`.
 //   - Allowed `dead_code`, under `cfg_attr`, where a build with only some of the features leaves
 //     part of a file unused: on `astra_serde` unless `stdlib-serde` is on (`http` alone), on `utils`
 //     unless `stdlib-utils` is on (`validation` alone), on `is_table_json` unless `stdlib-http` is
-//     on (`fs` alone), and, inside `astra_buffer_types!`, on the struct and on `new` unless both
+//     on (`fs` alone), on `is_table_byte_array` unless `stdlib-http` or `stdlib-fs` is on
+//     (`process` alone), and, inside `astra_buffer_types!`, on the struct and on `new` unless both
 //     `stdlib-http` and `stdlib-fs` are on (`AstraBuffer` is `http`'s and `AstraBufferMut` is
 //     `fs`'s). Added a comment saying so.
 //   - Nothing Astra does is altered by any of these: they are `#[cfg]`, `#[cfg_attr]` and
@@ -38,6 +40,10 @@
 //     from the buffer changes below.
 //   - Added `pub mod dirs;`, behind `stdlib-dirs`, for a module that owes Astra nothing (ADR 0014).
 //     Nothing Astra does is altered: this is an addition, like the module declarations above it.
+//   - Added `pub mod process;`, behind `stdlib-process`, for another module that owes Astra nothing
+//     (ADR 0016), and which uses `AstraBuffer` for the output it captures and takes either buffer
+//     as input. `stdlib-process` turns on `_astra_buffers`. Nothing Astra does is altered: this is
+//     an addition.
 //   - Changed the userdata `astra_buffer_types!` defines so that bytes reach Lua exactly
 //     (ADR 0015). This alters what Astra does:
 //       - `bytes` returns a Lua string holding exactly the buffer's bytes, made with
@@ -72,6 +78,8 @@ pub mod dirs;
 pub mod file_system;
 #[cfg(feature = "stdlib-http")]
 pub mod http;
+#[cfg(feature = "stdlib-process")]
+pub mod process;
 #[cfg(feature = "_astra_utils")]
 #[cfg_attr(not(feature = "stdlib-utils"), allow(dead_code))]
 pub mod utils;
@@ -201,6 +209,10 @@ fn is_table_json(table: &mlua::Table) -> mlua::Result<bool> {
 }
 
 #[cfg(feature = "_astra_buffers")]
+#[cfg_attr(
+    not(any(feature = "stdlib-http", feature = "stdlib-fs")),
+    allow(dead_code)
+)]
 pub(crate) fn is_table_byte_array(table: &mlua::Table) -> mlua::Result<bool> {
     let mut i = 1;
     for pair in table.pairs::<i64, i64>() {

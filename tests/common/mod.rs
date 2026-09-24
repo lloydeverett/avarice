@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use avarice_rt::{Runtime, StdModule};
 
@@ -68,6 +69,68 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A file that a program rewrites every 20 ms for as long as it lives, so that a test can tell
+/// whether a program it cannot see is still running, without asking the operating system.
+pub struct Heartbeat {
+    _dir: TempDir,
+    path: PathBuf,
+}
+
+impl Heartbeat {
+    /// Lua that beats, for `avrt -e`, into the file the `BEAT` environment variable names. It needs
+    /// `utils`, to wait between beats without spinning.
+    pub const LUA: &str = r#"
+        local n = 0
+        require("utils").spawn_interval(function()
+          n = n + 1
+          local file = io.open(os.getenv("BEAT"), "w")
+          file:write(n)
+          file:close()
+        end, 20)
+    "#;
+
+    pub fn new() -> Self {
+        let dir = TempDir::new();
+        let path = dir.path().join("beat");
+        Heartbeat { _dir: dir, path }
+    }
+
+    /// The file, for `BEAT`.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The last beat, if there has been one.
+    pub fn read(&self) -> Option<String> {
+        std::fs::read_to_string(&self.path).ok()
+    }
+
+    /// Whether it changes over a moment, waiting a while for the first beat.
+    pub fn beats(&self) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self.read().is_none_or(|beat| beat.is_empty()) {
+            assert!(Instant::now() < deadline, "the program never started beating");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let before = self.read();
+        std::thread::sleep(Duration::from_millis(300));
+        before != self.read()
+    }
+
+    /// Whether it stops changing within a few seconds.
+    pub fn stops(&self) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let before = self.read();
+            std::thread::sleep(Duration::from_millis(300));
+            if before == self.read() {
+                return true;
+            }
+        }
+        false
     }
 }
 

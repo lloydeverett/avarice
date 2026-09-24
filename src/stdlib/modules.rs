@@ -7,11 +7,11 @@
 //! than Astra's own `register_components` and `require` do between them, once per module and
 //! only when the module is first required, with one exception: see [`defines_globals`]. One
 //! module, `stores`, has no Rust half at all: it is **pure**, and that is what sandbox mode
-//! registers (ADR 0007). `dirs` follows the same two-layer shape but is original to avarice-rt,
-//! not Astra's (ADR 0014); it has a Rust half, so it is not pure.
+//! registers (ADR 0007). `dirs` and `process` follow the same two-layer shape but are original to
+//! avarice-rt, not Astra's (ADRs 0014 and 0016); they have Rust halves, so they are not pure.
 //!
 //! Every module is behind a Cargo feature that compiles it in (ADR 0007). The types here have all
-//! nine modules in every build, so what an embedder matches on does not vary with features; what
+//! ten modules in every build, so what an embedder matches on does not vary with features; what
 //! varies is which of them are *compiled in*, and asking for one that is not is an error rather
 //! than a silent omission.
 
@@ -47,6 +47,8 @@ pub enum StdModule {
     /// Standard per-application directories (config, data, cache, state, runtime), via
     /// `etcetera`. Original to avarice-rt, not derived from Astra.
     Dirs,
+    /// Running other programs, without a shell. Original to avarice-rt, not derived from Astra.
+    Process,
 }
 
 /// What is known about one module. Every fact about a module that is not code lives in [`TABLE`],
@@ -71,7 +73,7 @@ struct Entry {
 /// One row per module, compiled in or not, in the order [`StdModules::modules`] yields them. A
 /// module's row is at the index of its discriminant, which `the_table_is_in_declaration_order`
 /// holds to.
-const TABLE: [Entry; 9] = [
+const TABLE: [Entry; 10] = [
     Entry {
         module: StdModule::Http,
         name: "http",
@@ -144,6 +146,14 @@ const TABLE: [Entry; 9] = [
         compiled_in: cfg!(feature = "stdlib-dirs"),
         pure: false,
     },
+    Entry {
+        module: StdModule::Process,
+        name: "process",
+        feature: "stdlib-process",
+        flag: StdModules::PROCESS,
+        compiled_in: cfg!(feature = "stdlib-process"),
+        pure: false,
+    },
 ];
 
 const COMPILED_IN_COUNT: usize = {
@@ -176,7 +186,7 @@ const COMPILED_IN: [StdModule; COMPILED_IN_COUNT] = {
 impl StdModule {
     /// The modules compiled into this build, in the order [`StdModules::modules`] yields them.
     ///
-    /// A build that turns a module's feature off has fewer than nine, so this is a slice and not
+    /// A build that turns a module's feature off has fewer than ten, so this is a slice and not
     /// a fixed array.
     pub const ALL: &'static [StdModule] = &COMPILED_IN;
 
@@ -228,6 +238,8 @@ bitflags! {
         const VALIDATION = 1 << 7;
         /// [`StdModule::Dirs`].
         const DIRS = 1 << 8;
+        /// [`StdModule::Process`].
+        const PROCESS = 1 << 9;
     }
 }
 
@@ -399,6 +411,12 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<&'static st
             super::components::dirs::register_to_lua(lua)?;
             Ok(include_str!("lua/dirs.lua"))
         }
+        // Original to avarice-rt: no Astra file to point at.
+        #[cfg(feature = "stdlib-process")]
+        StdModule::Process => {
+            super::components::process::register_to_lua(lua)?;
+            Ok(include_str!("lua/process.lua"))
+        }
         // Only reached by a module whose feature is off; in a build with every feature on, every
         // variant has an arm above.
         #[allow(unreachable_patterns)]
@@ -460,7 +478,8 @@ mod tests {
                 "utils",
                 "stores",
                 "validation",
-                "dirs"
+                "dirs",
+                "process"
             ]
         );
     }
@@ -515,6 +534,7 @@ mod tests {
         assert_eq!(StdModules::STORES.bits(), 1 << 6);
         assert_eq!(StdModules::VALIDATION.bits(), 1 << 7);
         assert_eq!(StdModules::DIRS.bits(), 1 << 8);
+        assert_eq!(StdModules::PROCESS.bits(), 1 << 9);
     }
 
     #[test]
@@ -552,7 +572,7 @@ mod tests {
     fn set_algebra_adds_and_subtracts() {
         let without_http = StdModules::all() - StdModules::HTTP;
         assert!(!without_http.contains(StdModules::HTTP));
-        assert_eq!(without_http.modules().count(), 8);
+        assert_eq!(without_http.modules().count(), 9);
         assert_eq!(without_http | StdModules::HTTP, StdModules::all());
         assert_eq!(StdModules::all() & !StdModules::all(), StdModules::NONE);
     }

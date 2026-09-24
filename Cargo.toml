@@ -46,6 +46,7 @@ stdlib = [
   "stdlib-stores",
   "stdlib-validation",
   "stdlib-dirs",
+  "stdlib-process",
 ]
 # `net` is the tokio driver reqwest needs, so it follows `http`.
 stdlib-http = [
@@ -66,12 +67,27 @@ stdlib-stores = []
 stdlib-validation = ["_astra_utils"]
 # `dirs` is original to avarice-rt, not derived from Astra (ADR 0014).
 stdlib-dirs = ["dep:etcetera"]
+# `process` is original to avarice-rt too (ADR 0016). `process` is tokio's child processes,
+# `io-util` reads and writes their streams, `macros` reads them while waiting, `net` reads a merged
+# stdout and stderr on Unix, and `fs` does on Windows, where a pipe cannot be read without blocking
+# a thread. `which` finds a program, and `libc` sends `SIGTERM`, which neither std nor tokio can do
+# yet.
+stdlib-process = [
+  "dep:which",
+  "dep:libc",
+  "tokio/process",
+  "tokio/io-util",
+  "tokio/macros",
+  "tokio/net",
+  "tokio/fs",
+  "_astra_buffers",
+]
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
 # another's Rust takes the whole file, and these compile the file without adding the module: `http`
 # calls `sanetize_lua_input` from `astra_serde.rs` and `validation` builds `AstraRegex` from
 # `utils.rs`, and neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and
-# JSON helpers that `src/stdlib/components/mod.rs` holds for `http` and `fs`.
+# JSON helpers that `src/stdlib/components/mod.rs` holds for `http`, `fs` and `process`.
 _astra_serde = [
   "dep:serde-value",
   "dep:serde_json",
@@ -162,3 +178,10 @@ pastey = { version = "0.2.3", optional = true }
 # `dirs`'s own dependency. Unlike its neighbours above, this one is not Astra's: `dirs` is original
 # to avarice-rt (ADR 0014), and `etcetera` is the crate that computes its paths.
 etcetera = { version = "0.11", optional = true }
+
+# `process`'s own dependencies, not Astra's either (ADR 0016). `which` searches `PATH`, honouring
+# `PATHEXT` on Windows; `libc` is Unix-only, for `kill`.
+which = { version = "8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }

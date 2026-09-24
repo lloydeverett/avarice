@@ -237,6 +237,10 @@ string holding exactly those bytes.
 
 - A non-table Command, a string in particular, is an error whose message shows the table form.
   Validation happens eagerly, before anything starts, as `dirs.app` validates its arguments.
+- A field a Command does not have is an error, as is `check` or `timeout` given to `spawn`: input
+  the module cannot use is raised, never ignored (ADR 0017).
+- `run` gives no way to write to a piped stdin, so `stdin = "pipe"` is an error there, and a stdin
+  that `stdio = "pipe"` pipes is closed at once.
 - Arguments are byte strings. On Windows, where command lines are UTF-16, an argument that is not
   valid UTF-8 is an error.
 - `"inherit"` means the host process's own standard streams, not the runtime's write sink.
@@ -274,8 +278,8 @@ string holding exactly those bytes.
 | reader `:line()` | the next line without its line ending, `nil` at end of file |
 | reader `:lines()` | an iterator over `:line()` |
 | reader `:rest()` | everything remaining, as a Buffer |
-| `:wait()` | yields until exit; returns `{ ok, code, signal }`. Documented: may hang if a piped stream fills and nobody reads it; use `:output()` |
-| `:output()` | drains both piped streams concurrently, waits, returns an Output |
+| `:wait()` | closes `stdin` if piped, as std's and tokio's `wait` do; yields until exit; returns `{ ok, code, signal }`. Documented: may hang if a piped stream fills and nobody reads it; use `:output()` |
+| `:output()` | closes `stdin` if piped; drains both piped streams concurrently, waits, returns an Output |
 | `:kill()` | forceful: SIGKILL on Unix, `TerminateProcess` on Windows |
 | `:terminate()` | polite: SIGTERM on Unix; the same as `:kill()` on Windows |
 | `:pid()` | the operating system's process id |
@@ -289,10 +293,13 @@ string holding exactly those bytes.
 | `kind` | Raised by | Fields | Message |
 |---|---|---|---|
 | `"start"` | `run`, `spawn` | `program`, `reason` (`not_found`, `permission_denied`, `bad_cwd`, `other`), `message` (the operating system's text) | `process: could not start 'foo': program not found` |
-| `"exit"` | `run` with `check` | `program`, `output` | `process: git exited with code 128: <last line of stderr>` |
+| `"exit"` | `run` with `check` | `program`, `output` | `process: git exited with code 128`, or on Unix `process: git was killed by signal 9` |
 | `"timeout"` | `run` with `timeout` | `program`, `output` (partial) | `process: git timed out after 5000 ms` |
 
-`program` is the name as the Command gave it. No field or message holds the arguments.
+`program` is the name as the Command gave it. No field or message holds the arguments. Nor does a
+message quote the Child's stderr, which often repeats them: a failed `git clone` names its URL,
+token and all. The whole of stderr is in `output.stderr`, as Python's `CalledProcessError` and Go's
+`ExitError` keep it beside their message rather than in it.
 
 **Lifetime**
 

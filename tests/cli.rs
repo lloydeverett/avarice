@@ -239,6 +239,8 @@ where
 {
     Command::new(AVRT)
         .args(args)
+        // For a script that runs `avrt` itself as a Child.
+        .env("AVRT", AVRT)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -334,6 +336,31 @@ fn a_task_can_be_aborted_so_that_the_script_ends() {
     );
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "done\n");
+}
+
+#[cfg(all(feature = "stdlib-process", feature = "stdlib-utils"))]
+#[test]
+fn a_script_waits_for_a_child_it_left_running() {
+    // Were `avrt` to exit without waiting, dropping its runtime would kill the Child before it
+    // wrote the file.
+    let dir = TempDir::new();
+    let done = dir.path().join("done");
+    let output = avrt_within(
+        30,
+        [
+            "-e",
+            &format!(
+                r#"require("process").spawn({{ os.getenv("AVRT"), "-e",
+                  [[require("utils").spawn_timeout(function()
+                    io.open(os.getenv("DONE"), "w"):close()
+                  end, 300)]],
+                  env = {{ DONE = [==[{}]==] }}, stdio = "null" }})"#,
+                done.display()
+            ),
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert!(done.exists(), "avrt exited before its Child did");
 }
 
 #[test]
@@ -480,6 +507,35 @@ mod interrupt {
             "{}",
             stderr_of(&output)
         );
+    }
+
+    #[cfg(all(feature = "stdlib-process", feature = "stdlib-utils"))]
+    #[test]
+    fn ctrl_c_kills_a_running_child_and_counts_it() {
+        // The signal goes to `avrt` alone, as `kill` sends it, not to the terminal's whole group,
+        // so the Child ends only because `avrt` ends it.
+        let beat = common::Heartbeat::new();
+        let output = interrupted(&format!(
+            r#"
+            local beat = [==[{}]==]
+            require("process").spawn({{ os.getenv("AVRT"), "-e", [==[{}]==],
+              env = {{ BEAT = beat }}, stdio = "null" }})
+            -- Ready once it beats, so that the signal lands on a Child that is running.
+            while not io.open(beat) do
+              require("utils").spawn_timeout(function() end, 20):await()
+            end
+            print("ready")
+            "#,
+            beat.path().display(),
+            common::Heartbeat::LUA,
+        ));
+        assert_eq!(output.status.code(), Some(130), "{}", stderr_of(&output));
+        assert!(
+            stderr_of(&output).contains("aborting 1 running task\n"),
+            "{}",
+            stderr_of(&output)
+        );
+        assert!(beat.stops(), "the Child outlived avrt");
     }
 
     #[test]

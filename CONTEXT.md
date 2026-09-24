@@ -70,8 +70,8 @@ has is decided in Rust at construction; Lua code never causes one to load.
 ## Stdlib module
 
 A **host module** that avarice-rt ships, rather than one an embedder wrote.
-`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
-and `dirs`.
+`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
+`dirs` and `process`.
 
 Stdlib modules are host modules like any other, and carry no privilege an
 embedder's own module lacks. What distinguishes them is only that a **profile**

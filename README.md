@@ -3,8 +3,8 @@
 An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates/mlua), and a
 command-line interpreter, `avrt`, built on the runtime.
 
-- **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`
-  and `dirs`, each behind its own Cargo feature. Most are adapted from
+- **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
+  `dirs` and `process`, each behind its own Cargo feature. Most are adapted from
   [Astra](https://github.com/ArkForgeLabs/Astra).
 - **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
   one makes can be overridden. The sandbox has no `io`, no `os` and no binary chunks, and caps
@@ -190,6 +190,30 @@ local app = require("dirs").app("myapp", "Example", "com")
 print(app:config(), app:data(), app:cache())   -- e.g. ~/.config/myapp on Linux
 print(app:state(), app:runtime())              -- nil where the platform has none
 ```
+
+### `process`
+
+```lua
+local process = require("process")
+
+-- No shell: the program and each argument are entries of their own, passed as they are.
+local output = process.run({ "git", "log", "--oneline", "-5", cwd = "some/repo" })
+print(output.ok, output.code, output.stdout:bytes(), output.stderr:bytes())
+
+-- Raise on failure, or on taking too long; the error carries what was captured.
+local ok, err = pcall(process.run, { "make", "test", check = true, timeout = 60000 })
+if not ok then print(err, err.kind, err.output and err.output.stderr:bytes()) end
+
+-- Talk to a Child while it runs.
+local child = process.spawn({ "sort" })
+child.stdin:write("pear\napple\n")
+child.stdin:close()
+for line in child.stdout:lines() do print(line) end
+print(child:wait().code)
+```
+
+A running Child counts as a task: `avrt` waits for it before exiting, and Ctrl-C kills it. Only the
+Child is killed, not programs it started.
 
 ### `ansi`
 
