@@ -14,6 +14,7 @@ command-line interpreter, `avrt`, built on the runtime.
 - **Limits.** Time limits and cancellation apply to Lua running in coroutines and to chunks
   waiting on I/O.
 - **The `avrt` command.** Runs scripts, or starts a REPL with history and multi-line input.
+- **Cross-platform.** Aims to behave the same on Linux, macOS and Windows wherever possible.
 - **Host-controlled modules.** Lua's `package` library is never opened. `require` resolves only
   modules registered from Rust and modules in a store the host supplies, such as a directory.
 
@@ -24,21 +25,9 @@ Terms used in the code are defined in [CONTEXT.md](CONTEXT.md). Design decisions
 
 Lua is vendored and built from source, so you need a C compiler but not a system Lua.
 
-To install the `avrt` command:
-
 ```console
 $ cargo install --git https://github.com/lloydeverett/avarice-rt
 ```
-
-To use the library, turn off default features so you don't pull in the CLI's dependencies, and
-list the stdlib modules you want:
-
-```toml
-[dependencies]
-avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false, features = ["stdlib-serde"] }
-```
-
-Each module has a feature named `stdlib-<name>`; `stdlib` turns on all of them.
 
 ## Usage
 
@@ -62,49 +51,99 @@ $ avrt script.lua arg1 arg2
 $ avrt -e 'print(_VERSION)'
 $ echo 'print(1 + 1)' | avrt
 $ avrt --sandbox --timeout 5 untrusted.lua
-```
-
-`avrt` uses the trusted profile unless you pass `--sandbox`. Run `avrt --help` for all options.
-
-### Requiring your own modules
-
-`require` looks in the script's directory by default, or in the directories given with `--path`:
-
-```lua
--- main.lua
-local util = require("lib.util")   -- loads lib/util.lua
-```
-
-```console
-$ avrt main.lua
 $ avrt --path ./src --path ./vendor main.lua
 ```
 
-### Stdlib modules
+`avrt` uses the trusted profile unless you pass `--sandbox`. `require` looks in the script's
+directory, or in the `--path` directories. Run `avrt --help` for all options.
+
+## Stdlib
 
 ```lua
-local json = require("serde").json
-print(json.decode('{"name": "avrt", "tags": ["lua"]}'))
-
-local crypto = require("crypto")
-print(crypto.hash("sha2_256", "hello"))
-print(crypto.base64.encode("hello"))
-
-local response = require("http").request("https://example.com"):execute()
-print(response:status_code(), response:body():bytes())
-
-print(require("dirs").app("myapp", "example.com", "Example"):config())
-
 print(stdlib())   -- the stdlib modules this runtime has
 ```
 
-The sandbox only registers modules written purely in Lua (currently `stores`). The others reach the
-network or filesystem and need the trusted profile.
+The sandbox only registers `stores` and the core module `ansi`, which are pure Lua. The other
+modules need the trusted profile.
 
-### Background tasks
+### `http`
+
+```lua
+local http = require("http")
+
+local res = http.request("https://httpbin.org/get"):execute()
+print(res:status_code(), res:headers(), res:body():json())
+
+local res = http.request({
+  url = "https://httpbin.org/post",
+  method = "POST",
+  headers = { ["x-token"] = "abc" },
+  body = { hello = "world" },   -- tables are sent as JSON
+}):execute()
+print(res:status_code() == http.status_codes.OK)
+```
+
+### `fs`
+
+```lua
+local fs = require("fs")
+
+fs.create_dir_all("out/logs")
+fs.write_file("out/logs/a.txt", "hello")
+print(fs.read_file("out/logs/a.txt"), fs.exists("out/logs/a.txt"))
+
+for _, entry in ipairs(fs.read_dir("out/logs")) do
+  print(entry:file_name(), entry:type():is_file())
+end
+print(fs.get_metadata("out/logs/a.txt"):last_modified())
+print(fs.parse_glob("out/**/*.txt").entries)
+
+fs.remove_dir_all("out")
+```
+
+### `crypto`
+
+```lua
+local crypto = require("crypto")
+
+print(crypto.hash("sha2_256", "hello"))   -- also sha2_512, sha3_256, sha3_512
+print(crypto.base64.encode("hello"), crypto.base64.decode("aGVsbG8="))
+print(crypto.base64.encode_urlsafe("hello?"))
+```
+
+### `serde`
+
+```lua
+local serde = require("serde")
+
+local cfg = serde.json.decode('{"name": "avrt", "tags": ["lua"]}')
+print(serde.json.encode(cfg))
+print(serde.yaml.encode(cfg))
+print(serde.toml.decode("port = 8080").port)
+print(serde.csv.decode("a,b\n1,2\n").body)
+-- also json5, ini, xml
+```
+
+### `datetime`
+
+```lua
+local datetime = require("datetime")
+
+print(datetime.new():to_iso_string())                        -- now
+print(datetime.new(2026, 9, 24):add_days(7):to_date_string()) -- 2026-10-01
+print(datetime.new("2026-09-24T12:00:00Z"):get_year())       -- parse
+datetime.sleep(100)                                           -- milliseconds
+```
+
+### `utils`
 
 ```lua
 local utils = require("utils")
+
+print(utils.uuid(), utils.env.get("HOME"))
+
+local task = utils.spawn_task(function() print("in the background") end)
+task:await()
 
 utils.spawn_timeout(function() print("later") end, 500)
 local ticker = utils.spawn_interval(function() print("tick") end, 100)
@@ -113,34 +152,113 @@ utils.spawn_timeout(function() ticker:abort() end, 1000)
 
 `avrt` waits for outstanding tasks before exiting. Ctrl-C aborts them.
 
-### Embedding
+### `stores`
 
-```rust
-use avarice_rt::{Profile, Runtime};
+```lua
+local stores = require("stores")
 
-let rt = Runtime::new(Profile::Sandbox)?;
-let answer: i64 = rt.block_on(rt.eval("return 6 * 7", "=example"))?;
+local count = stores.observable(0)
+count:subscribe(function(n) print("count is", n) end)
+count:publish(1)
+
+stores.pubsub.subscribe("greet", function(name, topic) print(topic, name) end)
+stores.pubsub.publish("greet", "world")
 ```
 
-### Registering modules and a module store
+### `validation`
 
-```rust
-use avarice_rt::{FsStore, Profile, Runtime};
+```lua
+local validation = require("validation")
+local T = validation.types
 
-let rt = Runtime::builder(Profile::Sandbox)
-    .store(FsStore::new("/srv/lua"))   // require("app.util") -> /srv/lua/app/util.lua
-    .build()?;
+local User = T.build(T.struct({
+  name = T.string(),
+  age = T.optional(T.integer()),
+  role = T.string({ default = "user" }),
+}))
+print(User({ name = "ada" }).role)   -- user
+print(pcall(User, { name = 1 }))     -- false  name: expected string, got number
 
-let clock = rt.lua().create_table()?;
-clock.set("now", rt.lua().create_function(|_, ()| Ok(0))?)?;
-rt.register_module("clock", clock)?;   // require("clock")
+local re = validation.regex([[(\d+)-(\d+)]])
+print(re:is_match("10-20"), re:replace("10-20", "$2-$1"))
 ```
 
-A store doesn't have to be the filesystem. Implement `ModuleStore` to load source from anywhere:
+### `dirs`
+
+```lua
+local app = require("dirs").app("myapp", "Example", "com")
+print(app:config(), app:data(), app:cache())   -- e.g. ~/.config/myapp on Linux
+print(app:state(), app:runtime())              -- nil where the platform has none
+```
+
+### `ansi`
+
+A core module: always present, in every profile and build.
+
+```lua
+local ansi = require("ansi")
+
+print(ansi.bold .. ansi.fg.red .. "error" .. ansi.reset)
+print(ansi.fg.hex("#ff8800") .. ansi.bg.color256(236) .. "orange" .. ansi.reset)
+```
+
+## Embedding
+
+Turn off default features to leave out the CLI's dependencies, then list the stdlib modules you
+want. Each module is a feature named `stdlib-<name>`; `stdlib` turns on all of them. A module left
+out isn't compiled, and neither are its dependencies.
+
+```toml
+[dependencies]
+avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false, features = [
+  "stdlib-serde",
+  "stdlib-crypto",
+] }
+
+# features = []            smallest: the core runtime, `print` and `ansi`, no stdlib modules
+# features = ["stdlib"]    every module; `stdlib-http` is the heaviest (reqwest, rustls)
+```
 
 ```rust
-use avarice_rt::{ModuleName, ModuleSource, ModuleStore, StoreError};
+use std::time::Duration;
 
+use avarice_rt::{
+    CancelHandle, FsStore, ModuleName, ModuleSource, ModuleStore, Profile, Runtime, StdModules,
+    StoreError,
+};
+
+fn main() -> avarice_rt::Result<()> {
+    let cancel = CancelHandle::new();
+
+    // Start from a profile: `Sandbox` (no io, os or binary chunks; 128 MiB memory cap) or
+    // `Trusted` (io, os and every stdlib module compiled in). Any setting can be overridden.
+    let rt = Runtime::builder(Profile::Sandbox)
+        // Add or remove stdlib modules, from those the build's features compiled in.
+        .with_std_modules(StdModules::SERDE | StdModules::CRYPTO)
+        // Stop Lua after 5 seconds, or when `cancel.cancel()` is called from any thread.
+        .time_limit(Duration::from_secs(5))
+        .cancel_handle(cancel.clone())
+        // `require("app.util")` loads /srv/lua/app/util.lua.
+        .store(FsStore::new("/srv/lua"))
+        // Send `print` somewhere other than stdout.
+        .write_sink(std::io::stderr())
+        .build()?;
+
+    // Expose Rust to Lua as a module: `require("clock").now()`.
+    let clock = rt.lua().create_table()?;
+    clock.set("now", rt.lua().create_function(|_, ()| Ok(0))?)?;
+    rt.register_module("clock", clock)?;
+
+    // Chunks run as futures on the runtime's Tokio executor.
+    let answer: i64 = rt.block_on(rt.eval("return 6 * 7", "=example"))?;
+    rt.block_on(rt.exec(r#"print(require("serde").json.encode({ answer = 42 }))"#, "=example"))?;
+
+    // Wait for tasks Lua spawned (`utils.spawn_task` and friends).
+    rt.block_on(rt.wait_for_tasks())?;
+    Ok(())
+}
+
+// A store can load modules from anywhere, not just the filesystem.
 struct SqliteStore { /* ... */ }
 
 impl ModuleStore for SqliteStore {
@@ -149,45 +267,6 @@ impl ModuleStore for SqliteStore {
         Ok(None)
     }
 }
-```
-
-### Limits and cancellation
-
-```rust
-use std::time::Duration;
-use avarice_rt::{CancelHandle, Profile, Runtime};
-
-let cancel = CancelHandle::new();
-let rt = Runtime::builder(Profile::Sandbox)
-    .time_limit(Duration::from_secs(5))
-    .cancel_handle(cancel.clone())
-    .build()?;
-
-std::thread::spawn(move || cancel.cancel());
-```
-
-### Choosing stdlib modules per runtime
-
-```rust
-use avarice_rt::{Profile, Runtime, StdModules};
-
-let trusted_without_http = Runtime::builder(Profile::Trusted)
-    .without_std_modules(StdModules::HTTP)
-    .build()?;
-
-let sandbox_with_crypto = Runtime::builder(Profile::Sandbox)
-    .with_std_modules(StdModules::CRYPTO)
-    .build()?;
-```
-
-### Redirecting `print`
-
-```rust
-use avarice_rt::{Profile, Runtime};
-
-let rt = Runtime::builder(Profile::Sandbox)
-    .write_sink(std::io::stderr())
-    .build()?;
 ```
 
 ## Licence
