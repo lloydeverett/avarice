@@ -319,7 +319,12 @@ impl ModuleStore for SqliteStore {
 
 ## Limitations / WIP
 
-- Needs testing on Windows.
+- Needs `cargo test` testing on Windows.
+
+> - PATHEXT lookup. a_program_is_found_on_the_path_the_command_gives runs avrt-copy by bare name, which should find avrt-copy.exe.
+> - Windows-only code in process.rs: the reader for merged stdout and stderr, the host-stdout handle used when stderr goes to stdout, and the non-Unix branches for arguments and terminate.
+> - Older Windows-only branches: env_value in utils.rs and upload_path in http/client/request.rs.
+> - :kill(), :terminate(), and Ctrl-C with a Child running. The Ctrl-C tests are Unix-only, so try that one by hand.
 
 ## Licence
 
