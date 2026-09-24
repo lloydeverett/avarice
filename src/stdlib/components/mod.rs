@@ -34,9 +34,23 @@
 //     `stdlib-http` and `stdlib-fs` are on (`AstraBuffer` is `http`'s and `AstraBufferMut` is
 //     `fs`'s). Added a comment saying so.
 //   - Nothing Astra does is altered by any of these: they are `#[cfg]`, `#[cfg_attr]` and
-//     `#[allow]` attributes, and in a build with every feature on the file is as it was.
+//     `#[allow]` attributes, and in a build with every feature on the file is as it was, apart
+//     from the buffer changes below.
 //   - Added `pub mod dirs;`, behind `stdlib-dirs`, for a module that owes Astra nothing (ADR 0014).
 //     Nothing Astra does is altered: this is an addition, like the module declarations above it.
+//   - Changed the userdata `astra_buffer_types!` defines so that bytes reach Lua exactly
+//     (ADR 0015). This alters what Astra does:
+//       - `bytes` returns a Lua string holding exactly the buffer's bytes, made with
+//         `lua.create_string`, where Astra returned a `Vec<u8>`, which Lua gets as a table with one
+//         number per byte: 16 bytes of memory per byte, and impossible to turn back into a string
+//         past about a million entries.
+//       - Removed `text`. With `bytes` giving a string, `text` could differ from it only by
+//         replacing invalid UTF-8 with U+FFFD, which is the defect.
+//       - `json` parses the bytes with `serde_json::from_slice`, which fails on invalid UTF-8,
+//         where Astra parsed `String::from_utf8_lossy` of them, which replaced it. Its `null`
+//         handling is unchanged.
+//       - Added a `__len` metamethod giving the length in bytes, so that `#buffer` need not copy
+//         the bytes into Lua. It waits for the buffer, as `bytes` does. This is an addition.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
@@ -92,19 +106,13 @@ macro_rules! astra_buffer_types {
                         Err(_) => format!("{}(in use)", stringify!($name)),
                     })
                 });
-                methods.add_async_method("bytes", |_, this, ()| async move {
+                methods.add_async_method("bytes", |lua, this, ()| async move {
                     let bytes = this.lock().await;
-                    Ok(bytes.to_vec())
-                });
-                methods.add_async_method("text", |_, this, ()| async move {
-                    let bytes = this.lock().await;
-                    Ok(String::from_utf8_lossy(&bytes).to_string())
+                    lua.create_string(&bytes[..])
                 });
                 methods.add_async_method("json", |lua, this, ()| async move {
                     let bytes = this.lock().await;
-                    match serde_json::from_str::<serde_json::Value>(
-                        &String::from_utf8_lossy(&bytes).to_string(),
-                    ) {
+                    match serde_json::from_slice::<serde_json::Value>(&bytes) {
                         Ok(parsed_json) => lua.to_value_with(
                             &parsed_json,
                             mlua::serde::SerializeOptions::new()
@@ -113,6 +121,9 @@ macro_rules! astra_buffer_types {
                         ),
                         Err(e) => Err(e.into_lua_err()),
                     }
+                });
+                methods.add_async_meta_method(mlua::MetaMethod::Len, |_, this, ()| async move {
+                    Ok(this.lock().await.len())
                 });
             }
         }

@@ -91,7 +91,7 @@ print(crypto.hash("sha2_256", "hello"))
 print(crypto.base64.encode("hello"))
 
 local response = require("http").request("https://example.com"):execute()
-print(response:status_code(), response:body():text())
+print(response:status_code(), response:body():bytes())
 
 print(require("dirs").app("myapp", "example.com", "Example"):config())
 

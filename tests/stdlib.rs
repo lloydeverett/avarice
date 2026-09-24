@@ -937,3 +937,195 @@ fn resolving_a_directory_never_creates_it() {
         "{config} already existed; pick a name this test does not collide with"
     );
 }
+
+// -- Exact bytes (ADR 0015) ---------------------------------------------------------------------
+//
+// Bytes cross between Lua and the stdlib as Lua strings holding exactly those bytes. Each test
+// sends every byte value, or ones that are not UTF-8, through and checks none is lost or replaced.
+
+#[cfg(any(feature = "stdlib-fs", feature = "stdlib-crypto", feature = "stdlib-http"))]
+/// A Lua expression for a string of every byte value once, in order.
+const ALL_BYTES: &str = "(function() local t = {} for i = 0, 255 do t[#t + 1] = string.char(i) end \
+                         return table.concat(t) end)()";
+
+#[cfg(any(feature = "stdlib-fs", feature = "stdlib-crypto", feature = "stdlib-http"))]
+/// Whether `source`, run in a trusted runtime with `ALL` bound to `ALL_BYTES`, returns true.
+fn holds(source: &str) -> bool {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    rt.block_on(rt.eval(format!("local ALL = {ALL_BYTES}\n{source}"), "=test"))
+        .unwrap()
+}
+
+#[cfg(feature = "stdlib-fs")]
+#[test]
+fn write_file_writes_a_strings_exact_bytes() {
+    let dir = TempDir::new();
+    let path = dir.path().join("all.bin");
+    assert!(holds(&format!(
+        "require('fs').write_file({path:?}, ALL) return true"
+    )));
+    assert_eq!(std::fs::read(&path).unwrap(), (0..=255u8).collect::<Vec<_>>());
+}
+
+#[cfg(feature = "stdlib-fs")]
+#[test]
+fn write_file_still_accepts_a_table_of_byte_values() {
+    let dir = TempDir::new();
+    let path = dir.path().join("table.bin");
+    assert!(holds(&format!(
+        "require('fs').write_file({path:?}, {{ 255, 0, 1 }}) return true"
+    )));
+    assert_eq!(std::fs::read(&path).unwrap(), [255, 0, 1]);
+}
+
+#[cfg(feature = "stdlib-fs")]
+#[test]
+fn read_file_bytes_returns_the_files_exact_bytes_as_a_string() {
+    let dir = TempDir::new();
+    let path = dir.path().join("all.bin");
+    std::fs::write(&path, (0..=255u8).collect::<Vec<_>>()).unwrap();
+    assert!(holds(&format!(
+        "local got = require('fs').read_file_bytes({path:?})
+         return type(got) == 'string' and got == ALL"
+    )));
+}
+
+#[cfg(feature = "stdlib-fs")]
+#[test]
+fn a_buffer_gives_its_exact_bytes_as_a_string_and_its_length_through_len() {
+    let dir = TempDir::new();
+    let path = dir.path().join("all.bin");
+    std::fs::write(&path, (0..=255u8).collect::<Vec<_>>()).unwrap();
+    assert!(holds(&format!(
+        "local fs = require('fs')
+         local buffer = fs.new_buffer(512)
+         fs.open({path:?}):read_buf(buffer)
+         return buffer:bytes() == ALL and #buffer == 256"
+    )));
+}
+
+#[cfg(feature = "stdlib-fs")]
+#[test]
+fn a_buffer_has_no_text_method() {
+    // `bytes()` already gives a string; a `text()` beside it could only differ by replacing what
+    // is not UTF-8.
+    assert!(holds(
+        "local buffer = require('fs').new_buffer(8)
+         return not pcall(function() return buffer:text() end)"
+    ));
+}
+
+#[cfg(feature = "stdlib-fs")]
+#[test]
+fn a_buffers_json_fails_on_bytes_that_are_not_utf8_and_keeps_null_as_nil() {
+    let dir = TempDir::new();
+    let bad = dir.path().join("bad.json");
+    std::fs::write(&bad, b"{\"a\": \"\xff\"}").unwrap();
+    let good = dir.path().join("good.json");
+    std::fs::write(&good, b"{\"a\": 1, \"b\": null}").unwrap();
+    assert!(holds(&format!(
+        "local fs = require('fs')
+         local function buffer_of(path)
+           local buffer = fs.new_buffer(64)
+           fs.open(path):read_buf(buffer)
+           return buffer
+         end
+         local bad = buffer_of({bad:?})
+         local good = buffer_of({good:?}):json()
+         return not pcall(bad.json, bad) and good.a == 1 and good.b == nil"
+    )));
+}
+
+#[cfg(feature = "stdlib-crypto")]
+#[test]
+fn hashing_accepts_bytes_that_are_not_utf8() {
+    // Digests of the three bytes FF 00 01, from `sha256sum` and Python's `hashlib.sha3_256`.
+    assert!(holds(
+        "local crypto = require('crypto')
+         return crypto.hash('sha2_256', '\\255\\0\\1')
+                  == '942e1e2a66a427b6551732f758bc314f22b9cdec9365a3425c9184de299392b5'
+            and crypto.hash('sha3_256', '\\255\\0\\1')
+                  == '1d87dc04bfe2f3eb321b0b0e03d35bbc84bd7191847fa54300a184449c23bedb'"
+    ));
+}
+
+#[cfg(feature = "stdlib-crypto")]
+#[test]
+fn base64_round_trips_every_byte_value_in_both_alphabets() {
+    assert!(holds(
+        "local b64 = require('crypto').base64
+         return b64.decode(b64.encode(ALL)) == ALL
+            and b64.decode_urlsafe(b64.encode_urlsafe(ALL)) == ALL
+            and b64.encode('\\255\\254\\253') == '//79'
+            and b64.encode_urlsafe('\\255\\254\\253') == '__79'
+            and b64.decode('/wAB') == '\\255\\0\\1'"
+    ));
+}
+
+#[cfg(feature = "stdlib-http")]
+/// Answers one request, on a port of its own, with a body that echoes the request's body, and
+/// hands over the whole request as received. Returns the URL to ask for.
+fn serve_echo_once() -> (String, std::sync::mpsc::Receiver<Vec<u8>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/echo", listener.local_addr().unwrap());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut seen = Vec::new();
+        let mut chunk = [0; 512];
+        let head_end = loop {
+            if let Some(i) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+            let n = stream.read(&mut chunk).unwrap();
+            assert_ne!(n, 0, "the connection closed before the request's head ended");
+            seen.extend_from_slice(&chunk[..n]);
+        };
+        let head = String::from_utf8_lossy(&seen[..head_end]).to_ascii_lowercase();
+        let length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .map_or(0, |n| n.trim().parse().unwrap());
+        while seen.len() < head_end + length {
+            let n = stream.read(&mut chunk).unwrap();
+            assert_ne!(n, 0, "the connection closed before the request's body ended");
+            seen.extend_from_slice(&chunk[..n]);
+        }
+        let body = &seen[head_end..head_end + length];
+        let mut response =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n")
+                .into_bytes();
+        response.extend_from_slice(body);
+        stream.write_all(&response).unwrap();
+        sender.send(seen).unwrap();
+    });
+    (url, receiver)
+}
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn a_request_body_given_as_a_string_is_sent_exactly_and_the_response_body_read_exactly() {
+    let (url, request) = serve_echo_once();
+    assert!(holds(&format!(
+        "local body = require('http').request('{url}'):set_method('POST'):set_body(ALL)
+           :execute():body()
+         return body:bytes() == ALL and #body == 256"
+    )));
+    let request = request.recv().unwrap();
+    assert!(request.ends_with(&(0..=255u8).collect::<Vec<_>>()));
+    // The default content type for a string body is unchanged.
+    let head = String::from_utf8_lossy(&request).to_ascii_lowercase();
+    assert!(head.contains("content-type: text/plain"), "{head}");
+}
+
+#[cfg(feature = "stdlib-http")]
+#[test]
+fn a_request_body_given_as_a_table_of_byte_values_is_still_sent() {
+    let (url, request) = serve_echo_once();
+    assert!(holds(&format!(
+        "require('http').request('{url}'):set_method('POST'):set_body({{ 255, 0, 1 }}):execute()
+         return true"
+    )));
+    assert!(request.recv().unwrap().ends_with(&[255, 0, 1]));
+}

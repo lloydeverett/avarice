@@ -17,13 +17,17 @@
 --     `CloseFrame`, `WebSocketMessage` and `WebSocket`, and the aliases `WebSocketMessageType` and
 --     `wscallback`. The WebSocket client is not taken.
 --   - Removed the three lines of dashes that divided those annotations from the server code.
---   - Everything else is unchanged: the client annotations, `http.request` and `http.status_codes`.
+--   - Changed the `Buffer` annotations to match what a Buffer now does (ADR 0015): `bytes` returns
+--     a `string` rather than `number[]`, `text` is removed, and `---@operator len: integer` is
+--     added for `#buffer`.
+--   - Everything else is unchanged: the other client annotations, `http.request` and
+--     `http.status_codes`.
 
 ---@meta
 
 ---@class Buffer
----@field bytes fun(self: Buffer): number[]
----@field text fun(self: Buffer): string
+---@operator len: integer
+---@field bytes fun(self: Buffer): string
 ---@field json fun(self: Buffer): table Returns the body parsed as JSON -> Lua Table
 
 local http = {}

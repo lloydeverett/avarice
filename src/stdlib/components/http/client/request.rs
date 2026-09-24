@@ -3,7 +3,13 @@
 // Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
 // crate's root.
 //
-// Changes from the original: none. Apart from this header the file is byte-for-byte Astra's.
+// Changes from the original:
+//   - Made a body given as a Lua string be sent as that string's exact bytes (ADR 0015), where
+//     Astra sent `to_string_lossy()` of it, which replaced invalid UTF-8 with U+FFFD and so
+//     corrupted binary data. `HTTPClientRequestBodyTypes::String` holds a `Vec<u8>` in place of a
+//     `String`, and `body_parser` fills it with `value.as_bytes().to_vec()`. This alters what Astra
+//     does. Its `text/plain` default content type is unchanged.
+//   - Everything else is unchanged.
 
 use crate::components::{AstraBuffer, astra_serde::sanetize_lua_input};
 use mlua::{ExternalResult, LuaSerdeExt};
@@ -12,7 +18,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum HTTPClientRequestBodyTypes {
-    String(String),
+    String(Vec<u8>),
     Json(serde_json::Value),
     Bytes(Vec<u8>),
 }
@@ -160,7 +166,7 @@ impl HTTPClientRequest {
                     headers.insert("Content-Type".to_string(), "text/plain".to_string());
                 }
                 Ok(Some(HTTPClientRequestBodyTypes::String(
-                    value.to_string_lossy(),
+                    value.as_bytes().to_vec(),
                 )))
             }
             mlua::Value::Table(value) => {

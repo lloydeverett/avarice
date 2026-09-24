@@ -18,6 +18,17 @@
 //     `<kind>` is `file`, `dir`, `symlink` or `other`. A path is lossy where the name is not
 //     UTF-8, unlike `AstraDirEntry:path`, so that printing a listing cannot raise. Nothing Astra
 //     does is altered: these are additions.
+//   - Gave `astra_internal__read_file_bytes` a file's bytes as a Lua string, where Astra gave a
+//     table with one number per byte (ADR 0015). Such a table takes 16 bytes of memory per byte
+//     and cannot be turned back into a string past about a million entries. The
+//     `file_io_methods!` call for it names a new private function, `read_bytes`, in place of
+//     `tokio::fs::read`; `read_bytes` calls `tokio::fs::read` and turns its `Vec<u8>` into an
+//     `mlua::BString`. This alters what Astra does.
+//   - Made `astra_internal__write_file`, given a Lua string, write that string's exact bytes
+//     (`as_bytes().to_vec()`), where Astra wrote `to_string_lossy()` of it, which replaced
+//     invalid UTF-8 with U+FFFD and so corrupted binary data (ADR 0015). This alters what Astra
+//     does. A table is written as before.
+//   - Everything else is unchanged.
 
 use super::AstraBufferMut;
 use mlua::{AnyUserData, ExternalError, LuaSerdeExt, MetaMethod, UserData};
@@ -61,7 +72,7 @@ pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
         lua.create_async_function(|_, path: String| async { AstraFile::new(path).await })?,
     )?;
 
-    file_io_methods!("astra_internal__read_file_bytes", tokio::fs::read);
+    file_io_methods!("astra_internal__read_file_bytes", read_bytes);
     file_io_methods!(
         "astra_internal__read_file_string",
         tokio::fs::read_to_string
@@ -72,7 +83,7 @@ pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
         lua.create_async_function(|lua, (path, value): (String, mlua::Value)| async move {
             match value.clone() {
                 mlua::Value::String(contents) => {
-                    Ok(tokio::fs::write(path, contents.to_string_lossy()).await?)
+                    Ok(tokio::fs::write(path, contents.as_bytes().to_vec()).await?)
                 }
                 mlua::Value::Table(contents) => {
                     if super::is_table_byte_array(&contents)? {
@@ -274,6 +285,11 @@ impl UserData for AstraEntryType {
             Ok(format!("AstraEntryType({})", entry_kind(&this.0)))
         });
     }
+}
+
+/// `tokio::fs::read`, with the bytes given to Lua as a string rather than a table of numbers.
+async fn read_bytes(path: String) -> std::io::Result<mlua::BString> {
+    Ok(tokio::fs::read(path).await?.into())
 }
 
 /// What kind of entry `file_type` is, as the word `print` shows for it.

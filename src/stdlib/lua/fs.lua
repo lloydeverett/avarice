@@ -3,7 +3,10 @@
 -- Copyright 2024 ArkForge LLC, licensed under the Apache License, Version 2.0. See LICENSE in this
 -- crate's root.
 --
--- Changes from the original: none. Apart from this header the file is byte-for-byte Astra's.
+-- Changes from the original:
+--   - Changed `fs.read_file_bytes`'s `---@return` annotation from `number[]` to `string`, which is
+--     what it now returns (ADR 0015).
+--   - Everything else is unchanged.
 
 ---@meta
 
@@ -84,7 +87,7 @@ end
 
 ---Returns the entire content of the file as bytes
 ---@param path string Path to the file
----@return number[]
+---@return string
 function fs.read_file_bytes(path)
   ---@diagnostic disable-next-line: undefined-global
   return astra_internal__read_file_bytes(path)
