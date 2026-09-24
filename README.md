@@ -11,8 +11,9 @@ command-line interpreter, `avrt`, built on the runtime.
   memory at 128 MiB. The trusted profile adds `io`, `os` and every stdlib module that is compiled in.
 - **Async, on Tokio.** Chunks run as futures on a Tokio runtime, so modules can await I/O, and
   scripts can spawn background tasks.
-- **Limits.** Time limits and cancellation apply to Lua running in coroutines and to chunks
-  waiting on I/O.
+- **Limits.** A time limit stops Lua that is running, in any coroutine. Time a chunk spends waiting,
+  on the network or on another program, counts against it, but the wait itself runs on: the limit
+  stops the chunk when it next runs Lua. A cancel stops a chunk that is waiting as well.
 - **The `avrt` command.** Runs scripts, or starts a REPL with history and multi-line input.
 - **Cross-platform.** Aims to behave the same on Linux, macOS and Windows wherever possible.
 - **Host-controlled modules.** Lua's `package` library is never opened. `require` resolves only
@@ -213,7 +214,8 @@ print(child:wait().code)
 ```
 
 A running Child counts as a task: `avrt` waits for it before exiting, and Ctrl-C kills it. Only the
-Child is killed, not programs it started.
+Child is killed, not programs it started. `--timeout` does not cut a wait for a Child short; a
+Command's own `timeout` does.
 
 ### `ansi`
 
@@ -259,7 +261,8 @@ fn main() -> avarice_rt::Result<()> {
     let rt = Runtime::builder(Profile::Sandbox)
         // Add or remove stdlib modules, from those the build's features compiled in.
         .with_std_modules(StdModules::SERDE | StdModules::CRYPTO)
-        // Stop Lua after 5 seconds, or when `cancel.cancel()` is called from any thread.
+        // Stop Lua once 5 seconds have passed, the next time it runs, or when `cancel.cancel()` is
+        // called from any thread, even while it waits.
         .time_limit(Duration::from_secs(5))
         .cancel_handle(cancel.clone())
         // `require("app.util")` loads /srv/lua/app/util.lua.

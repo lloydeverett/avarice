@@ -93,7 +93,8 @@ end
 
 ---Runs a program to its end, and gives back what it wrote and how it exited. An unsuccessful exit
 ---is not an error unless `check` is set. A Child still running when its task or the script is
----aborted is killed.
+---aborted or cancelled is killed. A runtime's time limit does not interrupt the wait, so give the
+---Command a `timeout` to bound it.
 ---@param command Command
 ---@return Output
 function process.run(command)

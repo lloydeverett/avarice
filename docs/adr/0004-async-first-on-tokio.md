@@ -130,3 +130,13 @@ a runtime that is waiting as well as one that is running.
 Deliberately not done: a second Ctrl-C that kills the process outright, as stock `lua` has. A
 script stuck in a blocking call that never returns to Lua, `io.read` on a terminal for one, notices
 the first Ctrl-C only when the call returns; Ctrl-\ (SIGQUIT) still ends it.
+
+## Amendment, 2026-09-24: a time limit does not interrupt a wait
+
+"A time limit now arms across awaits" means the clock runs while a chunk waits, not that the wait
+is cut short. The limit is enforced by the hook, which runs only when Lua does, so a chunk waiting
+on a response that never comes, or on a `process` Child that never exits, waits on; the limit
+stops it once the wait ends and Lua runs again. Only a cancel ends the wait itself, and
+`Runtime::wait_for_tasks`, which checks the clock as it polls, is the one wait a time limit ends.
+This is accepted for the same reason as above: every module that can wait on something outside
+the Lua state is trusted-only, and `process.run` has a `timeout` of its own.

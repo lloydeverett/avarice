@@ -89,7 +89,8 @@ struct Cli {
     sandbox: bool,
 
     /// Stop after this long, in seconds. Applies to each script, -e statement or REPL entry, and
-    /// again to waiting for the tasks it left running.
+    /// again to waiting for the tasks it left running. A script waiting on the network or on a
+    /// program is stopped only once that wait ends; Ctrl-C stops it at once.
     #[arg(long, value_name = "seconds")]
     timeout: Option<f64>,
 

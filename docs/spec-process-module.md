@@ -265,8 +265,10 @@ string holding exactly those bytes.
 - On `timeout`, the Child is killed and a `"timeout"` error is raised regardless of `check`,
   carrying the Output with what was read before the kill. After the kill, `run` waits for the Child
   to exit but not for its pipes to reach end of file.
-- If the future driving `run` is dropped — the task aborted, the chunk cancelled, the time limit
-  hit — the Child is killed.
+- If the future driving `run` is dropped — the task aborted, the chunk cancelled — the Child is
+  killed. A time limit does not drop it: as with a slow HTTP response (ADR 0004), the time spent
+  waiting counts against the limit, but the limit stops the chunk only when `run` returns and Lua
+  runs again. A Command's own `timeout` is what bounds a Child.
 
 **`process.spawn(command)` → Child** (userdata)
 

@@ -514,8 +514,14 @@ impl RuntimeBuilder {
     ///
     /// The clock starts when the future [`Runtime::exec`] or [`Runtime::eval`] returns is first
     /// polled, or when [`Runtime::enter`] is called, and stops when that finishes, so the limit is
-    /// per execution rather than for the runtime's lifetime. It keeps running while the
-    /// execution awaits. Installs the limit hook, which costs a little throughput.
+    /// per execution rather than for the runtime's lifetime. Installs the limit hook, which costs a
+    /// little throughput.
+    ///
+    /// The hook is what enforces it, so it stops Lua that is running. The clock keeps running
+    /// while the execution awaits, on a response or a Child, but the await is not interrupted: the
+    /// limit stops the execution when it next runs Lua, which may be never. A
+    /// [`CancelHandle`](crate::CancelHandle) is what ends a wait (ADR 0004).
+    /// [`Runtime::wait_for_tasks`] is the exception, since it checks the clock as it waits.
     pub fn time_limit(mut self, limit: Duration) -> Self {
         self.time_limit = Some(limit);
         self
