@@ -264,10 +264,27 @@ impl Runtime {
     /// [`block_on`](Self::block_on).
     pub async fn run<T>(&self, future: impl Future<Output = mlua::Result<T>>) -> Result<T> {
         let _execution = self.enter()?;
-        match unless_cancelled(self.limits.cancel_handle(), future).await {
+        let outcome = unless_cancelled(self.limits.cancel_handle(), future).await;
+        if self.limits.stopped().is_some() {
+            self.release_what_was_stopped();
+        }
+        match outcome {
             Some(result) => Ok(result?),
             None => Err(cancelled_error().into()),
         }
+    }
+
+    /// Frees what an execution stopped by a cancel or a limit was waiting on.
+    ///
+    /// A chunk stopped while it waits on the stdlib, for a Child or a response, is stopped inside
+    /// mlua's poller, the Lua that drives a Rust future, and the future is left on the dead
+    /// coroutine's stack until the garbage collector frees it: until then the Child runs and the
+    /// request goes on. So the stack is collected now. A collection that fails leaves the future
+    /// for the next.
+    fn release_what_was_stopped(&self) {
+        self.limits.cleaning_up(|| {
+            let _ = self.lua.gc_collect();
+        });
     }
 
     /// Runs a chunk for its side effects.

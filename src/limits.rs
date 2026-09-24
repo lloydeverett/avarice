@@ -128,6 +128,9 @@ pub(crate) struct Limits {
     deadline: SyncCell<Option<Instant>>,
     depth: SyncCell<u32>,
     tripped: SyncCell<Option<Trip>>,
+    /// Set while the runtime collects garbage after a stopped execution. See
+    /// [`Limits::cleaning_up`].
+    cleaning_up: SyncCell<bool>,
 }
 
 impl Limits {
@@ -150,6 +153,23 @@ impl Limits {
 
     pub(crate) fn time_limit(&self) -> Option<Duration> {
         self.time_limit
+    }
+
+    /// Runs `f`, a garbage collection after a stopped execution, with the hook letting everything
+    /// through. A tripped limit would otherwise stop the collection as mlua enters it, through a
+    /// protected call, before anything is collected. Nothing else the collection runs is hooked
+    /// anyway: Lua 5.4 turns hooks off inside a finalizer.
+    pub(crate) fn cleaning_up(&self, f: impl FnOnce()) {
+        /// Clears the flag however `f` ends, a panic included, so that the limits cannot stay off.
+        struct Done<'a>(&'a SyncCell<bool>);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        self.cleaning_up.set(true);
+        let _done = Done(&self.cleaning_up);
+        f();
     }
 
     /// Starts a top-level execution: arms the clock and clears the latch.
@@ -203,6 +223,9 @@ impl Limits {
     /// Also what a wait that is not running Lua asks of itself, so that a time limit or a cancel
     /// ends it just as it would end a script.
     pub(crate) fn check(&self) -> Option<mlua::Error> {
+        if self.cleaning_up.get() {
+            return None;
+        }
         if let Some(trip) = self.tripped.get() {
             return Some(trip.to_error());
         }
