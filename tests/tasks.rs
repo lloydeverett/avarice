@@ -72,7 +72,8 @@ fn waiting_covers_a_task_that_spawns_another() {
 
 #[test]
 fn waiting_is_bounded_by_the_time_limit() {
-    // An interval never finishes, so this is the only thing that ends the wait.
+    // An interval never finishes. Its first tick past the deadline runs Lua, which the hook
+    // stops, and that is what ends the wait.
     let rt = Runtime::builder(Profile::Sandbox)
         .with_std_modules(StdModules::UTILS)
         .time_limit(Duration::from_millis(150))
@@ -89,6 +90,28 @@ fn waiting_is_bounded_by_the_time_limit() {
     assert!(was_timed_out(&err), "{err}");
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(rt.outstanding_tasks(), 1, "waiting does not abort");
+}
+
+#[test]
+fn a_time_limit_does_not_cut_the_wait_for_an_idle_task_short() {
+    // The limit is enforced where Lua runs, and nothing runs until the timer fires: the wait
+    // outlasts the limit, then fails as soon as the task's Lua finds the budget spent.
+    let rt = Runtime::builder(Profile::Sandbox)
+        .with_std_modules(StdModules::UTILS)
+        .time_limit(Duration::from_millis(150))
+        .build()
+        .unwrap();
+    rt.block_on(rt.exec(
+        r#"require("utils").spawn_timeout(function() end, 600)"#,
+        "=spawn",
+    ))
+    .unwrap();
+
+    let started = Instant::now();
+    let err = lua_error(rt.block_on(rt.wait_for_tasks()).unwrap_err());
+    assert!(was_timed_out(&err), "{err}");
+    assert!(started.elapsed() >= Duration::from_millis(550), "took {:?}", started.elapsed());
+    assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
 }
 
 #[test]

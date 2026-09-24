@@ -208,9 +208,11 @@ impl Limits {
     /// Whether this execution has been stopped by a cancel or by a limit, without also asking
     /// whether the clock has run out since.
     ///
-    /// For after a wait, when the tasks are gone and it is unclear why. A task stopped by the hook
-    /// has its error swallowed by the stdlib, so the executor's count alone reads the same for a
-    /// task that finished and one that was cut off; the latch and the cancel flag still know.
+    /// For a wait for tasks, which asks it as it polls, and once the tasks are gone and it is
+    /// unclear why. A task stopped by the hook has its error swallowed by the stdlib, so the
+    /// executor's count alone reads the same for a task that finished and one that was cut off;
+    /// the latch and the cancel flag still know. Not asking the clock is what keeps a time limit
+    /// from cutting the wait itself short.
     pub(crate) fn stopped(&self) -> Option<mlua::Error> {
         if let Some(trip) = self.tripped.get() {
             return Some(trip.to_error());
@@ -219,9 +221,6 @@ impl Limits {
     }
 
     /// What the hook runs. Returns the error to raise, if any.
-    ///
-    /// Also what a wait that is not running Lua asks of itself, so that a time limit or a cancel
-    /// ends it just as it would end a script.
     pub(crate) fn check(&self) -> Option<mlua::Error> {
         if self.cleaning_up.get() {
             return None;

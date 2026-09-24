@@ -433,6 +433,10 @@ fn a_timeout_ends_the_wait_for_tasks() {
     assert!(stderr.contains("time limit"), "{stderr}");
     assert!(stderr.contains("aborting 1 running task"), "{stderr}");
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    // The interval's first tick past the deadline is stopped, and the wait gives up then, rather
+    // than letting it report the limit on every tick.
+    let reports = stdout_of(&output).matches("Error running a task").count();
+    assert!(reports <= 2, "{reports} reports:\n{}", stdout_of(&output));
 }
 
 /// Ctrl-C at a terminal is a SIGINT to `avrt`. These start a script that says it is ready once

@@ -136,7 +136,13 @@ the first Ctrl-C only when the call returns; Ctrl-\ (SIGQUIT) still ends it.
 "A time limit now arms across awaits" means the clock runs while a chunk waits, not that the wait
 is cut short. The limit is enforced by the hook, which runs only when Lua does, so a chunk waiting
 on a response that never comes, or on a `process` Child that never exits, waits on; the limit
-stops it once the wait ends and Lua runs again. Only a cancel ends the wait itself, and
-`Runtime::wait_for_tasks`, which checks the clock as it polls, is the one wait a time limit ends.
-This is accepted for the same reason as above: every module that can wait on something outside
-the Lua state is trusted-only, and `process.run` has a `timeout` of its own.
+stops it once the wait ends and Lua runs again. Only a cancel ends the wait itself. This is
+accepted for the same reason as above: every module that can wait on something outside the Lua
+state is trusted-only, and `process.run` has a `timeout` of its own.
+
+`Runtime::wait_for_tasks` used to be the exception: it read the clock as it polled, so a time
+limit ended that wait at the deadline even with no Lua running. It now reads only what the hook
+has latched, and so follows the same rule: a task idling on a timer is waited for past the
+deadline, and the wait gives up as soon as a task's Lua runs and is stopped. That is still what
+ends the wait for an interval that never finishes, at its first tick past the deadline, and the
+wait gives up then rather than leave the interval reporting the limit on every tick after.

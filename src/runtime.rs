@@ -147,16 +147,18 @@ impl Runtime {
     /// [`Cancelled`](crate::Cancelled). Either leaves the tasks that were still running as they
     /// were; [`abort_tasks`](Self::abort_tasks) is how to be rid of them.
     ///
-    /// A task that never finishes, an interval for one, keeps this waiting until a limit or a
-    /// cancel ends it. That is the meaning of waiting for it.
-    ///
-    /// A task that was running Lua when a limit fired or a cancel arrived is stopped by the same
-    /// hook as any chunk, and the stdlib swallows a task's error, so it leaves the executor
-    /// without a trace. The wait notices anyway, and fails as if it had been the one interrupted.
+    /// A time limit is enforced where Lua runs, as for any execution, and does not cut the wait
+    /// itself short: a task idling on a timer is waited for past the deadline. Once a task's Lua
+    /// runs and the hook finds the budget spent, the wait gives up, and fails as if it had been
+    /// the one stopped, even though the stdlib swallows the task's own error. So a task that
+    /// never finishes, an interval for one, keeps this waiting until its next run past the
+    /// deadline, or a cancel. That is the meaning of waiting for it.
     pub async fn wait_for_tasks(&self) -> Result<()> {
         self.run(async {
+            // What the hook has latched, not the clock: the limit ends the wait when Lua finds it
+            // spent, not when it runs out.
             while self.outstanding_tasks() > 0 {
-                if let Some(err) = self.limits.check() {
+                if let Some(err) = self.limits.stopped() {
                     return Err(err);
                 }
                 tokio::time::sleep(TASK_POLL).await;
@@ -521,7 +523,7 @@ impl RuntimeBuilder {
     /// while the execution awaits, on a response or a Child, but the await is not interrupted: the
     /// limit stops the execution when it next runs Lua, which may be never. A
     /// [`CancelHandle`](crate::CancelHandle) is what ends a wait (ADR 0004).
-    /// [`Runtime::wait_for_tasks`] is the exception, since it checks the clock as it waits.
+    /// [`Runtime::wait_for_tasks`] is no exception: it gives up once a task's Lua is stopped.
     pub fn time_limit(mut self, limit: Duration) -> Self {
         self.time_limit = Some(limit);
         self
