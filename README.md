@@ -298,6 +298,26 @@ impl ModuleStore for SqliteStore {
 }
 ```
 
+## Sandbox limitations
+
+- **PUC Lua, not Luau.** The sandbox is avarice-rt's own work: it withholds libraries and wraps
+  `load` and `setmetatable`, on a Lua that was not designed to run untrusted code. Luau was, and is
+  far more battle-tested at it. [ADR 0001](docs/adr/0001-puc-lua-not-luau.md) says why this project
+  uses PUC Lua.
+- **The time limit is checked only between Lua instructions**, every 10,000 by default
+  (`check_interval`). Anything else runs to its end before the limit can stop it:
+  - **One call into Lua's C library.** Pattern matching backtracks, so
+    `string.find(string.rep("a", 5000), "(.-)(.-)(.-)b")` runs for minutes under a one-second
+    limit. A cancel doesn't stop it either.
+  - **A synchronous Rust function**, such as a host module's, or a module store's `fetch` behind
+    `require`. A cancel doesn't stop it either.
+  - **An async Rust function.** Its time counts, but the wait isn't cut short: the chunk stops when
+    it next runs Lua. A cancel does end the wait.
+
+## Limitations / WIP
+
+- Needs testing on Windows.
+
 ## Licence
 
 Apache License 2.0; see [LICENSE](LICENSE). The stdlib files taken from Astra are under the same
