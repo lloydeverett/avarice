@@ -153,9 +153,9 @@ whose it was or under what licence. It is reversed.
 
 - **Every file under `src/components/` and `lua/` that is derived from Astra opens with a header**
   naming the Astra file, the version and commit, the copyright holder and the licence, and a
-  `Changes from the original:` list. A file that is otherwise unchanged says `none`, and is byte-for-byte Astra's below its
-  header. So the earlier rule that the list is never empty holds again; the rule about changes
-  being removals and respellings only is unchanged.
+  `Changes from the original:` list. A file that is otherwise unchanged says `none`, and is
+  byte-for-byte Astra's below its header. So the earlier rule that the list is never empty holds
+  again; the rule about changes being removals and respellings only is unchanged.
 - **`NOTICE` is deleted.** Astra ships none, so none is inherited (§4(d)), and the copyright line
   is in every header. §4(a) is met by `LICENSE`, §4(b) and §4(c) by the headers.
 - **`UPSTREAM.md` is deleted.** Its per-file table and SHA-256 checksums were the attribution the
@@ -164,9 +164,9 @@ whose it was or under what licence. It is reversed.
   attribution, what is not taken and how `validation` is loaded, is in the crate's `README.md`.
 - **A file there that is not derived from Astra carries no Astra header.** It says at the top
   that it is original to avarice-rt, and has no `Changes from the original:` list, because there
-  is no original. `dirs` and `process`, in both directories, were already like this. `datetime` joined them when
-  [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) rewrote it (this exception was added to
-  the rule then).
+  is no original. `dirs` and `process`, in both directories, were already like this.
+  `datetime` joined them when [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) rewrote it
+  (this exception was added to the rule then).
 - **`src/lib.rs` and `src/modules.rs` are this crate's own** and carry no header. They make the
   same registration calls Astra's `register_components` makes, which the API leaves no other way to
   spell, and share no other expression with Astra.

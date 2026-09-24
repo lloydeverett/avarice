@@ -131,8 +131,8 @@ print(serde.csv.decode("a,b\n1,2\n").body)
 Built on [jiff](https://docs.rs/jiff), with jiff's types and method names, so jiff's documentation
 is the reference. This module is original to avarice-rt rather than Astra's, so it has no Astra
 header ([ADR 0019](docs/adr/0019-datetime-is-ours-and-built-on-jiff.md)). Values are immutable,
-and anything that fails raises, as does an argument too many. `until` is a Lua keyword, so jiff's `until` and `since` are
-`span_until` and `span_since` here.
+and anything that fails raises, as does an argument too many. `until` is a Lua keyword, so jiff's
+`until` and `since` are `span_until` and `span_since` here.
 
 ```lua
 local dt = require("datetime")

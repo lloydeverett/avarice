@@ -378,6 +378,16 @@ fn span_plus_span_and_span_less_than_span_raise() {
 }
 
 #[test]
+fn a_span_with_something_that_is_not_a_span_says_what_it_can_be_added_to() {
+    assert!(
+        raises("return dt.span { days = 1 } + dt.date(2024, 1, 1)")
+            .contains("put the span on the right")
+    );
+    assert!(raises("return 5 - dt.span { days = 1 }").contains("added to or subtracted from"));
+    assert!(raises("return dt.span { days = 1 } + 5").contains("added to or subtracted from"));
+}
+
+#[test]
 fn a_span_negates_and_scales() {
     let got: (String, String, String) = eval(
         "local s = dt.span { hours = 2 }

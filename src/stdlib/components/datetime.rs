@@ -2,7 +2,7 @@
 //! [jiff](https://docs.rs/jiff) to Lua, one userdata per jiff type: `Timestamp`, `Zoned`, `Date`,
 //! `Time`, `DateTime`, `Span`, `SignedDuration`, `TimeZone` and `Weekday`.
 //!
-//! The binding is thin and follows jiff's names, with five Lua-shaped differences. Every method that
+//! The binding is thin and follows jiff's names, with these Lua-shaped differences. Every method that
 //! jiff spells `checked_*` drops the prefix, because everything here raises on failure (ADR 0017).
 //! jiff's builders become an optional options table. `with` takes a table of fields. Operators are
 //! metamethods. And `until`, a Lua keyword, cannot be a method name, so jiff's `until` and `since`
@@ -1545,9 +1545,17 @@ impl UserData for Span {
         }
         for (meta, op, method) in [(MetaMethod::Add, "+", "add"), (MetaMethod::Sub, "-", "sub")] {
             methods.add_meta_function(meta, move |_, (a, b): (Value, Value)| -> Result<Span> {
-                if is::<Span>(&a) && !is::<Span>(&b) && !is::<SignedDuration>(&b) {
+                let duration = |v: &Value| is::<Span>(v) || is::<SignedDuration>(v);
+                if !(duration(&a) && duration(&b)) {
+                    // `span + date`: jiff adds a span to a value, not a value to a span.
+                    let hint = if is::<Span>(&a) && matches!(b, Value::UserData(_)) {
+                        "put the span on the right"
+                    } else {
+                        "a span can only be added to or subtracted from a date or time"
+                    };
                     return Err(raise(format!(
-                        "cannot compute Span {op} {}: put the span on the right",
+                        "cannot compute {} {op} {}: {hint}",
+                        describe(&a),
                         describe(&b)
                     )));
                 }

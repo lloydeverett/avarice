@@ -44,7 +44,7 @@ hard to review, a copy that no longer matches its original, cannot arise when th
 - **The files stay where they are**, `components/datetime.rs` and `lua/datetime.lua`, beside
   Astra's. Each says at the top that it is original to avarice-rt. ADR 0006's header rule is
   amended to cover only files derived from Astra.
-- **jiff's names and concepts, with Lua spelling.** `checked_` and `saturating_` are dropped from
+- **jiff's names and concepts, with Lua spelling.** `checked_` is dropped from
   method names, because every method raises on failure
   ([ADR 0017](0017-the-stdlib-raises-rather-than-leaving-input-out.md)). Builders become an
   optional options table. Values are immutable, and operators are metamethods.
