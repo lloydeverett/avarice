@@ -96,7 +96,7 @@ under the same placeholder author, defeating the reason `AppStrategyArgs` has th
 (`DIRS`, `1 << 8`, still inside the existing `u16` — no width change, unlike
 [ADR 0008](0008-ansi-is-original-and-pure.md)'s), and `scripts/check-features.sh` builds eleven
 combinations: no modules, all of them, and each of the nine alone. Tests that enumerate module
-names or bit values (`src/stdlib/modules.rs`, `src/stdlib/compiled_in_tests.rs`, `tests/stdlib.rs`)
+names or bit values (`src/stdlib/modules.rs`, `tests/compiled_in.rs`, `tests/stdlib.rs`)
 list `dirs` alongside the other eight; tests that derive their expectations from `StdModules::all()`
 or `StdModule::ALL` needed no change.
 

@@ -16,9 +16,6 @@
 pub(crate) mod components;
 mod modules;
 
-#[cfg(test)]
-mod compiled_in_tests;
-
 use mlua::{Lua, Value};
 
 pub use self::modules::{StdModule, StdModules};

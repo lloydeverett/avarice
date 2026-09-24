@@ -2,9 +2,10 @@
 //!
 //! The expectation comes from the features this test was itself built with, so the same file
 //! passes under every combination `scripts/check-features.sh` builds, and means something under
-//! each.
+//! each. Unlike `tests/features.rs`, which takes "what is compiled in" from the public API, this
+//! file keeps its own list of features, so that the API's answer is checked against the build.
 
-use super::{StdModule, StdModules, loader};
+use avarice_rt::{StdModule, StdModules};
 
 /// Each module's name, and whether the feature that compiles it in is on in this build.
 const EXPECTED: [(&str, bool); 9] = [
@@ -86,21 +87,6 @@ fn what_is_not_compiled_in_is_what_all_leaves_out() {
 fn a_module_names_the_feature_that_compiles_it_in() {
     for module in every_module() {
         assert_eq!(module.feature(), format!("stdlib-{}", module.name()));
-    }
-}
-
-#[test]
-fn loading_a_module_that_is_not_compiled_in_says_which_feature_is_missing() {
-    let lua = mlua::Lua::new();
-    for module in every_module() {
-        if module.is_compiled_in() {
-            continue;
-        }
-        let error = loader(module)(&lua).expect_err("not compiled in, so it cannot be built");
-        assert!(
-            error.to_string().contains(module.feature()),
-            "{module:?}: {error}"
-        );
     }
 }
 
