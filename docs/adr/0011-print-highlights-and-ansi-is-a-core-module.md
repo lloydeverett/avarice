@@ -5,7 +5,7 @@ status: accepted
 # `print` highlights what it prints, and `ansi` is a core module
 
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
-> `avarice-rt` and not a crate, and licenses the whole project Apache-2.0; where the text below
+> `avarice` and not a crate, and licenses the whole project Apache-2.0; where the text below
 > speaks of the stdlib crate, or says the core carries no licence, it wins.
 
 `print` colours what it shows: the strings of a table, and a function's name, parameters and
@@ -18,7 +18,7 @@ This supersedes [ADR 0008](0008-ansi-is-original-and-pure.md) in what it decided
 is original, it is pure, its values are constants and it never looks at a terminal.
 
 A reader would otherwise wonder why the library emits escape codes that
-[ADR 0009](0009-avrt-filters-escapes-on-non-terminals.md) said it would never decide on, why one
+[ADR 0009](0009-avarice-filters-escapes-on-non-terminals.md) said it would never decide on, why one
 module is registered by the core beside a stdlib that is otherwise all optional, why `StdModules`
 has a hole in its bits, and why a runtime without `string` cannot be built.
 
@@ -26,8 +26,8 @@ has a hole in its bits, and why a runtime without `string` cannot be built.
 
 - **The colour is always on.** `print` writes escape codes on every call, and nothing in the
   library asks whether the reader can see them. There is no builder option and no stripping in the
-  library. `avrt`'s filter ([ADR 0010](0010-avrt-filters-terminal-escapes-itself.md)) removes the
-  codes where they cannot be shown, so a script's output is plain in a pipe and coloured on a
+  library. `avarice`'s filter ([ADR 0010](0010-avarice-filters-terminal-escapes-itself.md)) removes
+  the codes where they cannot be shown, so a script's output is plain in a pipe and coloured on a
   terminal. An embedder's sink, and the library's default one, receive them as written; one that
   wants plain text wraps its sink.
 - **The palette** is fixed and not configurable:
@@ -42,7 +42,7 @@ has a hole in its bits, and why a runtime without `string` cannot be built.
   Everything else is plain: numbers, braces, `=`, commas, indentation, keys, parameter names,
   `table: 0x…`, the text of a thread or userdata, whatever a `__tostring` returns, and a top-level
   string, which is a message and not a literal. A key stays plain whether or not it is bracketed,
-  matching the identifiers `avrt`'s prompt highlighting ([ADR 0013](0013-avrt-highlights-lua-at-the-prompt.md))
+  matching the identifiers `avarice`'s prompt highlighting ([ADR 0013](0013-avarice-highlights-lua-at-the-prompt.md))
   leaves uncoloured. Each coloured token ends with a full reset, so no token depends on what came
   before it. `nil` can only be seen at the top level, since a table cannot hold it.
 - **A function has one layout, coloured or not**, at the top level and in a table:
@@ -74,7 +74,7 @@ has a hole in its bits, and why a runtime without `string` cannot be built.
 **Highlighting on request**, a builder option or a `print` argument, was the first recommendation:
 the library keeps its rule of deciding nothing, and an embedder opts in. It was rejected because
 the colour is meant to be what `print` is, in every runtime, with the destination's filter as the
-one place that decides whether it is shown, which `avrt` already is.
+one place that decides whether it is shown, which `avarice` already is.
 
 **Stripping in the library**, by asking whether standard output is a terminal, was rejected for the
 reason ADR 0009 gave: that is a fact about a process, and a sink may be a buffer or a widget that
@@ -102,10 +102,10 @@ of a line nobody was told to parse, and the layout with the address last reads b
 **A sink that cannot show colour shows escape codes.** An embedder that writes `print`'s output to a
 log, a socket or a widget gets `ESC [ … m` in it and has to remove it. The library's default
 standard-output sink does not remove it either, so a program that embeds the library and leaves
-that sink alone writes codes into a pipe. `avrt` is the only embedder that filters. The README says
-so in its section on `print`.
+that sink alone writes codes into a pipe. `avarice` is the only embedder that filters. The README
+says so in its section on `print`.
 
-**The REPL's results are highlighted**, since they are printed through `print`, and get `avrt`'s
+**The REPL's results are highlighted**, since they are printed through `print`, and get `avarice`'s
 filter like the rest.
 
 **Plain output changed too.** `function: 0x55d0(a, b)` is now `function (a, b) [0x55d0]`, in a

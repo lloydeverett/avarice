@@ -9,7 +9,7 @@
 
 mod common;
 
-use avarice_rt::{Error, Profile, Runtime, StdModule, StdModules};
+use avarice::{Error, Profile, Runtime, StdModule, StdModules};
 use common::{compiled_in, listed, requirable};
 
 /// The modules this build does not have, one at a time.

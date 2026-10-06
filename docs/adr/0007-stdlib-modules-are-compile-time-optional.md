@@ -5,7 +5,7 @@ status: accepted
 # Stdlib modules are compile-time optional
 
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
-> `avarice-rt` and not a crate of its own, so the features below are declared once, on `avarice-rt`,
+> `avarice` and not a crate of its own, so the features below are declared once, on `avarice`,
 > and are not forwarded from a stdlib crate. Where the text says otherwise, it wins.
 
 Each **stdlib module** is behind a Cargo feature, so an embedder that wants only `crypto` and
@@ -26,7 +26,7 @@ turns on code from `utils.rs` without registering `utils`.
 
 ## The decision
 
-- **One feature per module**, on the stdlib crate and forwarded by `avarice-rt` under the same
+- **One feature per module**, on the stdlib crate and forwarded by `avarice` under the same
   name: `stdlib-http`, `stdlib-fs`, `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`,
   `stdlib-utils`, `stdlib-stores`, `stdlib-validation`. `stdlib` turns on all eight and is in
   `default`, beside `cli`. Opting out is `default-features = false` plus the modules wanted. Each
@@ -42,7 +42,7 @@ turns on code from `utils.rs` without registering `utils`.
   `[StdModule; 8]`. `Profile::Trusted` and `stdlib()` follow it.
 - **Asking for a module that is not compiled in is an error.** `RuntimeBuilder::build` returns one
   naming the feature that is missing. `without_std_modules` on such a module is a no-op, since it
-  asks for less. `avarice_rt_stdlib::loader` is public and takes any variant, so for one that is not
+  asks for less. `avarice_stdlib::loader` is public and takes any variant, so for one that is not
   compiled in it returns an error naming the feature when called, rather than panicking.
 - **Five public items are added to say what is compiled in:** `StdModule::is_compiled_in`,
   `StdModule::feature` (the name of the feature that compiles it in), `StdModules::not_compiled_in`,
@@ -62,14 +62,14 @@ turns on code from `utils.rs` without registering `utils`.
 ## Considered options
 
 **Features as a security boundary** was rejected. Cargo features are additive and unify across the
-dependency graph: any crate that depends on `avarice-rt` with `stdlib-http` turns it on for every
+dependency graph: any crate that depends on `avarice` with `stdlib-http` turns it on for every
 crate that does, so an embedder cannot rely on a feature being off. Confinement stays what
 [ADR 0002](0002-host-registers-modules.md) made it, a runtime that does not register the module,
 and a module compiled out is only a smaller build.
 
 **Compiling the enum's variants out with their modules** was rejected. It would make the type an
 embedder matches on differ from one build to the next, and a match that compiles against one
-feature set fails against another, so a library that depends on avarice-rt could not name the
+feature set fails against another, so a library that depends on avarice could not name the
 variants at all.
 
 **Dropping a module that is not compiled in, silently,** was rejected on the precedent of ADR 0002:

@@ -72,10 +72,10 @@ use mlua::{ExternalError, FromLua, LuaSerdeExt};
 pub mod astra_serde;
 #[cfg(feature = "stdlib-crypto")]
 pub mod crypto;
-// Original to avarice-rt since ADR 0019, and no longer Astra's; see its own header.
+// Original to avarice since ADR 0019, and no longer Astra's; see its own header.
 #[cfg(feature = "stdlib-datetime")]
 pub mod datetime;
-// Original to avarice-rt, not Astra's; see its own header and ADR 0014.
+// Original to avarice, not Astra's; see its own header and ADR 0014.
 #[cfg(feature = "stdlib-dirs")]
 pub mod dirs;
 #[cfg(feature = "stdlib-fs")]

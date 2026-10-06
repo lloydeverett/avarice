@@ -1,4 +1,4 @@
-//! `avrt`: the command-line interpreter.
+//! `avarice`: the command-line interpreter.
 
 mod escape;
 mod highlight;
@@ -11,8 +11,8 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use avarice_rt::mlua::{Table, Variadic};
-use avarice_rt::{CancelHandle, Error, FsStore, Profile, Runtime, was_cancelled};
+use avarice::mlua::{Table, Variadic};
+use avarice::{CancelHandle, Error, FsStore, Profile, Runtime, was_cancelled};
 use clap::Parser;
 use output::{eprintln, println};
 
@@ -20,16 +20,16 @@ use output::{eprintln, println};
 const EXIT_LUA_ERROR: u8 = 1;
 
 /// Exit code for a run cut short by Ctrl-C: 128 plus SIGINT's number, which is what a shell
-/// reports for a process that died of it, so `avrt script && next` still stops.
+/// reports for a process that died of it, so `avarice script && next` still stops.
 const EXIT_INTERRUPTED: u8 = 130;
 
 /// Exit code for a usage error. clap uses the same code for a parse failure.
 const EXIT_USAGE: u8 = 2;
 
-/// Anything that stops `avrt` short of running to completion.
+/// Anything that stops `avarice` short of running to completion.
 ///
 /// Reading a script is the command's own business rather than the runtime's, so it has its own
-/// variants here: [`avarice_rt::Error::Config`] means the runtime could not be built, and
+/// variants here: [`avarice::Error::Config`] means the runtime could not be built, and
 /// borrowing it to report a missing file would make the two indistinguishable.
 #[derive(Debug, thiserror::Error)]
 enum CliError {
@@ -53,19 +53,19 @@ enum CliError {
     Runtime(#[from] Error),
 }
 
-impl From<avarice_rt::mlua::Error> for CliError {
-    fn from(err: avarice_rt::mlua::Error) -> Self {
+impl From<avarice::mlua::Error> for CliError {
+    fn from(err: avarice::mlua::Error) -> Self {
         CliError::Runtime(err.into())
     }
 }
 
 /// A Lua 5.4 interpreter.
 ///
-/// With no script and no `-e`, `avrt` starts a REPL — or reads a program from standard input,
+/// With no script and no `-e`, `avarice` starts a REPL — or reads a program from standard input,
 /// if standard input is not a terminal.
 #[derive(Debug, Parser)]
 #[command(
-    name = "avrt",
+    name = "avarice",
     version,
     about,
     disable_version_flag = true,
@@ -137,14 +137,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         .write_sink(output::Stdout::auto());
     if let Some(seconds) = cli.timeout {
         if !(seconds.is_finite() && seconds > 0.0) {
-            eprintln!("avrt: --timeout must be a positive number of seconds");
+            eprintln!("avarice: --timeout must be a positive number of seconds");
             return Ok(ExitCode::from(EXIT_USAGE));
         }
         builder = builder.time_limit(std::time::Duration::from_secs_f64(seconds));
     }
     let rt = builder.store(store_for(cli, script)).build()?;
     if let Err(e) = interrupt::install(cancel) {
-        eprintln!("avrt: Ctrl-C will not be caught: {e}");
+        eprintln!("avarice: Ctrl-C will not be caught: {e}");
     }
     set_arg_table(&rt, &cli.script)?;
 
@@ -202,7 +202,7 @@ fn run_and_settle_tasks(
     let aborted = rt.abort_tasks()?;
     if aborted > 0 {
         let s = if aborted == 1 { "" } else { "s" };
-        eprintln!("avrt: aborting {aborted} running task{s}");
+        eprintln!("avarice: aborting {aborted} running task{s}");
     }
     match err {
         CliError::Runtime(Error::Lua(ref lua)) if was_cancelled(lua) => Err(CliError::Interrupted),
@@ -283,7 +283,7 @@ fn store_for(cli: &Cli, script: Option<&str>) -> FsStore {
 ///
 /// `arg[0]` is the script, `arg[1]` onwards its arguments, and the negative indices walk back
 /// through the words before the script to `arg[-n]`, the interpreter itself — the same shape
-/// stock `lua` produces, so a script that inspects `arg` behaves the same under `avrt`.
+/// stock `lua` produces, so a script that inspects `arg` behaves the same under `avarice`.
 fn set_arg_table(rt: &Runtime, script: &[String]) -> Result<(), Error> {
     let argv: Vec<String> = std::env::args().collect();
     // clap's trailing var arg takes a contiguous tail of argv, so the script sits exactly that
@@ -302,7 +302,7 @@ fn set_arg_table(rt: &Runtime, script: &[String]) -> Result<(), Error> {
 }
 
 fn print_version() {
-    println!("avrt {}", env!("CARGO_PKG_VERSION"));
+    println!("avarice {}", env!("CARGO_PKG_VERSION"));
     println!("PUC-Rio Lua 5.4, statically linked");
 }
 
@@ -312,14 +312,14 @@ fn print_version() {
 /// appends the traceback to the error message itself, so it is already part of what is printed
 /// here.
 fn report(err: &CliError) {
-    eprintln!("avrt: {}", message_of(err));
+    eprintln!("avarice: {}", message_of(err));
 }
 
 /// Strips the wrapper mlua puts around a Lua error, leaving what the script would have seen.
 fn message_of(err: &CliError) -> String {
     match err {
-        CliError::Runtime(Error::Lua(avarice_rt::mlua::Error::RuntimeError(msg))) => msg.clone(),
-        CliError::Runtime(Error::Lua(avarice_rt::mlua::Error::SyntaxError { message, .. })) => {
+        CliError::Runtime(Error::Lua(avarice::mlua::Error::RuntimeError(msg))) => msg.clone(),
+        CliError::Runtime(Error::Lua(avarice::mlua::Error::SyntaxError { message, .. })) => {
             message.clone()
         }
         other => other.to_string(),
@@ -332,37 +332,37 @@ mod tests {
 
     #[test]
     fn a_shebang_is_blanked_rather_than_removed() {
-        let source = strip_shebang(b"#!/usr/bin/env avrt\nreturn 1\n".to_vec());
+        let source = strip_shebang(b"#!/usr/bin/env avarice\nreturn 1\n".to_vec());
         assert_eq!(&source[..19], b"                   ");
         assert!(source.ends_with(b"\nreturn 1\n"));
     }
 
     #[test]
     fn a_file_with_only_a_shebang_is_handled() {
-        assert_eq!(strip_shebang(b"#!/bin/avrt".to_vec()), b"           ");
+        assert_eq!(strip_shebang(b"#!/bin/avarice".to_vec()), b"              ");
     }
 
     #[test]
     fn the_store_follows_the_script() {
-        let cli = Cli::parse_from(["avrt", "/srv/app/main.lua"]);
+        let cli = Cli::parse_from(["avarice", "/srv/app/main.lua"]);
         let store = store_for(&cli, Some("/srv/app/main.lua"));
         assert_eq!(store.roots(), [PathBuf::from("/srv/app")]);
 
-        let cli = Cli::parse_from(["avrt", "main.lua"]);
+        let cli = Cli::parse_from(["avarice", "main.lua"]);
         let store = store_for(&cli, Some("main.lua"));
         assert_eq!(store.roots(), [PathBuf::from(".")]);
     }
 
     #[test]
     fn explicit_paths_win_over_the_script_directory() {
-        let cli = Cli::parse_from(["avrt", "--path", "/a", "--path", "/b", "/srv/main.lua"]);
+        let cli = Cli::parse_from(["avarice", "--path", "/a", "--path", "/b", "/srv/main.lua"]);
         let store = store_for(&cli, Some("/srv/main.lua"));
         assert_eq!(store.roots(), [PathBuf::from("/a"), PathBuf::from("/b")]);
     }
 
     #[test]
     fn script_arguments_are_not_parsed_as_options() {
-        let cli = Cli::parse_from(["avrt", "-e", "x = 1", "main.lua", "-i", "--sandbox"]);
+        let cli = Cli::parse_from(["avarice", "-e", "x = 1", "main.lua", "-i", "--sandbox"]);
         assert_eq!(cli.execute, ["x = 1"]);
         assert!(
             !cli.interactive,

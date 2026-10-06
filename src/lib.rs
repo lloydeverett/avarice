@@ -1,15 +1,15 @@
 //! An embeddable Lua 5.4 runtime with a sandbox.
 //!
-//! avarice-rt wraps [`mlua`] with two things it does not provide: a sandbox that is actually
+//! avarice wraps [`mlua`] with two things it does not provide: a sandbox that is actually
 //! closed, and a module system the host controls.
 //!
 //! ```
-//! use avarice_rt::{Profile, Runtime};
+//! use avarice::{Profile, Runtime};
 //!
 //! let rt = Runtime::new(Profile::Sandbox)?;
 //! let answer: i64 = rt.block_on(rt.eval("return 6 * 7", "=example"))?;
 //! assert_eq!(answer, 42);
-//! # Ok::<_, avarice_rt::Error>(())
+//! # Ok::<_, avarice::Error>(())
 //! ```
 //!
 //! # Running Lua
@@ -32,7 +32,7 @@
 //! flushes after every call.
 //!
 //! The colour is always there: nothing in the runtime asks whether the reader can see it, so a
-//! sink receives escape sequences, and a sink that cannot show them has to remove them. `avrt`
+//! sink receives escape sequences, and a sink that cannot show them has to remove them. `avarice`
 //! does. `print` needs the `string` and `table` libraries, and [`RuntimeBuilder::build`] refuses a
 //! runtime that lacks either.
 //!
@@ -52,7 +52,7 @@
 //! Each stdlib module is behind a Cargo feature of its own, `stdlib-http`, `stdlib-fs`,
 //! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
 //! `stdlib-validation`, `stdlib-dirs` and `stdlib-process`, and `stdlib` turns all ten on.
-//! `default` has `stdlib` and `cli`, so an embedder wanting a smaller build depends on avarice-rt
+//! `default` has `stdlib` and `cli`, so an embedder wanting a smaller build depends on avarice
 //! with `default-features = false` and names the modules it wants. A feature decides whether a
 //! module is *compiled in*, which is a
 //! matter of build size and time and not of confinement: a profile still decides what a runtime
@@ -67,7 +67,7 @@
 //! filesystem through the module system.
 //!
 //! ```
-//! use avarice_rt::{FsStore, Profile, Runtime};
+//! use avarice::{FsStore, Profile, Runtime};
 //!
 //! let rt = Runtime::builder(Profile::Sandbox)
 //!     .store(FsStore::new("/srv/lua"))
@@ -77,7 +77,7 @@
 //! let clock = rt.lua().create_table()?;
 //! clock.set("now", rt.lua().create_function(|_, ()| Ok(0))?)?;
 //! rt.register_module("clock", clock)?;
-//! # Ok::<_, avarice_rt::Error>(())
+//! # Ok::<_, avarice::Error>(())
 //! ```
 //!
 //! A [`ModuleStore`] answers one question: given a module name, produce source or nothing. The
@@ -123,6 +123,6 @@ pub use crate::stdlib::{StdModule, StdModules};
 /// mlua, re-exported.
 ///
 /// Values, tables and functions crossing the boundary are mlua's, so an embedder needs the same
-/// version avarice-rt was built against. It is a public dependency, and a breaking change to it
+/// version avarice was built against. It is a public dependency, and a breaking change to it
 /// is a breaking change here.
 pub use mlua;

@@ -126,7 +126,7 @@ pub(crate) fn install(lua: &Lua, sink: Sink) -> mlua::Result<()> {
         lua.create_function(|lua, function: Function| parameter_list(lua, &function))?;
     let print: Function = lua
         .load(PRINT)
-        .set_name("=[avarice-rt print]")
+        .set_name("=[avarice print]")
         .set_mode(ChunkMode::Text)
         .call((write, parameters, ansi::build(lua)?))?;
     lua.globals().raw_set("print", print)

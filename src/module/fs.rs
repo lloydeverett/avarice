@@ -15,7 +15,7 @@ use crate::error::StoreError;
 /// address a file outside a root — though a symlink placed inside one still can, exactly as it
 /// would for any other program reading those directories.
 ///
-/// This lives in the library rather than in `avrt`: an embedder can ask for filesystem
+/// This lives in the library rather than in `avarice`: an embedder can ask for filesystem
 /// resolution without going through the command-line program.
 #[derive(Debug, Clone, Default)]
 pub struct FsStore {

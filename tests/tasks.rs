@@ -11,13 +11,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use avarice_rt::{CancelHandle, Error, Profile, Runtime, StdModules, was_cancelled, was_timed_out};
+use avarice::{CancelHandle, Error, Profile, Runtime, StdModules, was_cancelled, was_timed_out};
 
 fn trusted() -> Runtime {
     Runtime::new(Profile::Trusted).unwrap()
 }
 
-fn lua_error(err: Error) -> avarice_rt::mlua::Error {
+fn lua_error(err: Error) -> avarice::mlua::Error {
     match err {
         Error::Lua(err) => err,
         other => panic!("expected a Lua error, got {other:?}"),

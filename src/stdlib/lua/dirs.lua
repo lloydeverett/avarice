@@ -1,4 +1,4 @@
--- Original to avarice-rt: not derived from Astra. See ADR 0014.
+-- Original to avarice: not derived from Astra. See ADR 0014.
 
 ---@meta
 

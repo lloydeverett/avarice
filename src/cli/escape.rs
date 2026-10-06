@@ -166,7 +166,7 @@ impl Perform for Keep {
 
 /// Whether `stream` should be given colour, from the environment and whether it is a terminal.
 ///
-/// This is the decision `anstream` and clap make, in the same order, so that `avrt`'s output and
+/// This is the decision `anstream` and clap make, in the same order, so that `avarice`'s output and
 /// clap's own agree.
 pub fn takes_colour(stream: &impl IsTerminal) -> bool {
     let terminal = stream.is_terminal();

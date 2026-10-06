@@ -2,9 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use avarice_rt::{CancelHandle, Error, Profile, Runtime, was_cancelled, was_timed_out};
+use avarice::{CancelHandle, Error, Profile, Runtime, was_cancelled, was_timed_out};
 
-fn lua_error(err: Error) -> avarice_rt::mlua::Error {
+fn lua_error(err: Error) -> avarice::mlua::Error {
     match err {
         Error::Lua(err) => err,
         other => panic!("expected a Lua error, got {other:?}"),
@@ -246,12 +246,12 @@ fn a_runtime_with_no_limits_runs_unhindered() {
 #[test]
 fn a_time_limit_covers_code_reached_through_require() {
     struct Endless;
-    impl avarice_rt::ModuleStore for Endless {
+    impl avarice::ModuleStore for Endless {
         fn fetch(
             &self,
-            _: &avarice_rt::ModuleName,
-        ) -> Result<Option<avarice_rt::ModuleSource>, avarice_rt::StoreError> {
-            Ok(Some(avarice_rt::ModuleSource::new(
+            _: &avarice::ModuleName,
+        ) -> Result<Option<avarice::ModuleSource>, avarice::StoreError> {
+            Ok(Some(avarice::ModuleSource::new(
                 "while true do end",
                 "memory:endless",
             )))

@@ -1,4 +1,4 @@
-//! `dirs` is original to avarice-rt, not derived from Astra: ADR 0014 records why. It wraps
+//! `dirs` is original to avarice, not derived from Astra: ADR 0014 records why. It wraps
 //! `etcetera`'s directory resolution, registering one primitive per directory kind. Each takes the
 //! application's identity — name, author, top-level domain — and resolves it against the host's
 //! strategy (`Xdg` on Linux and macOS, `Windows` elsewhere). `config`, `data` and `cache` always

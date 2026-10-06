@@ -5,7 +5,7 @@ status: accepted
 # `dirs` resolves standard per-application directories, via `etcetera`
 
 `dirs` is a new **stdlib module**: it resolves where an application's config, data, cache, state
-and runtime directories belong, on the host it is running on. It is original to avarice-rt, the
+and runtime directories belong, on the host it is running on. It is original to avarice, the
 second stdlib module (after `ansi`, later moved to the core by
 [ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md)) that owes nothing to
 [Astra](https://github.com/ArkForgeLabs/Astra), and the first that both has a Rust half and is not
@@ -57,7 +57,7 @@ does, and why `stores` — the module named for storing things — has nothing t
   half. Giving sandboxed Lua scoped disk access at all is a separate, larger design question this
   does not attempt.
 - **Original, so no Astra header, no `Changes from the original:` list.** `src/stdlib/components/dirs.rs`
-  and `src/stdlib/lua/dirs.lua` each open with one line saying they are original to avarice-rt.
+  and `src/stdlib/lua/dirs.lua` each open with one line saying they are original to avarice.
   `src/stdlib/components/mod.rs`, which is Astra's and derived, gains one line,
   `pub mod dirs;` behind `stdlib-dirs`, recorded in its header as an addition under the rule
   [ADR 0006](0006-stdlib-derived-from-astra.md)'s amendments allow: nothing Astra does is altered.
@@ -85,7 +85,7 @@ benefit and give the two modules two chances to drift apart.
 — resolution — and to match `etcetera`'s own no-I/O design. A script that wants the directory to
 exist calls `fs.create_dir_all` on the path `dirs` gives it.
 
-**A single Windows-placeholder `author`/`top_level_domain`, supplied by avarice-rt rather than the
+**A single Windows-placeholder `author`/`top_level_domain`, supplied by avarice rather than the
 caller** was considered, since Linux and macOS ignore both fields under `Xdg`. It was rejected
 because it would have made Windows support cosmetic rather than real: every application would land
 under the same placeholder author, defeating the reason `AppStrategyArgs` has the field at all.

@@ -22,7 +22,7 @@ run() {
 
 extra=("$@")
 
-# Every module, and the avrt program: what a plain `cargo test` builds.
+# Every module, and the avarice program: what a plain `cargo test` builds.
 run "all modules (default features)"
 # None: what an embedder gets from `default-features = false` and nothing else.
 run "no modules" --no-default-features

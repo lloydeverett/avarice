@@ -1,7 +1,7 @@
-# avarice-rt
+# avarice
 
 An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates/mlua), and a
-command-line interpreter, `avrt`, built on the runtime.
+command-line interpreter, `avarice`, built on the runtime.
 
 - **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
   `dirs` and `process`, each behind its own Cargo feature. Most are adapted from
@@ -15,7 +15,7 @@ command-line interpreter, `avrt`, built on the runtime.
 - **Limits.** A time limit stops Lua that is running, in any coroutine. Time a chunk spends waiting,
   on the network or on another program, counts against it, but the wait itself runs on: the limit
   stops the chunk when it next runs Lua. A cancel stops a chunk that is waiting as well.
-- **The `avrt` command.** Runs scripts, or starts a REPL with history and multi-line input.
+- **The `avarice` command.** Runs scripts, or starts a REPL with history and multi-line input.
 - **Cross-platform.** Aims to behave the same on Linux, macOS and Windows wherever possible.
 - **Host-controlled modules.** Lua's `package` library is never opened. `require` resolves only
   modules registered from Rust and modules in a store the host supplies, such as a directory.
@@ -28,7 +28,7 @@ Terms used in the code are defined in [CONTEXT.md](CONTEXT.md). Design decisions
 Lua is vendored and built from source, so you need a C compiler but not a system Lua.
 
 ```console
-$ cargo install --git https://github.com/lloydeverett/avarice-rt
+$ cargo install --git https://github.com/lloydeverett/avarice
 ```
 
 ## Usage
@@ -36,8 +36,8 @@ $ cargo install --git https://github.com/lloydeverett/avarice-rt
 ### The REPL
 
 ```console
-$ avrt
-avrt 0.1.0 — Lua 5.4 (trusted profile). Ctrl-D to exit.
+$ avarice
+avarice 0.1.0 — Lua 5.4 (trusted profile). Ctrl-D to exit.
 > 6 * 7
 42
 > { x = 1 }
@@ -49,15 +49,15 @@ avrt 0.1.0 — Lua 5.4 (trusted profile). Ctrl-D to exit.
 ### Running a script
 
 ```console
-$ avrt script.lua arg1 arg2
-$ avrt -e 'print(_VERSION)'
-$ echo 'print(1 + 1)' | avrt
-$ avrt --sandbox --timeout 5 untrusted.lua
-$ avrt --path ./src --path ./vendor main.lua
+$ avarice script.lua arg1 arg2
+$ avarice -e 'print(_VERSION)'
+$ echo 'print(1 + 1)' | avarice
+$ avarice --sandbox --timeout 5 untrusted.lua
+$ avarice --path ./src --path ./vendor main.lua
 ```
 
-`avrt` uses the trusted profile unless you pass `--sandbox`. `require` looks in the script's
-directory, or in the `--path` directories. Run `avrt --help` for all options.
+`avarice` uses the trusted profile unless you pass `--sandbox`. `require` looks in the script's
+directory, or in the `--path` directories. Run `avarice --help` for all options.
 
 ## Stdlib
 
@@ -118,7 +118,7 @@ print(crypto.base64.encode_urlsafe("hello?"))
 ```lua
 local serde = require("serde")
 
-local cfg = serde.json.decode('{"name": "avrt", "tags": ["lua"]}')
+local cfg = serde.json.decode('{"name": "avarice", "tags": ["lua"]}')
 print(serde.json.encode(cfg))
 print(serde.yaml.encode(cfg))
 print(serde.toml.decode("port = 8080").port)
@@ -154,7 +154,7 @@ local ticker = utils.spawn_interval(function() print("tick") end, 100)
 utils.spawn_timeout(function() ticker:abort() end, 1000)
 ```
 
-`avrt` waits for outstanding tasks before exiting. Ctrl-C aborts them.
+`avarice` waits for outstanding tasks before exiting. Ctrl-C aborts them.
 
 ### `stores`
 
@@ -216,8 +216,8 @@ for line in child.stdout:lines() do print(line) end
 print(child:wait().code)
 ```
 
-A running Child counts as a task: `avrt` waits for it before exiting, and Ctrl-C kills it. Only the
-Child is killed, not programs it started. `--timeout` does not cut a wait for a Child short; a
+A running Child counts as a task: `avarice` waits for it before exiting, and Ctrl-C kills it. Only
+the Child is killed, not programs it started. `--timeout` does not cut a wait for a Child short; a
 Command's own `timeout` does.
 
 ### `ansi`
@@ -239,7 +239,7 @@ out isn't compiled, and neither are its dependencies.
 
 ```toml
 [dependencies]
-avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-features = false, features = [
+avarice = { git = "https://github.com/lloydeverett/avarice", default-features = false, features = [
   "stdlib-serde",
   "stdlib-crypto",
 ] }
@@ -251,12 +251,12 @@ avarice-rt = { git = "https://github.com/lloydeverett/avarice-rt", default-featu
 ```rust
 use std::time::Duration;
 
-use avarice_rt::{
+use avarice::{
     CancelHandle, FsStore, ModuleName, ModuleSource, ModuleStore, Profile, Runtime, StdModules,
     StoreError,
 };
 
-fn main() -> avarice_rt::Result<()> {
+fn main() -> avarice::Result<()> {
     let cancel = CancelHandle::new();
 
     // Start from a profile: `Sandbox` (no io, os, binary chunks or `__gc`; 128 MiB memory cap)
@@ -302,7 +302,7 @@ impl ModuleStore for SqliteStore {
 
 ## Sandbox limitations
 
-- **PUC Lua, not Luau.** The sandbox is avarice-rt's own work: it withholds libraries and wraps
+- **PUC Lua, not Luau.** The sandbox is avarice's own work: it withholds libraries and wraps
   `load` and `setmetatable`, on a Lua that was not designed to run untrusted code. Luau was, and is
   far more battle-tested at it. [ADR 0001](docs/adr/0001-puc-lua-not-luau.md) says why this project
   uses PUC Lua.
@@ -323,7 +323,7 @@ impl ModuleStore for SqliteStore {
 
 - Needs `cargo test` testing on Windows.
 
-> - PATHEXT lookup. a_program_is_found_on_the_path_the_command_gives runs avrt-copy by bare name, which should find avrt-copy.exe.
+> - PATHEXT lookup. a_program_is_found_on_the_path_the_command_gives runs avarice-copy by bare name, which should find avarice-copy.exe.
 > - Windows-only code in process.rs: the reader for merged stdout and stderr, the host-stdout handle used when stderr goes to stdout, and the non-Unix branches for arguments and terminate.
 > - Older Windows-only branches: env_value in utils.rs and upload_path in http/client/request.rs.
 > - :kill(), :terminate(), and Ctrl-C with a Child running. The Ctrl-C tests are Unix-only, so try that one by hand.
@@ -332,4 +332,4 @@ impl ModuleStore for SqliteStore {
 
 Apache License 2.0; see [LICENSE](LICENSE). The stdlib files taken from Astra are under the same
 licence, and each has a header saying where it came from and what changed. `datetime`, `dirs` and
-`process` are original to avarice-rt, and their files say so instead.
+`process` are original to avarice, and their files say so instead.

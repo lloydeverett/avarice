@@ -4,14 +4,15 @@ status: accepted
 
 # PUC-Rio Lua 5.4, not Luau
 
-avarice-rt embeds PUC-Rio Lua 5.4 via `mlua`, even though the author's other
-project, avarice, embeds Luau and was the starting reference for this one. Lua
-5.4 was originally chosen because trusted code needed to reach existing Lua C
-libraries — `luaposix` was the motivating example — and Luau could not: no
-`lauxlib.h`, no `package` library, no dynamic loading, so C modules were
-impossible there rather than merely awkward.
+avarice embeds PUC-Rio Lua 5.4 via `mlua`, even though the author's other
+project, which embeds Luau and was then also named avarice (this one was
+avarice-rt), was the starting reference for this one. Lua 5.4 was originally
+chosen because trusted code needed to reach existing Lua C libraries —
+`luaposix` was the motivating example — and Luau could not: no `lauxlib.h`, no
+`package` library, no dynamic loading, so C modules were impossible there
+rather than merely awkward.
 
-avarice-rt no longer supports native C modules at all — see [ADR
+avarice no longer supports native C modules at all — see [ADR
 0002](0002-host-registers-modules.md) — so that requirement no longer applies.
 The choice of Lua 5.4 over Luau still stands, but on the reasons below rather
 than that one, and it isn't treated as closed: if a good enough reason to
@@ -20,8 +21,8 @@ reconsider Luau turns up, it's worth reopening.
 ## Considered options
 
 **Luau** was the initial recommendation, on the strength of `lua.sandbox(true)`,
-a built-in memory limit, an interrupt hook, and consistency with avarice. Three
-findings reversed it. Consistency stopped mattering once avarice-rt was scoped
+a built-in memory limit, an interrupt hook, and consistency with that other project. Three
+findings reversed it. Consistency stopped mattering once avarice was scoped
 as an independent sibling with no dependency in either direction. Luau's
 safety-by-default turned out to be overstated for our purposes: mlua installs a
 filesystem-backed `require` and `loadstring` into every Luau state regardless of

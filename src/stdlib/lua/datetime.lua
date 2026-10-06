@@ -1,4 +1,4 @@
--- Original to avarice-rt: not derived from Astra. See ADR 0019.
+-- Original to avarice: not derived from Astra. See ADR 0019.
 --
 -- Dates and times, built on jiff <https://docs.rs/jiff>. Every type here is one of jiff's, with
 -- jiff's method names, and jiff's documentation is the reference for what each does. The

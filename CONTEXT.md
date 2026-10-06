@@ -1,24 +1,23 @@
 # Context
 
-Glossary for avarice-rt. Terms only — no implementation details, no decisions.
+Glossary for avarice. Terms only — no implementation details, no decisions.
 Architectural decisions live in `docs/adr/`.
 
-## avarice-rt
+## avarice
 
 The project: a Lua interpreter and embeddable Lua runtime, written in Rust.
 Distributed as a Rust library plus a command-line program.
 
-Named after, but independent of, **avarice** — a separate project by the same
-author that embeds Luau. There is no dependency in either direction, and the
-two do not share a Lua dialect.
+Independent of a separate project by the same author that embeds Luau, which
+was also once named avarice; this project was named avarice-rt until it took the
+name over. There is no dependency in either direction, and the two do not share
+a Lua dialect.
 
-## avrt
+## `avarice`
 
-The command-line program built from avarice-rt. Runs a **program**, or starts
-a **REPL**.
-
-The binary is named `avrt` rather than `art` because `art` collides with the
-Python `art` package and with Debian's `artemis`.
+The command-line program built from avarice. Runs a **program**, or starts
+a **REPL**. In backticks, `avarice` means the program; in plain text, the
+project.
 
 ## Lua
 
@@ -46,7 +45,7 @@ libraries through which Lua can reach outside its own computation — `io`, `os`
 finalizers**. Registers no **stdlib module** except the **pure** ones, and every
 **core module**.
 
-Sandbox mode describes what avarice-rt itself puts in the runtime. It is not a
+Sandbox mode describes what avarice itself puts in the runtime. It is not a
 guarantee about a runtime an embedder has since reconfigured or added **host
 modules** to.
 
@@ -78,7 +77,7 @@ has is decided in Rust at construction; Lua code never causes one to load.
 
 ## Stdlib module
 
-A **host module** that avarice-rt ships, rather than one an embedder wrote.
+A **host module** that avarice ships, rather than one an embedder wrote.
 `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
 `dirs` and `process`.
 
@@ -119,7 +118,7 @@ Purity is a fact about how a module is written, not about what it is for.
 
 ## Compiled in
 
-A **stdlib module** that is part of an avarice-rt build. Chosen by the
+A **stdlib module** that is part of an avarice build. Chosen by the
 **embedder** when it builds, once, for every runtime in that program. A module
 that is not compiled in cannot be **registered**, by a **profile** or by the
 embedder.
@@ -142,7 +141,7 @@ map `foo.bar` onto a directory, a table row, or anything else. Resolution
 between names is the runtime's job; the store only fetches.
 
 The filesystem is one store, and currently the only one. It is part of the
-library, not of `avrt`: an embedder can ask for filesystem resolution without
+library, not of `avarice`: an embedder can ask for filesystem resolution without
 going through the command-line program.
 
 ## Host function
@@ -179,18 +178,18 @@ commas of a table, a function's name and parameters, and so on.
 
 It is always on. Nothing in the runtime asks whether the reader can see colour,
 so what reaches the **write sink** carries it. Whether it reaches a reader is the
-destination's concern: `avrt` removes it for a destination that cannot take it,
+destination's concern: `avarice` removes it for a destination that cannot take it,
 and an **embedder**'s sink receives it as written.
 
 ## Prompt highlighting
 
-The colour `avrt`'s REPL gives what is typed, before it is submitted: keywords, strings and
+The colour `avarice`'s REPL gives what is typed, before it is submitted: keywords, strings and
 comments. Distinct from **Highlighting**, which is `print`'s, and applies to a value once it is
 shown, not to the source a reader is still typing.
 
 ## Embedder
 
-A Rust program that depends on avarice-rt as a library to run Lua. `avrt` is
+A Rust program that depends on avarice as a library to run Lua. `avarice` is
 one embedder among others, with no privileged access.
 
 ## Command

@@ -7,7 +7,7 @@
 //   - Removed `close_dbs` (`astra_internal__close_all_databases`) and the `DATABASE_POOLS` import:
 //     the database component is not taken.
 //   - Removed `dotenv_function` (`astra_internal__dotenv_load`): `dotenvy` is not taken.
-//   - Removed `pprint`, which replaced Lua's global `print`: `print` belongs to avarice-rt's core.
+//   - Removed `pprint`, which replaced Lua's global `print`: `print` belongs to avarice's core.
 //   - Removed `setenv` (`astra_internal__setenv`): it wraps `std::env::set_var`, which is unsound
 //     in a process with threads.
 //   - Removed `invalidate_cache` (`astra_internal__invalidate_cache`): it clears the import cache

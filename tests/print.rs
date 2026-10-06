@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use avarice_rt::mlua::StdLib;
-use avarice_rt::{DEFAULT_SANDBOX_MEMORY_LIMIT, Error, Profile, Runtime, was_timed_out};
+use avarice::mlua::StdLib;
+use avarice::{DEFAULT_SANDBOX_MEMORY_LIMIT, Error, Profile, Runtime, was_timed_out};
 use common::{Buffer, plain};
 
 /// A runtime whose `print` writes to the returned buffer.

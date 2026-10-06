@@ -6,14 +6,14 @@ status: accepted
 
 `process` is a new **stdlib module** for running other programs: starting a **Child** from a
 **Command**, talking to it through its standard streams, and collecting its **Output**. It is
-original to avarice-rt, like `dirs` ([ADR 0014](0014-dirs-resolves-standard-directories-via-etcetera.md)),
-and replaces what Lua itself offers: `os.execute` and `io.popen`. Both hand a string to the host's
-shell, `os.execute` gives back only the exit status, and `io.popen` gives only one stream and learns
-the status only when closed.
+original to avarice, like `dirs`
+([ADR 0014](0014-dirs-resolves-standard-directories-via-etcetera.md)), and replaces what Lua itself
+offers: `os.execute` and `io.popen`. Both hand a string to the host's shell, `os.execute` gives back
+only the exit status, and `io.popen` gives only one stream and learns the status only when closed.
 
 A reader would otherwise wonder why a runtime that already has `os.execute` and `io.popen` ships a
-third way to run a program, why `process.run("ls -la")` is an error, why `avrt` will not exit while
-a program it started is still running, and why killing a Child leaves its own children alive.
+third way to run a program, why `process.run("ls -la")` is an error, why `avarice` will not exit
+while a program it started is still running, and why killing a Child leaves its own children alive.
 
 ## The decision
 
@@ -45,10 +45,10 @@ a program it started is still running, and why killing a Child leaves its own ch
 - **A Child counts as a task.** A watching task on the **executor** owns every Child, so everything
   the runtime already does with tasks applies unchanged: `outstanding_tasks` counts Children,
   `wait_for_tasks` waits for them, `abort_tasks` kills them, and dropping the `Runtime` kills them.
-  `avrt` therefore waits for running Children before exiting, and Ctrl-C kills them, exactly as it
-  waits for and aborts tasks. Losing Lua's handle to a Child does not end it, since the watching task
-  still holds it; it closes Lua's ends of its pipes, so a Child writing into them gets a broken pipe
-  and does not hang `avrt` forever.
+  `avarice` therefore waits for running Children before exiting, and Ctrl-C kills them, exactly as
+  it waits for and aborts tasks. Losing Lua's handle to a Child does not end it, since the watching
+  task still holds it; it closes Lua's ends of its pipes, so a Child writing into them gets a broken
+  pipe and does not hang `avarice` forever.
 - **A program is found the same way on every platform.** A program with a path separator is
   resolved against the Command's `cwd`, as POSIX does, and not against the host's, as Windows does.
   A bare name is searched for on the `PATH` the Child will get, including one the Command's `env`
@@ -78,7 +78,7 @@ receives the terminal's Ctrl-C, and stops with `SIGTTIN` if it reads the termina
 `vim` with inherited streams. No mainstream standard library does it by default.
 
 **Killing a Child when its handle is garbage-collected** was considered first and rejected for
-matching how tasks already behave. Collection is unpredictable, and `avrt`'s rule for tasks, wait
+matching how tasks already behave. Collection is unpredictable, and `avarice`'s rule for tasks, wait
 for them and let Ctrl-C end them, is one rule a script author already knows.
 
 **A builder**, as `http.request` has, was rejected. Everything about a Command is known before it
@@ -86,9 +86,9 @@ runs, and a table is one way to write it where a builder and a table would be tw
 
 ## Consequences
 
-A script that starts a long-running program and returns keeps `avrt` running until that program
+A script that starts a long-running program and returns keeps `avarice` running until that program
 exits or Ctrl-C is pressed, and at the REPL the prompt waits for it, as it does for
-`utils.spawn_interval`. The count of aborted tasks `avrt` reports on Ctrl-C includes Children.
+`utils.spawn_interval`. The count of aborted tasks `avarice` reports on Ctrl-C includes Children.
 
 A program that outlives the script, detached from it, is not possible. It can be added later, with
 killing a whole tree, as options on a Command.

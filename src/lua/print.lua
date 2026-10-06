@@ -12,7 +12,7 @@
 -- through it.
 --
 -- What `print` shows inside a table is highlighted (ADR 0011): always, whether or not anyone can
--- see colour. Removing it where it cannot be shown is the destination's business, which `avrt`
+-- see colour. Removing it where it cannot be shown is the destination's business, which `avarice`
 -- does and an embedder's sink may not.
 --
 -- `string` and `table` are assumed. The runtime refuses to be built without them.

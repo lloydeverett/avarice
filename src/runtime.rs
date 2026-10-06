@@ -51,12 +51,12 @@ struct Modules {
 /// [`block_on`](Self::block_on) drives a future on it for a caller who is not itself async.
 ///
 /// ```
-/// use avarice_rt::{Profile, Runtime};
+/// use avarice::{Profile, Runtime};
 ///
 /// let rt = Runtime::new(Profile::Sandbox)?;
 /// let sum: i64 = rt.block_on(rt.eval("1 + 2", "=example"))?;
 /// assert_eq!(sum, 3);
-/// # Ok::<_, avarice_rt::Error>(())
+/// # Ok::<_, avarice::Error>(())
 /// ```
 ///
 /// Calling `block_on` from inside another tokio runtime panics, with tokio's own message. An
@@ -903,7 +903,7 @@ fn restrict_base_library(lua: &Lua, binary_chunks: bool, lua_finalizers: bool) -
                 return result
             end
             if type(result) == "string" then
-                local message, placed = gsub(result, "^%[avarice%-rt base library%]:%d+: ", "", 1)
+                local message, placed = gsub(result, "^%[avarice base library%]:%d+: ", "", 1)
                 if placed == 1 then
                     error(message, 2)
                 end
@@ -913,7 +913,7 @@ fn restrict_base_library(lua: &Lua, binary_chunks: bool, lua_finalizers: bool) -
     "#;
 
     let prelude = |source: &'static str| {
-        let chunk = lua.load(source).set_name("=[avarice-rt base library]");
+        let chunk = lua.load(source).set_name("=[avarice base library]");
         enforce_chunk_mode(chunk, binary_chunks).exec()
     };
 

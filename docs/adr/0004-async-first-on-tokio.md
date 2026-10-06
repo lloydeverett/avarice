@@ -37,7 +37,7 @@ does this, was rejected. It would require every registered function and every
 userdata to be `Send`, turning `Modules`' `Rc`/`RefCell` into `Arc`/`Mutex`
 throughout, and it buys no parallelism inside Lua: `send` puts a lock around the
 Lua state. Astra can afford it because its Lua state is a process-wide
-singleton it controls; avarice-rt hands `Runtime` to embedders.
+singleton it controls; avarice hands `Runtime` to embedders.
 
 ## Consequences
 
@@ -45,7 +45,7 @@ singleton it controls; avarice-rt hands `Runtime` to embedders.
 compiling. Tasks are green threads on the thread the Lua state lives on, which
 is the only honest reading anyway — one Lua state is not reentrant.
 
-An embedder on `async-std` or `smol` cannot drive avarice-rt; the core owns the
+An embedder on `async-std` or `smol` cannot drive avarice; the core owns the
 executor rather than leaving the choice open. This was chosen deliberately over
 exposing a bare future, to keep task spawning and the runtime's lifetime in one
 place.
@@ -55,7 +55,7 @@ burns its wall-clock budget without executing Lua. This is accepted: the limits
 exist for untrusted code, and untrusted code gets no stdlib module with Rust behind it (only the
 pure ones, which are Lua; see ADR 0007).
 
-`avrt` waits for every outstanding task before exiting. Its REPL drains tasks to
+`avarice` waits for every outstanding task before exiting. Its REPL drains tasks to
 completion between prompts, so `spawn_interval` holds the terminal until Ctrl+C
 — which aborts the evaluation and every task, and says so on stderr.
 
@@ -95,7 +95,7 @@ executor before the Lua state, so that dropping one drops outstanding tasks firs
 
 ## Amendment, 2026-09-21: what becomes of tasks, and how Ctrl-C reaches a chunk
 
-Two things the decision above left to `avrt` need the core's help, and neither was in reach of a
+Two things the decision above left to `avarice` need the core's help, and neither was in reach of a
 CLI written over `block_on` alone.
 
 **Tasks cannot be listed, so they are counted and aborted through the executor.** Astra's tasks
@@ -124,7 +124,7 @@ thread, and a Lua loop that never awaits never gives it a turn, so a signal it i
 sits unread. And the opposite case fails differently: a chunk that is *awaiting* runs no Lua for
 the limit hook to interrupt. So `CancelHandle::cancel` now does both. It sets the flag the hook
 reads, and it wakes a `tokio::sync::Notify`, which `Runtime::run` — what `exec` and `eval` are
-made of — races the chunk against, dropping the chunk if it wins. `avrt` catches Ctrl-C with
+made of — races the chunk against, dropping the chunk if it wins. `avarice` catches Ctrl-C with
 `tokio::signal::ctrl_c` on a thread of its own, whose one job is to trip the handle. The
 `CancelHandle` doc's old promise, that it "can stop a runtime from another thread", is now true of
 a runtime that is waiting as well as one that is running.

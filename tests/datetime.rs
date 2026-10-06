@@ -6,7 +6,7 @@
 
 #![cfg(feature = "stdlib-datetime")]
 
-use avarice_rt::{Profile, Runtime};
+use avarice::{Profile, Runtime};
 
 /// Runs `body` with `dt` bound to the module, and returns what it returns.
 fn eval<R: mlua::FromLuaMulti>(body: &str) -> R {

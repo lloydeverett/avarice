@@ -5,8 +5,8 @@ mod common;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use avarice_rt::mlua::{Table, Value};
-use avarice_rt::{
+use avarice::mlua::{Table, Value};
+use avarice::{
     Error, FsStore, ModuleName, ModuleSource, ModuleStore, Profile, Runtime, StoreError,
 };
 use common::TempDir;

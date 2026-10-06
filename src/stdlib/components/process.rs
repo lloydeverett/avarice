@@ -1,4 +1,4 @@
-//! `process` is original to avarice-rt, not derived from Astra: ADR 0016 records why. It starts
+//! `process` is original to avarice, not derived from Astra: ADR 0016 records why. It starts
 //! programs from a **Command**, a Lua table, without a shell; `run` waits for the **Child** and
 //! gives back its **Output**, and `spawn` gives back the Child, whose standard streams Lua reads
 //! and writes as it runs.

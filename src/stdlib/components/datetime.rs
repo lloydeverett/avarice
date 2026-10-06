@@ -1,4 +1,4 @@
-//! `datetime` is original to avarice-rt, not derived from Astra: ADR 0019 records why. It binds
+//! `datetime` is original to avarice, not derived from Astra: ADR 0019 records why. It binds
 //! [jiff](https://docs.rs/jiff) to Lua, one userdata per jiff type: `Timestamp`, `Zoned`, `Date`,
 //! `Time`, `DateTime`, `Span`, `SignedDuration`, `TimeZone` and `Weekday`.
 //!

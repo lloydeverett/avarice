@@ -1,10 +1,10 @@
-//! Ctrl-C while `avrt` is running something.
+//! Ctrl-C while `avarice` is running something.
 
 use std::future::Future;
 use std::io;
 use std::task::{Context, Poll, Waker};
 
-use avarice_rt::CancelHandle;
+use avarice::CancelHandle;
 
 /// Makes Ctrl-C trip `cancel`, from now until the process ends.
 ///
@@ -37,7 +37,7 @@ pub fn install(cancel: CancelHandle) -> io::Result<()> {
     };
 
     std::thread::Builder::new()
-        .name("avrt-interrupt".to_string())
+        .name("avarice-interrupt".to_string())
         .spawn(move || {
             executor.block_on(async move {
                 while interrupts.as_mut().await.is_ok() {

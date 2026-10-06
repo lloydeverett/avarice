@@ -1,4 +1,4 @@
--- Original to avarice-rt. This file is not taken from Astra, and is not derived from anything.
+-- Original to avarice. This file is not taken from Astra, and is not derived from anything.
 --
 -- This is a CORE module: the core registers it in every runtime, whatever the profile, and no
 -- build can leave it out, because `print` uses these codes to highlight what it prints (ADR 0011).

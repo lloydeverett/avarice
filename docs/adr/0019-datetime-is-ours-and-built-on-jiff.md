@@ -42,7 +42,7 @@ hard to review, a copy that no longer matches its original, cannot arise when th
   `StdModule::Datetime`. **It is a clean break.** Nothing of Astra's surface survives, and there
   is no compatibility shim: `datetime.new` is gone.
 - **The files stay where they are**, `components/datetime.rs` and `lua/datetime.lua`, beside
-  Astra's. Each says at the top that it is original to avarice-rt. ADR 0006's header rule is
+  Astra's. Each says at the top that it is original to avarice. ADR 0006's header rule is
   amended to cover only files derived from Astra.
 - **jiff's names and concepts, with Lua spelling.** `checked_` is dropped from
   method names, because every method raises on failure

@@ -7,8 +7,8 @@
 
 #![cfg(feature = "stdlib-validation")]
 
-use avarice_rt::mlua::FromLuaMulti;
-use avarice_rt::{Profile, Runtime, StdModules};
+use avarice::mlua::FromLuaMulti;
+use avarice::{Profile, Runtime, StdModules};
 
 fn trusted() -> Runtime {
     Runtime::new(Profile::Trusted).unwrap()
@@ -149,7 +149,7 @@ fn ranges_patterns_literals_and_unions_check_their_values() {
     // What each reports as well as whether it passes, since a script shows the message to a user.
     let outcomes: Vec<String> = {
         let rt = trusted();
-        let table: avarice_rt::mlua::Table = run(
+        let table: avarice::mlua::Table = run(
             &rt,
             r#"
             local t = require("validation").types

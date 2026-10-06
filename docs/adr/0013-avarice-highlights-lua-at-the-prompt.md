@@ -2,9 +2,9 @@
 status: accepted
 ---
 
-# `avrt` highlights Lua at the prompt
+# `avarice` highlights Lua at the prompt
 
-`avrt`'s REPL colours what is typed, not only what is printed. It is called **prompt
+`avarice`'s REPL colours what is typed, not only what is printed. It is called **prompt
 highlighting**, deliberately not **highlighting**: that word already means the colour `print`
 gives a value it shows ([ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md)), and the
 two are unrelated mechanisms that happen to sit next to each other on the same line.
@@ -40,8 +40,8 @@ two are unrelated mechanisms that happen to sit next to each other on the same l
 - **`nu-ansi-term` becomes a direct dependency**, pinned to the version `reedline` already resolves
   it to transitively. `reedline` re-exports its `Color` but not its `Style`, and the highlighter
   needs to name `Style` to build one.
-- **It lives in `avrt`**, in `src/cli`, behind the `cli` feature, and is not part of the library's
-  public surface. A prompt is a concern of the interpreter program, not of the runtime.
+- **It lives in `avarice`**, in `src/cli`, behind the `cli` feature, and is not part of the
+  library's public surface. A prompt is a concern of the interpreter program, not of the runtime.
 
 ## Considered options
 
@@ -66,7 +66,8 @@ this ADR's title and `CONTEXT.md`'s glossary follow that choice.
 ## Consequences
 
 **A new direct dependency, `nu-ansi-term`.** It was already in the dependency tree, transitively,
-through `reedline`; this adds nothing new to what gets built, only a name `avrt` can use directly.
+through `reedline`; this adds nothing new to what gets built, only a name `avarice` can use
+directly.
 
 **`repl::run`'s buffer changes shape.** It moves from a plain `String` to an `Arc<Mutex<String>>`
 (`Mutex` rather than `RefCell`, since `reedline::Highlighter` requires `Send`), shared with the

@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "stdlib-utils")]
-use avarice_rt::{Error, was_timed_out};
-use avarice_rt::{Profile, Runtime};
+use avarice::{Error, was_timed_out};
+use avarice::{Profile, Runtime};
 
 fn trusted() -> Runtime {
     Runtime::new(Profile::Trusted).unwrap()
@@ -217,7 +217,7 @@ fn a_time_limit_is_still_armed_after_an_await() {
     // The clock runs while the chunk is awaiting, so a chunk that waits out its budget is stopped
     // as soon as it executes anything again. ADR 0004 accepts this.
     let rt = Runtime::builder(Profile::Sandbox)
-        .with_std_modules(avarice_rt::StdModules::UTILS)
+        .with_std_modules(avarice::StdModules::UTILS)
         .time_limit(Duration::from_millis(50))
         .check_interval(1_000)
         .build()

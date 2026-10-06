@@ -6,7 +6,7 @@
 
 mod common;
 
-use avarice_rt::{Profile, Runtime, StdModules};
+use avarice::{Profile, Runtime, StdModules};
 use common::{listed, requirable};
 
 fn runtime() -> Runtime {

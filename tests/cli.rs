@@ -1,4 +1,4 @@
-//! End-to-end tests for the `avrt` command.
+//! End-to-end tests for the `avarice` command.
 #![cfg(feature = "cli")]
 
 mod common;
@@ -8,18 +8,18 @@ use std::process::{Command, Output, Stdio};
 
 use common::TempDir;
 
-const AVRT: &str = env!("CARGO_BIN_EXE_avrt");
+const AVARICE: &str = env!("CARGO_BIN_EXE_avarice");
 
-fn avrt<I, S>(args: I) -> Output
+fn avarice<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    Command::new(AVRT)
+    Command::new(AVARICE)
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .expect("avrt should run")
+        .expect("avarice should run")
 }
 
 fn stdout_of(output: &Output) -> String {
@@ -32,16 +32,16 @@ fn stderr_of(output: &Output) -> String {
 
 #[test]
 fn prints_its_version() {
-    let output = avrt(["-v"]);
+    let output = avarice(["-v"]);
     assert!(output.status.success());
     let stdout = stdout_of(&output);
-    assert!(stdout.contains("avrt "), "{stdout}");
+    assert!(stdout.contains("avarice "), "{stdout}");
     assert!(stdout.contains("Lua 5.4"), "{stdout}");
 }
 
 #[test]
 fn runs_a_statement_given_on_the_command_line() {
-    let output = avrt(["-e", "print(6 * 7)"]);
+    let output = avarice(["-e", "print(6 * 7)"]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "42\n");
 }
@@ -50,7 +50,7 @@ fn runs_a_statement_given_on_the_command_line() {
 fn print_interleaves_with_io_write_on_a_pipe() {
     // `io.write` is buffered by C stdio and `print` is not, so without care the pipe would see
     // `b` before `a`. Stock Lua gets this right because both go through the same buffer.
-    let output = avrt(["-e", r#"io.write("a") print("b") io.write("c") print("d")"#]);
+    let output = avarice(["-e", r#"io.write("a") print("b") io.write("c") print("d")"#]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "ab\ncd\n");
 }
@@ -59,7 +59,7 @@ fn print_interleaves_with_io_write_on_a_pipe() {
 fn statements_run_in_order_and_before_the_script() {
     let dir = TempDir::new();
     let script = dir.write("main.lua", "print('script', x)");
-    let output = avrt(["-e", "x = 1", "-e", "x = x + 1", script.to_str().unwrap()]);
+    let output = avarice(["-e", "x = 1", "-e", "x = x + 1", script.to_str().unwrap()]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "script\t2\n");
 }
@@ -76,7 +76,7 @@ fn builds_the_arg_table_the_way_stock_lua_does() {
         print(...)
         "#,
     );
-    let output = avrt(["--", script.to_str().unwrap(), "a", "b"]);
+    let output = avarice(["--", script.to_str().unwrap(), "a", "b"]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     let stdout = stdout_of(&output);
     let lines: Vec<&str> = stdout.lines().collect();
@@ -92,7 +92,7 @@ fn builds_the_arg_table_the_way_stock_lua_does() {
 fn everything_after_the_script_belongs_to_the_script() {
     let dir = TempDir::new();
     let script = dir.write("main.lua", "print(arg[1], arg[2])");
-    let output = avrt([script.to_str().unwrap(), "--sandbox", "-e"]);
+    let output = avarice([script.to_str().unwrap(), "--sandbox", "-e"]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "--sandbox\t-e\n");
 }
@@ -104,7 +104,7 @@ fn resolves_require_against_the_scripts_own_directory() {
     let script = dir.write("main.lua", "print(require('lib.greet')('there'))");
 
     // Run from somewhere else entirely, to show it is the script's directory that matters.
-    let output = Command::new(AVRT)
+    let output = Command::new(AVARICE)
         .arg(script.to_str().unwrap())
         .current_dir(std::env::temp_dir())
         .output()
@@ -120,7 +120,7 @@ fn an_explicit_path_overrides_the_script_directory() {
     modules.write("only_here.lua", "return 'found'");
     let script = dir.write("main.lua", "print(require('only_here'))");
 
-    let output = avrt([
+    let output = avarice([
         "--path",
         modules.path().to_str().unwrap(),
         script.to_str().unwrap(),
@@ -131,27 +131,27 @@ fn an_explicit_path_overrides_the_script_directory() {
 
 #[test]
 fn the_sandbox_flag_withholds_the_dangerous_libraries() {
-    let output = avrt(["--sandbox", "-e", "print(io, os, package)"]);
+    let output = avarice(["--sandbox", "-e", "print(io, os, package)"]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "nil\tnil\tnil\n");
 
-    let output = avrt(["-e", "print(io ~= nil, os ~= nil)"]);
+    let output = avarice(["-e", "print(io ~= nil, os ~= nil)"]);
     assert_eq!(stdout_of(&output), "true\ttrue\n");
 }
 
 #[test]
 fn a_lua_error_exits_one_with_a_traceback() {
-    let output = avrt(["-e", "error('boom')"]);
+    let output = avarice(["-e", "error('boom')"]);
     assert_eq!(output.status.code(), Some(1));
     let stderr = stderr_of(&output);
-    assert!(stderr.starts_with("avrt: "), "{stderr}");
+    assert!(stderr.starts_with("avarice: "), "{stderr}");
     assert!(stderr.contains("boom"), "{stderr}");
     assert!(stderr.contains("stack traceback"), "{stderr}");
 }
 
 #[test]
 fn a_missing_script_exits_one() {
-    let output = avrt(["definitely-not-here.lua"]);
+    let output = avarice(["definitely-not-here.lua"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
         stderr_of(&output).contains("cannot open"),
@@ -162,13 +162,13 @@ fn a_missing_script_exits_one() {
 
 #[test]
 fn an_unknown_option_exits_two() {
-    let output = avrt(["--not-an-option"]);
+    let output = avarice(["--not-an-option"]);
     assert_eq!(output.status.code(), Some(2));
 }
 
 #[test]
 fn a_bad_timeout_exits_two() {
-    let output = avrt(["--timeout", "0", "-e", "print(1)"]);
+    let output = avarice(["--timeout", "0", "-e", "print(1)"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(
         stderr_of(&output).contains("positive"),
@@ -180,7 +180,7 @@ fn a_bad_timeout_exits_two() {
 #[test]
 fn a_timeout_stops_a_spinning_script() {
     let started = std::time::Instant::now();
-    let output = avrt(["--timeout", "0.2", "-e", "while true do end"]);
+    let output = avarice(["--timeout", "0.2", "-e", "while true do end"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
         stderr_of(&output).contains("time limit"),
@@ -193,7 +193,7 @@ fn a_timeout_stops_a_spinning_script() {
 #[test]
 fn reads_a_program_from_standard_input() {
     for args in [vec![], vec!["-"]] {
-        let mut child = Command::new(AVRT)
+        let mut child = Command::new(AVARICE)
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -214,22 +214,22 @@ fn reads_a_program_from_standard_input() {
 #[test]
 fn a_shebang_line_does_not_upset_line_numbers() {
     let dir = TempDir::new();
-    let script = dir.write("main.lua", "#!/usr/bin/env avrt\nerror('on line two')\n");
-    let output = avrt([script.to_str().unwrap()]);
+    let script = dir.write("main.lua", "#!/usr/bin/env avarice\nerror('on line two')\n");
+    let output = avarice([script.to_str().unwrap()]);
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr_of(&output).contains(":2:"), "{}", stderr_of(&output));
 }
 
-/// Runs `avrt`, killing it if it has not finished in `seconds`, so that a test of something that
+/// Runs `avarice`, killing it if it has not finished in `seconds`, so that a test of something that
 /// should end does not hang the suite when it does not.
-fn avrt_within<I, S>(seconds: u64, args: I) -> Output
+fn avarice_within<I, S>(seconds: u64, args: I) -> Output
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
     let child = spawn_piped(args);
     let _watchdog = Watchdog::arm(child.id(), seconds);
-    child.wait_with_output().expect("avrt should finish")
+    child.wait_with_output().expect("avarice should finish")
 }
 
 fn spawn_piped<I, S>(args: I) -> std::process::Child
@@ -237,15 +237,15 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    Command::new(AVRT)
+    Command::new(AVARICE)
         .args(args)
-        // For a script that runs `avrt` itself as a Child.
-        .env("AVRT", AVRT)
+        // For a script that runs `avarice` itself as a Child.
+        .env("AVARICE", AVARICE)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("avrt should run")
+        .expect("avarice should run")
 }
 
 /// Kills a process after a while unless dropped first.
@@ -284,14 +284,14 @@ fn a_script_waits_for_the_tasks_it_left_running() {
         print("first")
         "#,
     );
-    let output = avrt_within(30, [&script]);
+    let output = avarice_within(30, [&script]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "first\nlate\n");
 }
 
 #[test]
 fn a_statement_waits_for_its_tasks_too() {
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "-e",
@@ -304,7 +304,7 @@ fn a_statement_waits_for_its_tasks_too() {
 
 #[test]
 fn tasks_that_spawn_tasks_are_waited_for() {
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "-e",
@@ -323,7 +323,7 @@ fn tasks_that_spawn_tasks_are_waited_for() {
 
 #[test]
 fn a_task_can_be_aborted_so_that_the_script_ends() {
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "-e",
@@ -341,16 +341,16 @@ fn a_task_can_be_aborted_so_that_the_script_ends() {
 #[cfg(all(feature = "stdlib-process", feature = "stdlib-utils"))]
 #[test]
 fn a_script_waits_for_a_child_it_left_running() {
-    // Were `avrt` to exit without waiting, dropping its runtime would kill the Child before it
+    // Were `avarice` to exit without waiting, dropping its runtime would kill the Child before it
     // wrote the file.
     let dir = TempDir::new();
     let done = dir.path().join("done");
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "-e",
             &format!(
-                r#"require("process").spawn({{ os.getenv("AVRT"), "-e",
+                r#"require("process").spawn({{ os.getenv("AVARICE"), "-e",
                   [[require("utils").spawn_timeout(function()
                     io.open(os.getenv("DONE"), "w"):close()
                   end, 300)]],
@@ -360,19 +360,19 @@ fn a_script_waits_for_a_child_it_left_running() {
         ],
     );
     assert!(output.status.success(), "{}", stderr_of(&output));
-    assert!(done.exists(), "avrt exited before its Child did");
+    assert!(done.exists(), "avarice exited before its Child did");
 }
 
 #[test]
 fn a_stdlib_module_works_from_a_script() {
-    let output = avrt_within(30, ["-e", r#"print(#require("utils").uuid())"#]);
+    let output = avarice_within(30, ["-e", r#"print(#require("utils").uuid())"#]);
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "36\n");
 }
 
 #[test]
 fn the_sandbox_has_no_stdlib_modules_to_spawn_tasks_with() {
-    let output = avrt_within(30, ["--sandbox", "-e", r#"require("utils")"#]);
+    let output = avarice_within(30, ["--sandbox", "-e", r#"require("utils")"#]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
         stderr_of(&output).contains("utils"),
@@ -384,7 +384,7 @@ fn the_sandbox_has_no_stdlib_modules_to_spawn_tasks_with() {
 #[test]
 fn a_failing_script_gives_up_its_tasks_and_says_so() {
     // An interval never ends by itself, so if the script waited for it this would hang.
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "-e",
@@ -399,7 +399,7 @@ fn a_failing_script_gives_up_its_tasks_and_says_so() {
 
 #[test]
 fn a_timeout_is_not_lost_when_a_task_is_the_one_running_lua() {
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "--timeout",
@@ -419,7 +419,7 @@ fn a_timeout_is_not_lost_when_a_task_is_the_one_running_lua() {
 #[test]
 fn a_timeout_ends_the_wait_for_tasks() {
     let started = std::time::Instant::now();
-    let output = avrt_within(
+    let output = avarice_within(
         30,
         [
             "--timeout",
@@ -439,7 +439,7 @@ fn a_timeout_ends_the_wait_for_tasks() {
     assert!(reports <= 2, "{reports} reports:\n{}", stdout_of(&output));
 }
 
-/// Ctrl-C at a terminal is a SIGINT to `avrt`. These start a script that says it is ready once
+/// Ctrl-C at a terminal is a SIGINT to `avarice`. These start a script that says it is ready once
 /// the handler stands, so that the signal never races it, then send the signal and see what is
 /// left. They are unix-only because `kill` is.
 #[cfg(unix)]
@@ -461,7 +461,7 @@ mod interrupt {
         let mut ready = String::new();
         BufReader::new(child.stdout.as_mut().unwrap())
             .read_line(&mut ready)
-            .expect("avrt should print when ready");
+            .expect("avarice should print when ready");
         assert_eq!(ready, "ready\n", "the script did not start");
         std::thread::sleep(settle);
 
@@ -470,7 +470,7 @@ mod interrupt {
             .status()
             .unwrap();
         assert!(status.success());
-        child.wait_with_output().expect("avrt should finish")
+        child.wait_with_output().expect("avarice should finish")
     }
 
     #[test]
@@ -516,13 +516,13 @@ mod interrupt {
     #[cfg(all(feature = "stdlib-process", feature = "stdlib-utils"))]
     #[test]
     fn ctrl_c_kills_a_running_child_and_counts_it() {
-        // The signal goes to `avrt` alone, as `kill` sends it, not to the terminal's whole group,
-        // so the Child ends only because `avrt` ends it.
+        // The signal goes to `avarice` alone, as `kill` sends it, not to the terminal's whole
+        // group, so the Child ends only because `avarice` ends it.
         let beat = common::Heartbeat::new();
         let output = interrupted(&format!(
             r#"
             local beat = [==[{}]==]
-            require("process").spawn({{ os.getenv("AVRT"), "-e", [==[{}]==],
+            require("process").spawn({{ os.getenv("AVARICE"), "-e", [==[{}]==],
               env = {{ BEAT = beat }}, stdio = "null" }})
             -- Ready once it beats, so that the signal lands on a Child that is running.
             while not io.open(beat) do
@@ -539,7 +539,7 @@ mod interrupt {
             "{}",
             stderr_of(&output)
         );
-        assert!(beat.stops(), "the Child outlived avrt");
+        assert!(beat.stops(), "the Child outlived avarice");
     }
 
     #[test]
@@ -559,7 +559,7 @@ mod interrupt {
     }
 }
 
-/// What `avrt` does with escape codes when its output is not a colour terminal.
+/// What `avarice` does with escape codes when its output is not a colour terminal.
 ///
 /// Every run here has a pipe for stdout and stderr, so it is not a terminal, and the colour
 /// variables are cleared first so that whatever the person running the tests has set does not
@@ -570,26 +570,26 @@ mod colour {
     const RED: &str = "\x1b[31m";
     const RESET: &str = "\x1b[0m";
 
-    fn avrt_with(colour_env: &[(&str, &str)], args: &[&str]) -> Output {
-        let mut command = Command::new(AVRT);
+    fn avarice_with(colour_env: &[(&str, &str)], args: &[&str]) -> Output {
+        let mut command = Command::new(AVARICE);
         command.args(args).stdin(Stdio::null());
         for var in ["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"] {
             command.env_remove(var);
         }
         command.envs(colour_env.iter().copied());
-        command.output().expect("avrt should run")
+        command.output().expect("avarice should run")
     }
 
     #[test]
     fn print_drops_escape_codes_when_output_is_not_a_terminal() {
-        let output = avrt_with(&[], &["-e", r#"print("\27[31mred\27[0m")"#]);
+        let output = avarice_with(&[], &["-e", r#"print("\27[31mred\27[0m")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(stdout_of(&output), "red\n");
     }
 
     #[test]
     fn print_keeps_escape_codes_when_colour_is_forced() {
-        let output = avrt_with(
+        let output = avarice_with(
             &[("CLICOLOR_FORCE", "1")],
             &["-e", r#"print("\27[31mred\27[0m")"#],
         );
@@ -599,7 +599,7 @@ mod colour {
 
     #[test]
     fn the_ansi_module_is_filtered_like_any_other_text() {
-        let output = avrt_with(
+        let output = avarice_with(
             &[],
             &[
                 "-e",
@@ -612,16 +612,16 @@ mod colour {
 
     #[test]
     fn a_printed_table_is_plain_when_output_is_not_a_terminal() {
-        // `print` highlights whatever the destination is; `avrt` removes it where it cannot be
+        // `print` highlights whatever the destination is; `avarice` removes it where it cannot be
         // taken.
-        let output = avrt_with(&[], &["-e", r#"print({ "x", a = true })"#]);
+        let output = avarice_with(&[], &["-e", r#"print({ "x", a = true })"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(stdout_of(&output), "{\n  \"x\",\n  a = true,\n}\n");
     }
 
     #[test]
     fn a_printed_table_is_highlighted_when_colour_is_forced() {
-        let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print({ "x" })"#]);
+        let output = avarice_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print({ "x" })"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(stdout_of(&output), "{\n  \x1b[32m\"x\"\x1b[0m,\n}\n");
     }
@@ -630,14 +630,14 @@ mod colour {
     fn io_write_is_left_raw() {
         // `io` is C stdio and does not go through the write sink, so it is the way to send bytes
         // exactly as they are.
-        let output = avrt_with(&[], &["-e", r#"io.write("\27[31mred\27[0m\n")"#]);
+        let output = avarice_with(&[], &["-e", r#"io.write("\27[31mred\27[0m\n")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(stdout_of(&output), format!("{RED}red{RESET}\n"));
     }
 
     #[test]
     fn print_and_io_write_stay_in_order_through_the_filter() {
-        let output = avrt_with(
+        let output = avarice_with(
             &[],
             &[
                 "-e",
@@ -652,11 +652,11 @@ mod colour {
     fn print_is_text_so_control_bytes_are_dropped_when_colour_is_off() {
         // ADRs 0009 and 0010: `print` is a text function. A NUL is not text, so the filter drops it;
         // `io.write` is how a program writes bytes it means to be taken literally.
-        let output = avrt_with(&[], &["-e", r#"print("a\0b")"#]);
+        let output = avarice_with(&[], &["-e", r#"print("a\0b")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(output.stdout, b"ab\n");
 
-        let output = avrt_with(&[], &["-e", r#"io.write("a\0b\n")"#]);
+        let output = avarice_with(&[], &["-e", r#"io.write("a\0b\n")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(output.stdout, b"a\0b\n");
     }
@@ -664,7 +664,7 @@ mod colour {
     #[test]
     fn print_drops_control_bytes_even_when_colour_is_forced() {
         // Forcing colour lets colour through and nothing else (ADR 0010).
-        let output = avrt_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print("a\0b\7c")"#]);
+        let output = avarice_with(&[("CLICOLOR_FORCE", "1")], &["-e", r#"print("a\0b\7c")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(output.stdout, b"abc\n");
     }
@@ -672,7 +672,7 @@ mod colour {
     #[test]
     fn only_colour_survives_when_colour_is_forced() {
         // Erase the screen, set the window title, and colour: of the three only the last is kept.
-        let output = avrt_with(
+        let output = avarice_with(
             &[("CLICOLOR_FORCE", "1")],
             &["-e", r#"print("a\27[2Jb\27]0;title\7c\27[31md")"#],
         );
@@ -682,7 +682,7 @@ mod colour {
 
     #[test]
     fn other_escape_sequences_are_dropped_when_colour_is_off() {
-        let output = avrt_with(&[], &["-e", r#"print("a\27[2Jb\27]0;title\7c\27[31md")"#]);
+        let output = avarice_with(&[], &["-e", r#"print("a\27[2Jb\27]0;title\7c\27[31md")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(stdout_of(&output), "abcd\n");
     }
@@ -692,7 +692,7 @@ mod colour {
         // U+009B is CSI as one character, and a terminal in UTF-8 mode may honour it. Nothing that
         // strips only the 7-bit form keeps a colour off the terminal under `NO_COLOR`.
         for env in [&[][..], &[("NO_COLOR", "1")], &[("CLICOLOR_FORCE", "1")]] {
-            let output = avrt_with(env, &["-e", r#"print("a\u{9b}31mb")"#]);
+            let output = avarice_with(env, &["-e", r#"print("a\u{9b}31mb")"#]);
             assert!(output.status.success(), "{}", stderr_of(&output));
             assert_eq!(output.stdout, b"a31mb\n", "{env:?}");
         }
@@ -703,7 +703,7 @@ mod colour {
         // `sub` cuts by bytes, so a program can hand `print` half a character. The newline that
         // follows it is not lost with it.
         for env in [&[][..], &[("CLICOLOR_FORCE", "1")]] {
-            let output = avrt_with(env, &["-e", r#"print(("é"):sub(1, 1)) print("next")"#]);
+            let output = avarice_with(env, &["-e", r#"print(("é"):sub(1, 1)) print("next")"#]);
             assert!(output.status.success(), "{}", stderr_of(&output));
             assert_eq!(stdout_of(&output), "\u{fffd}\nnext\n", "{env:?}");
         }
@@ -711,7 +711,7 @@ mod colour {
 
     #[test]
     fn an_unfinished_escape_does_not_swallow_the_next_print() {
-        let output = avrt_with(
+        let output = avarice_with(
             &[("CLICOLOR_FORCE", "1")],
             &["-e", r#"print("a\27[") print("\27[31mb")"#],
         );
@@ -721,16 +721,16 @@ mod colour {
 
     #[test]
     fn an_error_report_drops_escape_codes_when_stderr_is_not_a_terminal() {
-        let output = avrt_with(&[], &["-e", r#"error("\27[31mboom\27[0m", 0)"#]);
+        let output = avarice_with(&[], &["-e", r#"error("\27[31mboom\27[0m", 0)"#]);
         assert_eq!(output.status.code(), Some(1));
         let stderr = stderr_of(&output);
-        assert!(stderr.contains("avrt: boom"), "{stderr}");
+        assert!(stderr.contains("avarice: boom"), "{stderr}");
         assert!(!stderr.contains('\x1b'), "{stderr:?}");
     }
 
     #[test]
     fn an_error_report_keeps_escape_codes_when_colour_is_forced() {
-        let output = avrt_with(
+        let output = avarice_with(
             &[("CLICOLOR_FORCE", "1")],
             &["-e", r#"error("\27[31mboom\27[0m", 0)"#],
         );
@@ -740,7 +740,7 @@ mod colour {
 
     #[test]
     fn no_color_wins_over_forcing_colour_on() {
-        let output = avrt_with(
+        let output = avarice_with(
             &[("NO_COLOR", "1"), ("CLICOLOR_FORCE", "1")],
             &["-e", r#"print("\27[31mred\27[0m")"#],
         );
@@ -750,7 +750,7 @@ mod colour {
 
     #[test]
     fn io_stderr_is_left_raw_too() {
-        let output = avrt_with(&[], &["-e", r#"io.stderr:write("\27[31mred\27[0m\n")"#]);
+        let output = avarice_with(&[], &["-e", r#"io.stderr:write("\27[31mred\27[0m\n")"#]);
         assert!(output.status.success(), "{}", stderr_of(&output));
         assert_eq!(stderr_of(&output), format!("{RED}red{RESET}\n"));
     }
@@ -759,21 +759,21 @@ mod colour {
 #[cfg(all(unix, feature = "stdlib-utils"))]
 #[test]
 fn env_get_gives_a_value_that_is_not_utf8_exactly() {
-    // Set on `avrt`'s own environment, since changing the test process's is unsound while other
+    // Set on `avarice`'s own environment, since changing the test process's is unsound while other
     // tests run on other threads.
     use std::os::unix::ffi::OsStrExt;
-    let output = Command::new(AVRT)
+    let output = Command::new(AVARICE)
         .args([
             "-e",
-            "print(require('utils').env.get('AVARICE_RT_TEST_BYTES') == 'caf\\233')",
+            "print(require('utils').env.get('AVARICE_TEST_BYTES') == 'caf\\233')",
         ])
         .env(
-            "AVARICE_RT_TEST_BYTES",
+            "AVARICE_TEST_BYTES",
             std::ffi::OsStr::from_bytes(b"caf\xe9"),
         )
         .stdin(Stdio::null())
         .output()
-        .expect("avrt should run");
+        .expect("avarice should run");
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "true\n");
 }

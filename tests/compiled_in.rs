@@ -5,7 +5,7 @@
 //! each. Unlike `tests/features.rs`, which takes "what is compiled in" from the public API, this
 //! file keeps its own list of features, so that the API's answer is checked against the build.
 
-use avarice_rt::{StdModule, StdModules};
+use avarice::{StdModule, StdModules};
 
 /// Each module's name, and whether the feature that compiles it in is on in this build.
 const EXPECTED: [(&str, bool); 10] = [

@@ -2,39 +2,40 @@
 status: accepted
 ---
 
-# `avrt` strips escape codes from its output when it is not a colour terminal
+# `avarice` strips escape codes from its output when it is not a colour terminal
 
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
-> `avarice-rt` and not a crate; where the text below says `avarice-rt-stdlib`, read `src/stdlib`.
+> `avarice` and not a crate; where the text below says `avarice-stdlib`, read `src/stdlib`.
 
 > **Amended 2026-09-21; the amendments at the end win.** `anstream` is replaced by a filter of
-> `avrt`'s own, which drops every escape sequence other than colour on a colour terminal too, and
+> `avarice`'s own, which drops every escape sequence other than colour on a colour terminal too, and
 > `print` now emits colour of its own, so the library no longer decides nothing about colour.
-`avrt` writes what a program prints through [`anstream`](https://docs.rs/anstream), which passes
+`avarice` writes what a program prints through [`anstream`](https://docs.rs/anstream), which passes
 ANSI escape codes to a colour terminal and removes them everywhere else: a pipe, a file, a terminal
-with `TERM=dumb`, or any destination while `NO_COLOR` is set. Apart from the REPL's prompt, `avrt`
-adds no colour of its own; it only decides whether the colour a program wrote is delivered.
+with `TERM=dumb`, or any destination while `NO_COLOR` is set. Apart from the REPL's prompt,
+`avarice` adds no colour of its own; it only decides whether the colour a program wrote is
+delivered.
 
-A reader would otherwise wonder why `avrt script.lua | cat` prints `red` where the script wrote
+A reader would otherwise wonder why `avarice script.lua | cat` prints `red` where the script wrote
 `ansi.fg.red .. "red"`, why `print("a\0b")` loses its NUL there, and why `io.write` does not.
 
 This is the decision [ADR 0008](0008-ansi-is-original-and-pure.md) left to "the program". The
-`ansi` module never looks at the terminal, and `avrt` is a program.
+`ansi` module never looks at the terminal, and `avarice` is a program.
 
 ## The decision
 
 - **What is filtered:** `print`, which reaches the terminal through the runtime's write sink, and
-  `avrt`'s own messages on standard output and standard error: the error report (which is also how
-  an interrupt or a timeout is reported), the notices about Ctrl-C and about tasks being aborted,
-  the `--timeout` usage error, `--version` and the REPL banner. clap's own help and usage errors
-  are clap's, and it makes the same decision from the same variables. `avrt` installs an
+  `avarice`'s own messages on standard output and standard error: the error report (which is also
+  how an interrupt or a timeout is reported), the notices about Ctrl-C and about tasks being
+  aborted, the `--timeout` usage error, `--version` and the REPL banner. clap's own help and usage
+  errors are clap's, and it makes the same decision from the same variables. `avarice` installs an
   `anstream` sink with `RuntimeBuilder::write_sink`, and the library is untouched apart from one
   function it now exports (below).
 - **What is not:** `io.write`, `io.stdout` and `io.stderr`. They are C stdio and never reach the
   write sink, so nothing sits between them and the file descriptor. That makes them the way to send
   bytes exactly as they are, and to force colour on where the environment would turn it off.
 - **The REPL prompt is told the same decision.** Reedline draws the prompt itself, on standard
-  error, and paints with its own defaults without reading the environment, so `avrt` asks
+  error, and paints with its own defaults without reading the environment, so `avarice` asks
   `anstream` about standard error and passes the answer to `Reedline::with_ansi_colors`. That turns
   off the prompt's colours. It also replaces reedline's default highlighter, which paints typed
   text white and a few example words green, with one that leaves it unstyled: that colour was never
@@ -47,15 +48,15 @@ This is the decision [ADR 0008](0008-ansi-is-original-and-pure.md) left to "the 
 - **The environment decides.** Detection is `anstream`'s `auto`: the terminal, `NO_COLOR`,
   `CLICOLOR`, `CLICOLOR_FORCE`, `TERM=dumb` and, on a terminal, `CI`. `NO_COLOR` wins over
   `CLICOLOR_FORCE`, and `CLICOLOR_FORCE` over everything else, a dumb terminal included. The
-  `print` sink makes the decision once, when `avrt` starts; `avrt`'s own messages make it as they
-  are written, which comes to the same answer. There is no `--color` flag.
+  `print` sink makes the decision once, when `avarice` starts; `avarice`'s own messages make it as
+  they are written, which comes to the same answer. There is no `--color` flag.
 - **The flush moves to where it can be shared.** `print` and `io.write` only stay in order on a
   pipe because the sink flushes C stdio before it writes ([ADR 0005](0005-print-implemented-in-lua.md)
-  is why `print` is a sink at all). That flush is now the public `avarice_rt::flush_c_stdio`, so
-  the `avrt` sink calls the same function the library's default sink does, and the `unsafe` block
+  is why `print` is a sink at all). That flush is now the public `avarice::flush_c_stdio`, so
+  the `avarice` sink calls the same function the library's default sink does, and the `unsafe` block
   that calls `fflush` stays in one place. An embedder who wraps standard output in a sink of their
   own needs it for the same reason.
-- **The dependency is `avrt`'s alone.** `anstream` is an optional dependency behind the `cli`
+- **The dependency is `avarice`'s alone.** `anstream` is an optional dependency behind the `cli`
   feature, so an embedder with `default-features = false` does not build it.
 
 ## Considered options
@@ -72,7 +73,7 @@ learn to tell the two apart with `os.getenv` and no way of asking whether stdout
 
 **A `--color=auto|always|never` flag** was rejected. The environment variables already say the
 same thing and are honoured by other tools in the same pipeline, so one setting reaches all of
-them, and `CLICOLOR_FORCE=1 avrt script.lua | less -R` does what the flag would. A flag can be
+them, and `CLICOLOR_FORCE=1 avarice script.lua | less -R` does what the flag would. A flag can be
 added later if that proves too little, and nothing here would have to change.
 
 **Filtering `io.*` as well**, by giving Lua an `io` whose handles go through the same stream, was
@@ -93,8 +94,8 @@ decides nothing.
 
 ## Consequences
 
-**`avrt script.lua > file` writes plain text, and so does `avrt script.lua | tool`.** That is the
-point, and the thing to know when a script's colour "disappears": `CLICOLOR_FORCE=1` brings it
+**`avarice script.lua > file` writes plain text, and so does `avarice script.lua | tool`.** That is
+the point, and the thing to know when a script's colour "disappears": `CLICOLOR_FORCE=1` brings it
 back, or the script can `io.write` its escapes.
 
 **`print` and `io.write` differ.** A script that prints escape codes with `print` and writes the
@@ -104,13 +105,13 @@ same codes with `io.write` gets different output when piped. The README says whi
 writes, as a terminal would, so a `print` that ends inside an escape sequence swallows the start of
 the next. `ansi`'s codes are always complete strings, so a program has to work to see this.
 
-**The stdlib's own diagnostics are not covered.** `avarice-rt-stdlib` has a few `println!` calls
-of its own. That is library code, outside `avrt`, and is left alone.
+**The stdlib's own diagnostics are not covered.** `avarice-stdlib` has a few `println!` calls
+of its own. That is library code, outside `avarice`, and is left alone.
 
 ## Amendment, 2026-09-21: `anstream` is replaced, and more is filtered
 
-[ADR 0010](0010-avrt-filters-terminal-escapes-itself.md) replaces `anstream` with a filter built on
-`anstyle-parse`, and it is where the mechanism is described. What it changes here:
+[ADR 0010](0010-avarice-filters-terminal-escapes-itself.md) replaces `anstream` with a filter built
+on `anstyle-parse`, and it is where the mechanism is described. What it changes here:
 
 - **With colour on, `print` no longer passes every byte through.** Only text and colour do. Every
   other escape sequence, and every control character other than ASCII whitespace, is dropped on a
@@ -129,8 +130,8 @@ What this ADR decides about the environment, the REPL's prompt, `io.write` and t
 
 [ADR 0011](0011-print-highlights-and-ansi-is-a-core-module.md) has `print` highlight what it shows,
 always, so the library now writes colour to its write sink. Where this ADR says that the library
-"decides nothing" and that `avrt` only decides whether colour a *program* wrote is delivered, that
-holds for a program's own colour and no longer for `print`'s own. The decision stands otherwise:
-the environment decides, in `avrt`'s filter, and an embedder's sink receives `print`'s output as it
-is written, which now has colour in it. The filter is why a script's printed table is plain in a
-pipe.
+"decides nothing" and that `avarice` only decides whether colour a *program* wrote is delivered,
+that holds for a program's own colour and no longer for `print`'s own. The decision stands
+otherwise: the environment decides, in `avarice`'s filter, and an embedder's sink receives `print`'s
+output as it is written, which now has colour in it. The filter is why a script's printed table is
+plain in a pipe.

@@ -44,7 +44,7 @@ pub enum Profile {
 }
 
 impl Profile {
-    /// The profile's name, lowercase, as `avrt` reports it.
+    /// The profile's name, lowercase, as `avarice` reports it.
     pub fn name(self) -> &'static str {
         match self {
             Profile::Sandbox => "sandbox",

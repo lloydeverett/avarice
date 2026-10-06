@@ -1,6 +1,6 @@
 //! What the sandbox profile does and does not hand to Lua.
 
-use avarice_rt::{
+use avarice::{
     DEFAULT_SANDBOX_MEMORY_LIMIT, Profile, Runtime, StdModule, StdModules, was_out_of_memory,
 };
 
@@ -105,7 +105,7 @@ fn refuses_binary_chunks_handed_straight_to_the_runtime() {
     // statement path may accept bytecode in the sandbox.
     let trusted = Runtime::new(Profile::Trusted).unwrap();
     let bytecode = trusted
-        .block_on(trusted.eval::<avarice_rt::mlua::LuaString>(
+        .block_on(trusted.eval::<avarice::mlua::LuaString>(
             "return string.dump(function() return 7 end)",
             "=test",
         ))
@@ -318,7 +318,7 @@ fn memory_limit_stops_a_runaway_allocation() {
             "=test",
         ))
         .unwrap_err();
-    let avarice_rt::Error::Lua(err) = err else {
+    let avarice::Error::Lua(err) = err else {
         panic!("expected a Lua error, got {err:?}");
     };
     assert!(was_out_of_memory(&err), "expected OOM, got {err}");
@@ -328,7 +328,7 @@ fn memory_limit_stops_a_runaway_allocation() {
 #[test]
 fn the_sandbox_profile_is_not_mutated_by_reconfiguring_a_runtime() {
     let loosened = Runtime::builder(Profile::Sandbox)
-        .with_std_libs(avarice_rt::mlua::StdLib::OS)
+        .with_std_libs(avarice::mlua::StdLib::OS)
         .unlimited_memory()
         .allow_binary_chunks(true)
         .build()
@@ -353,11 +353,11 @@ fn opening_the_package_library_is_refused_rather_than_ignored() {
     // for it fails loudly rather than being quietly dropped.
     for profile in [Profile::Sandbox, Profile::Trusted] {
         let err = Runtime::builder(profile)
-            .with_std_libs(avarice_rt::mlua::StdLib::PACKAGE)
+            .with_std_libs(avarice::mlua::StdLib::PACKAGE)
             .build()
             .unwrap_err();
         assert!(
-            matches!(err, avarice_rt::Error::Config(ref msg) if msg.contains("package")),
+            matches!(err, avarice::Error::Config(ref msg) if msg.contains("package")),
             "{profile:?}: {err:?}"
         );
     }
@@ -368,11 +368,11 @@ fn all_safe_is_refused_because_it_carries_package() {
     // The trap the builder's own documentation warns about: for Lua, as opposed to Luau,
     // `ALL_SAFE` includes `package`.
     let err = Runtime::builder(Profile::Sandbox)
-        .std_libs(avarice_rt::mlua::StdLib::ALL_SAFE)
+        .std_libs(avarice::mlua::StdLib::ALL_SAFE)
         .build()
         .unwrap_err();
     assert!(
-        matches!(err, avarice_rt::Error::Config(ref msg) if msg.contains("package")),
+        matches!(err, avarice::Error::Config(ref msg) if msg.contains("package")),
         "{err:?}"
     );
 }
@@ -380,11 +380,11 @@ fn all_safe_is_refused_because_it_carries_package() {
 #[test]
 fn opening_the_debug_library_is_refused_rather_than_ignored() {
     let err = Runtime::builder(Profile::Trusted)
-        .with_std_libs(avarice_rt::mlua::StdLib::DEBUG)
+        .with_std_libs(avarice::mlua::StdLib::DEBUG)
         .build()
         .unwrap_err();
     assert!(
-        matches!(err, avarice_rt::Error::Config(ref msg) if msg.contains("debug")),
+        matches!(err, avarice::Error::Config(ref msg) if msg.contains("debug")),
         "{err:?}"
     );
 }

@@ -1,4 +1,4 @@
--- Original to avarice-rt: not derived from Astra. See ADR 0016.
+-- Original to avarice: not derived from Astra. See ADR 0016.
 
 ---@meta
 
@@ -105,7 +105,7 @@ function process.run(command)
 end
 
 ---Starts a program, and gives back the Child, whose streams are piped unless the Command says
----otherwise. The Child runs on even if Lua loses hold of it; `avrt` waits for it before exiting,
+---otherwise. The Child runs on even if Lua loses hold of it; `avarice` waits for it before exiting,
 ---and Ctrl-C kills it.
 ---@param command Command
 ---@return Child

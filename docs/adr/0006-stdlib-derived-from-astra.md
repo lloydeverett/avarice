@@ -12,7 +12,7 @@ status: accepted
 > following Astra would be wrong. Each is its own ADR; the first is
 > [ADR 0015](0015-lua-strings-carry-bytes.md), on how bytes cross into and out of Lua.
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) moves the stdlib from its own crate to a
-> directory of `avarice-rt`, licenses the whole project Apache-2.0 with one `LICENSE` at the root,
+> directory of `avarice`, licenses the whole project Apache-2.0 with one `LICENSE` at the root,
 > and folds the crate's `README.md` into the root one; where the text below calls it a crate, says
 > the licence is its boundary, or points at its README, it wins.
 > [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) takes `datetime` out of this ADR's scope:
@@ -21,17 +21,17 @@ status: accepted
 > says validation is not taken, the amendments at the end win.
 
 The **stdlib modules** are adapted from [Astra](https://github.com/ArkForgeLabs/Astra)
-by ArkForge LLC, which is Apache-2.0. They live in `avarice-rt-stdlib`, a
+by ArkForge LLC, which is Apache-2.0. They live in `avarice-stdlib`, a
 separate crate in this repository, so that the derived code and its licence
 obligations sit in one unit.
 
 A reader would otherwise wonder why part of this repository carries a licence
 and a `NOTICE` when the root carries neither, and why the stdlib is a crate of
-its own when it is only ever used through `avarice-rt`.
+its own when it is only ever used through `avarice`.
 
 ## Considered options
 
-**A module inside `avarice-rt`** was rejected. Apache-2.0 §4 obligations attach
+**A module inside `avarice`** was rejected. Apache-2.0 §4 obligations attach
 to the derived files, and a crate boundary is the clearest line to draw them
 around. It also keeps the derived dependencies — reqwest, jiff, sha2, sha3,
 base64, regex, glob, uuid — nameable as a set.
@@ -48,8 +48,8 @@ feature.)
 
 ## Consequences
 
-The stdlib crate depends on `mlua` and never on `avarice-rt`, so the dependency
-runs one way only. `avarice-rt` depends on it unconditionally — no feature flag
+The stdlib crate depends on `mlua` and never on `avarice`, so the dependency
+runs one way only. `avarice` depends on it unconditionally — no feature flag
 (reversed: see [ADR 0007](0007-stdlib-modules-are-compile-time-optional.md)) — which means
 every embedder links reqwest and a TLS stack whether or not any Lua calls `http`, taking the core's dependency tree from four crates to roughly
 a hundred and fifty. This was chosen for simplicity over dependency hygiene, and
@@ -163,7 +163,7 @@ whose it was or under what licence. It is reversed.
   stripping a header leaves Astra's file, so there is nothing to checksum. What it held besides
   attribution, what is not taken and how `validation` is loaded, is in the crate's `README.md`.
 - **A file there that is not derived from Astra carries no Astra header.** It says at the top
-  that it is original to avarice-rt, and has no `Changes from the original:` list, because there
+  that it is original to avarice, and has no `Changes from the original:` list, because there
   is no original. `dirs` and `process`, in both directories, were already like this.
   `datetime` joined them when [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) rewrote it
   (this exception was added to the rule then).

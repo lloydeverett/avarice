@@ -8,7 +8,7 @@
 //! only when the module is first required, with one exception: see [`defines_globals`]. One
 //! module, `stores`, has no Rust half at all: it is **pure**, and that is what sandbox mode
 //! registers (ADR 0007). `dirs` and `process` follow the same two-layer shape but are original to
-//! avarice-rt, not Astra's (ADRs 0014 and 0016); they have Rust halves, so they are not pure.
+//! avarice, not Astra's (ADRs 0014 and 0016); they have Rust halves, so they are not pure.
 //! `datetime` is original too (ADR 0019), and differs in one more way: its Rust half sets no
 //! globals, and is handed to its Lua file as a value instead.
 //!
@@ -38,7 +38,7 @@ pub enum StdModule {
     Crypto,
     /// JSON, JSON5, YAML, TOML, INI, CSV and XML encoding and decoding.
     Serde,
-    /// Dates and times, built on jiff. Original to avarice-rt, not derived from Astra (ADR 0019).
+    /// Dates and times, built on jiff. Original to avarice, not derived from Astra (ADR 0019).
     Datetime,
     /// Tasks, `uuid` and `env.get`.
     Utils,
@@ -47,9 +47,9 @@ pub enum StdModule {
     /// Schema validators, and regular expressions.
     Validation,
     /// Standard per-application directories (config, data, cache, state, runtime), via
-    /// `etcetera`. Original to avarice-rt, not derived from Astra.
+    /// `etcetera`. Original to avarice, not derived from Astra.
     Dirs,
-    /// Running other programs, without a shell. Original to avarice-rt, not derived from Astra.
+    /// Running other programs, without a shell. Original to avarice, not derived from Astra.
     Process,
 }
 
@@ -406,7 +406,7 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
         }
         #[cfg(feature = "stdlib-datetime")]
         StdModule::Datetime => {
-            // Original to avarice-rt: no Astra file to point at, and no globals.
+            // Original to avarice: no Astra file to point at, and no globals.
             Ok(Layer {
                 source: include_str!("lua/datetime.lua"),
                 rust_half: Some(super::components::datetime::rust_half(lua)?),
@@ -428,13 +428,13 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
             super::components::utils::AstraRegex::register_to_lua(lua)?;
             Ok(include_str!("lua/validation.lua").into())
         }
-        // Original to avarice-rt: no Astra file to point at.
+        // Original to avarice: no Astra file to point at.
         #[cfg(feature = "stdlib-dirs")]
         StdModule::Dirs => {
             super::components::dirs::register_to_lua(lua)?;
             Ok(include_str!("lua/dirs.lua").into())
         }
-        // Original to avarice-rt: no Astra file to point at.
+        // Original to avarice: no Astra file to point at.
         #[cfg(feature = "stdlib-process")]
         StdModule::Process => {
             super::components::process::register_to_lua(lua)?;
@@ -454,7 +454,7 @@ pub(crate) fn load(lua: &Lua, module: StdModule) -> mlua::Result<Value> {
     // sources are embedded, and a chunk that is not text is not one of ours.
     let chunk = lua
         .load(source)
-        .set_name(format!("=[avarice-rt stdlib {}]", module.name()))
+        .set_name(format!("=[avarice stdlib {}]", module.name()))
         .set_mode(mlua::chunk::ChunkMode::Text);
     if let Some(rust_half) = rust_half {
         chunk.call(rust_half)

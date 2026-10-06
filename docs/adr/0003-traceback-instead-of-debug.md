@@ -37,4 +37,4 @@ path, which is the correct outcome. Code that assumes the whole library is prese
 clear `attempt to call a nil value` rather than silently misbehaving.
 
 Errors returned to Rust carry a traceback already: mlua installs `luaL_traceback` as the message
-handler for every protected call it makes, so `avrt` prints one without asking for it.
+handler for every protected call it makes, so `avarice` prints one without asking for it.

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use avarice_rt::{Runtime, StdModule};
+use avarice::{Runtime, StdModule};
 
 /// A write sink a test can read back: hand a clone to the runtime, keep one to inspect.
 #[derive(Clone, Default)]
@@ -44,7 +44,7 @@ impl TempDir {
     pub fn new() -> Self {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let unique = format!(
-            "avarice-rt-test-{}-{}",
+            "avarice-test-{}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         );
@@ -80,8 +80,8 @@ pub struct Heartbeat {
 }
 
 impl Heartbeat {
-    /// Lua that beats, for `avrt -e`, into the file the `BEAT` environment variable names. It needs
-    /// `utils`, to wait between beats without spinning.
+    /// Lua that beats, for `avarice -e`, into the file the `BEAT` environment variable names. It
+    /// needs `utils`, to wait between beats without spinning.
     pub const LUA: &str = r#"
         local n = 0
         require("utils").spawn_interval(function()

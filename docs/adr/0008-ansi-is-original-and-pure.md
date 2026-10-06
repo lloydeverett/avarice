@@ -5,12 +5,12 @@ status: superseded by [ADR 0011](0011-print-highlights-and-ansi-is-a-core-module
 # `ansi` is an original module in the Astra-derived crate, and is pure
 
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
-> `avarice-rt` and not a crate, and licenses the whole project Apache-2.0; where the text below
+> `avarice` and not a crate, and licenses the whole project Apache-2.0; where the text below
 > speaks of the stdlib crate, its boundary or its licence, it wins.
 
 `ansi` is a **stdlib module**: a table of ANSI escape codes for formatting text on a terminal, and
 a few functions for the colours a table cannot hold. It is written entirely in Lua, in
-`crates/avarice-rt-stdlib/lua/ansi.lua`, and it is the first stdlib module that is not Astra's.
+`crates/avarice-stdlib/lua/ansi.lua`, and it is the first stdlib module that is not Astra's.
 That makes it nine modules, one Cargo feature (`stdlib-ansi`) and one flag (`StdModules::ANSI`,
 `1 << 8`), which is why `StdModules` widens from `u8` to `u16`. The existing bits do not move.
 
@@ -25,7 +25,7 @@ when `crypto` is not, and why the `bits()` of a flags type changed width.
   Astra nothing, but it is a stdlib module in every other respect (a feature, a flag, a `require`
   name, a profile decides its registration), and a second crate for one file would make "the
   stdlib" mean two places. The crate's boundary is Apache-2.0, and `ansi.lua` says in its header
-  that it is original to avarice-rt and is licensed like the crate. It has no `Changes from the
+  that it is original to avarice and is licensed like the crate. It has no `Changes from the
   original:` list, because there is no original. The verbatim rule of ADR 0006 governs Astra's
   files and does not apply to it.
 - **It is pure**, and says so where it is defined and documented. This is the first module for
@@ -50,7 +50,7 @@ when `crypto` is not, and why the `bits()` of a flags type changed width.
 
 ## Considered options
 
-**A separate crate for original modules** was rejected. It would give `avarice-rt` a second path
+**A separate crate for original modules** was rejected. It would give `avarice` a second path
 for stdlib modules to arrive by, a second feature-forwarding scheme, and a second place to look
 for what the stdlib contains, all for a file that has no licence obligation to isolate. The cost
 of the choice made is one README sentence, and a header that says the file is not Astra's.

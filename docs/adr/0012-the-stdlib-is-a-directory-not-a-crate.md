@@ -2,10 +2,10 @@
 status: accepted
 ---
 
-# The stdlib is a directory of avarice-rt, not a crate of its own, and the whole project is Apache-2.0
+# The stdlib is a directory of avarice, not a crate of its own, and the whole project is Apache-2.0
 
-The stdlib's code moves from `crates/avarice-rt-stdlib`, a workspace member, to `src/stdlib/`, a
-directory of the `avarice-rt` crate. The workspace goes with it: the repository is one package.
+The stdlib's code moves from `crates/avarice-stdlib`, a workspace member, to `src/stdlib/`, a
+directory of the `avarice` crate. The workspace goes with it: the repository is one package.
 (This ADR says *directory*, and not *module*, so that *module* keeps the meaning `CONTEXT.md` gives
 it.)
 
@@ -21,10 +21,10 @@ header.
 
 ## Why the crate did not earn its keep
 
-- **It was only ever used through `avarice-rt`.** It is `publish = false` and had no other
+- **It was only ever used through `avarice`.** It is `publish = false` and had no other
   consumer, so nothing needed it to be a unit that stood alone.
 - **Every feature was declared twice.** `stdlib-http` and its seven siblings existed on the stdlib
-  crate, and again on `avarice-rt`, forwarded by name, and the two lists had to agree. A feature the
+  crate, and again on `avarice`, forwarded by name, and the two lists had to agree. A feature the
   core needed for the same reason (`tokio/net` for `http`) had to be named on the far side of the
   boundary as well as the near one.
 - **What the core could do depended on a crate it did not control.** mlua's `send` feature arrived
@@ -42,7 +42,7 @@ header.
 ## What is kept: it depends on nothing of ours
 
 The stdlib is still self-contained, and the dependency still runs one way. Nothing in `src/stdlib`
-reaches anything else in `avarice-rt`; it names `mlua`, `tokio`, `bitflags` and the dependencies of
+reaches anything else in `avarice`; it names `mlua`, `tokio`, `bitflags` and the dependencies of
 its own that are behind its features. What the rest of the crate takes from it is three things,
 declared in `src/stdlib/mod.rs`: `StdModule`, `StdModules` and `loader`. The core registers a
 module's loader as an ordinary lazy module and never learns what any of them contains, as before.
@@ -104,7 +104,7 @@ reader of the project looks.
   temporaries are now dropped before the block's locals and not after. In `Runtime::run` that means
   the future is dropped while its `Execution` guard is still holding the time limit armed, where
   before it was dropped just outside it. Formatting under the 2024 style re-sorted some imports.
-- **The lock file loses `avarice-rt-stdlib`**, and the dependency set is otherwise unchanged: every
+- **The lock file loses `avarice-stdlib`**, and the dependency set is otherwise unchanged: every
   dependency the stdlib had is optional in the root manifest, behind the same feature. No
   dependency was added.
 - **Features are declared once**, in the root `Cargo.toml`, with the `_astra_*` helpers beside them,
@@ -119,7 +119,7 @@ reader of the project looks.
   without them, and a clause that only pointed at the spec was dropped. Nothing else in those ADRs
   changed.
 
-Where an earlier ADR (0006, 0007, 0008, 0009 and 0011 do) names the `avarice-rt-stdlib` crate or its
+Where an earlier ADR (0006, 0007, 0008, 0009 and 0011 do) names the `avarice-stdlib` crate or its
 path, describes the stdlib as a separate crate, a workspace member, or a set of features forwarded
 from one manifest to another, or says the Apache-2.0 boundary is a crate, that the rest of the
 repository carries no licence, or that the crate's `README.md` says something, this decision wins.

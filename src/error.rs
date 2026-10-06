@@ -1,6 +1,6 @@
 //! Error types for runtime setup and for limits tripping.
 
-/// An error from avarice-rt itself, as opposed to from Lua.
+/// An error from avarice itself, as opposed to from Lua.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -21,7 +21,7 @@ pub enum Error {
     Config(String),
 }
 
-/// Shorthand for results carrying an avarice-rt [`Error`].
+/// Shorthand for results carrying an avarice [`Error`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Why a string was rejected as a module name.

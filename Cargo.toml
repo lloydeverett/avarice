@@ -1,29 +1,29 @@
 [package]
-name = "avarice-rt"
+name = "avarice"
 version = "0.1.0"
 # 2024, because the stdlib's sources (Astra's) use let-chains.
 edition = "2024"
 rust-version = "1.94"
-description = "An embeddable Lua 5.4 runtime with a sandbox, and the avrt interpreter"
-repository = "https://github.com/lloydeverett/avarice-rt"
+description = "An embeddable Lua 5.4 runtime with a sandbox, and the avarice interpreter"
+repository = "https://github.com/lloydeverett/avarice"
 license = "Apache-2.0"
 publish = false
 
 [lib]
-name = "avarice_rt"
+name = "avarice"
 path = "src/lib.rs"
 
 [[bin]]
-name = "avrt"
+name = "avarice"
 path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
 default = ["cli", "stdlib"]
-# The `avrt` command-line program. Embedders should depend on avarice-rt with
+# The `avarice` command-line program. Embedders should depend on avarice with
 # `default-features = false` to avoid pulling in clap and reedline. `tokio/signal` is what
-# catches Ctrl-C. `anstyle-parse` and `anstyle-query` are what `avrt` filters escape sequences out
-# of its output with, and decide from the environment whether colour is let through (ADR 0010).
+# catches Ctrl-C. `anstyle-parse` and `anstyle-query` are what `avarice` filters escape sequences
+# out of its output with, and decide from the environment whether colour is let through (ADR 0010).
 cli = [
   "dep:anstyle-parse",
   "dep:anstyle-query",
@@ -35,7 +35,7 @@ cli = [
 
 # The stdlib modules, one feature each (ADR 0007). A feature decides whether a module is compiled
 # in; which a runtime registers is the profile's business. An embedder that wants a few of them
-# depends on avarice-rt with `default-features = false` and names those.
+# depends on avarice with `default-features = false` and names those.
 stdlib = [
   "stdlib-http",
   "stdlib-fs",
@@ -60,15 +60,15 @@ stdlib-http = [
 stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
 stdlib-crypto = ["dep:sha2", "dep:sha3", "dep:base64"]
 stdlib-serde = ["_astra_serde"]
-# `datetime` is original to avarice-rt, built on jiff (ADR 0019).
+# `datetime` is original to avarice, built on jiff (ADR 0019).
 stdlib-datetime = ["dep:jiff"]
 stdlib-utils = ["_astra_utils"]
 # Astra's `stores` has no Rust half, so there is nothing for it to pull in.
 stdlib-stores = []
 stdlib-validation = ["_astra_utils"]
-# `dirs` is original to avarice-rt, not derived from Astra (ADR 0014).
+# `dirs` is original to avarice, not derived from Astra (ADR 0014).
 stdlib-dirs = ["dep:etcetera"]
-# `process` is original to avarice-rt too (ADR 0016). `process` is tokio's child processes,
+# `process` is original to avarice too (ADR 0016). `process` is tokio's child processes,
 # `io-util` reads and writes their streams, `macros` reads them while waiting, `net` reads a merged
 # stdout and stderr on Unix, and `fs` does on Windows, where a pipe cannot be read without blocking
 # a thread. `which` finds a program, and `libc` sends `SIGTERM`, which neither std nor tokio can do
@@ -176,7 +176,7 @@ regex = { version = "1.12.4", optional = true }
 pastey = { version = "0.2.3", optional = true }
 
 # `dirs`'s own dependency. Unlike its neighbours above, this one is not Astra's: `dirs` is original
-# to avarice-rt (ADR 0014), and `etcetera` is the crate that computes its paths.
+# to avarice (ADR 0014), and `etcetera` is the crate that computes its paths.
 etcetera = { version = "0.11", optional = true }
 
 # `datetime`'s own dependency, not Astra's either (ADR 0019). jiff's default features read the

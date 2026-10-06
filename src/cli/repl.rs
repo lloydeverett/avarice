@@ -4,8 +4,8 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use avarice_rt::mlua::{self, Function, MultiValue};
-use avarice_rt::{Error, Runtime};
+use avarice::mlua::{self, Function, MultiValue};
+use avarice::{Error, Runtime};
 use reedline::{
     FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
     Reedline, Signal,
@@ -75,12 +75,12 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
     if let Some(path) = history_path() {
         match FileBackedHistory::with_file(HISTORY_CAPACITY, path) {
             Ok(history) => editor = editor.with_history(Box::new(history)),
-            Err(e) => eprintln!("avrt: history unavailable: {e}"),
+            Err(e) => eprintln!("avarice: history unavailable: {e}"),
         }
     }
 
     println!(
-        "avrt {} — Lua 5.4 ({} profile). Ctrl-D to exit.",
+        "avarice {} — Lua 5.4 ({} profile). Ctrl-D to exit.",
         env!("CARGO_PKG_VERSION"),
         rt.profile()
     );
@@ -103,13 +103,13 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
                         // The tasks an entry leaves are finished, or given up, before the next
                         // prompt, so the line is read with nothing else running.
                         if let Err(e) = run_and_settle_tasks(rt, evaluate(rt, chunk)) {
-                            eprintln!("avrt: {e}");
+                            eprintln!("avarice: {e}");
                         }
                     }
                     Err(Incomplete) => buffer.lock().unwrap().push('\n'),
                     Err(Failed(message)) => {
                         buffer.lock().unwrap().clear();
-                        eprintln!("avrt: {message}");
+                        eprintln!("avarice: {message}");
                     }
                 }
             }
@@ -119,7 +119,7 @@ pub fn run(rt: &Runtime) -> Result<(), Error> {
             Ok(Signal::CtrlD) => break,
             Ok(_) => {}
             Err(e) => {
-                eprintln!("avrt: {e}");
+                eprintln!("avarice: {e}");
                 break;
             }
         }
@@ -180,7 +180,7 @@ async fn evaluate(rt: &Runtime, chunk: Function) -> Result<(), CliError> {
     Ok(())
 }
 
-/// `$XDG_STATE_HOME/avarice-rt/repl-history`, the conventional home for a REPL's history.
+/// `$XDG_STATE_HOME/avarice/repl-history`, the conventional home for a REPL's history.
 fn history_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -188,7 +188,7 @@ fn history_path() -> Option<PathBuf> {
         .or_else(|| {
             std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
         })?;
-    let dir = base.join("avarice-rt");
+    let dir = base.join("avarice");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("repl-history"))
 }
@@ -196,7 +196,7 @@ fn history_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use avarice_rt::Profile;
+    use avarice::Profile;
 
     fn runtime() -> Runtime {
         Runtime::new(Profile::Trusted).unwrap()

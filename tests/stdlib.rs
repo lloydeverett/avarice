@@ -7,8 +7,8 @@
 mod common;
 
 #[cfg(feature = "stdlib-crypto")]
-use avarice_rt::FsStore;
-use avarice_rt::{Profile, Runtime, StdModules};
+use avarice::FsStore;
+use avarice::{Profile, Runtime, StdModules};
 #[cfg(any(feature = "stdlib-crypto", feature = "stdlib-fs", feature = "stdlib-http"))]
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
@@ -400,7 +400,7 @@ fn uuid_and_env_get_work() {
             r#"
             local utils = require("utils")
             return type(utils.uuid()) == "string" and #utils.uuid() == 36
-               and utils.env.get("AVARICE_RT_SURELY_UNSET_VARIABLE") == nil
+               and utils.env.get("AVARICE_SURELY_UNSET_VARIABLE") == nil
                and type(utils.env.get("PATH")) == "string"
             "#,
             "=test",
@@ -798,7 +798,7 @@ fn config_data_and_cache_end_with_the_app_name_and_differ_from_each_other() {
     let (config, data, cache): (String, String, String) = rt
         .block_on(rt.eval(
             r#"
-            local app = require("dirs").app("avarice-rt-test-app", "example.com", "Acme")
+            local app = require("dirs").app("avarice-test-app", "example.com", "Acme")
             return app:config(), app:data(), app:cache()
             "#,
             "=test",
@@ -806,7 +806,7 @@ fn config_data_and_cache_end_with_the_app_name_and_differ_from_each_other() {
         .unwrap();
     for path in [&config, &data, &cache] {
         assert!(
-            path.ends_with("avarice-rt-test-app"),
+            path.ends_with("avarice-test-app"),
             "{path} does not end with the app name"
         );
     }
@@ -823,8 +823,8 @@ fn two_different_apps_resolve_to_different_config_dirs() {
         .block_on(rt.eval(
             r#"
             local dirs = require("dirs")
-            return dirs.app("avarice-rt-test-app-a", "example.com", "Acme"):config(),
-                   dirs.app("avarice-rt-test-app-b", "example.com", "Acme"):config()
+            return dirs.app("avarice-test-app-a", "example.com", "Acme"):config(),
+                   dirs.app("avarice-test-app-b", "example.com", "Acme"):config()
             "#,
             "=test",
         ))
@@ -841,7 +841,7 @@ fn state_and_runtime_may_be_nil_but_are_strings_when_present() {
     let (state_ok, runtime_ok): (bool, bool) = rt
         .block_on(rt.eval(
             r#"
-            local app = require("dirs").app("avarice-rt-test-app", "example.com", "Acme")
+            local app = require("dirs").app("avarice-test-app", "example.com", "Acme")
             local state = app:state()
             local runtime = app:runtime()
             return state == nil or type(state) == "string",
@@ -863,7 +863,7 @@ fn app_raises_immediately_when_author_or_top_level_domain_is_missing() {
     let message: String = rt
         .block_on(rt.eval(
             r#"
-            local ok, err = pcall(require("dirs").app, "avarice-rt-test-app")
+            local ok, err = pcall(require("dirs").app, "avarice-test-app")
             assert(not ok)
             return tostring(err)
             "#,
@@ -880,7 +880,7 @@ fn app_raises_when_a_field_is_not_a_string() {
     let message: String = rt
         .block_on(rt.eval(
             r#"
-            local ok, err = pcall(require("dirs").app, "avarice-rt-test-app", 42, "Acme")
+            local ok, err = pcall(require("dirs").app, "avarice-test-app", 42, "Acme")
             assert(not ok)
             return tostring(err)
             "#,
@@ -899,7 +899,7 @@ fn resolving_a_directory_never_creates_it() {
             r#"
             local fs = require("fs")
             local config = require("dirs")
-                .app("avarice-rt-test-app-should-not-exist", "example.com", "Acme")
+                .app("avarice-test-app-should-not-exist", "example.com", "Acme")
                 :config()
             return config, fs.exists(config)
             "#,

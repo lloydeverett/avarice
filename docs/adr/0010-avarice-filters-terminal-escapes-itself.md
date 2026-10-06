@@ -2,21 +2,21 @@
 status: accepted
 ---
 
-# `avrt` filters terminal escapes itself, and lets only text and colour through
+# `avarice` filters terminal escapes itself, and lets only text and colour through
 
-`avrt` no longer writes through `anstream`. It runs what a program prints, and its own messages,
+`avarice` no longer writes through `anstream`. It runs what a program prints, and its own messages,
 through a filter of its own, built on [`anstyle-parse`](https://docs.rs/anstyle-parse), that lets
 through printable text and ASCII whitespace, and colour when the destination takes it. Every other
 escape sequence, every other control character and every C1 control is dropped, whether or not the
 destination takes colour.
 
-This amends [ADR 0009](0009-avrt-filters-escapes-on-non-terminals.md), which had `anstream` decide
-whether colour was delivered. It stands by that ADR's decision that the environment decides and
-that `io.write` is left raw, and replaces the mechanism and widens what is filtered.
+This amends [ADR 0009](0009-avarice-filters-escapes-on-non-terminals.md), which had `anstream`
+decide whether colour was delivered. It stands by that ADR's decision that the environment decides
+and that `io.write` is left raw, and replaces the mechanism and widens what is filtered.
 
 A reader would otherwise wonder why `print("\27[2J")` does nothing even on a colour terminal, why
-`avrt` parses escape sequences at all when `anstream` was already there, and why `anstream` is still
-in `Cargo.lock` if `avrt` no longer uses it.
+`avarice` parses escape sequences at all when `anstream` was already there, and why `anstream` is
+still in `Cargo.lock` if `avarice` no longer uses it.
 
 ## Why `anstream` was not enough
 
@@ -52,11 +52,11 @@ Both are gaps in what a filter *keeps*, and `anstream` offers no way to change t
   ordinary text it would be to a terminal that did not read it that way. A lone byte in that range
   is not UTF-8, and is dropped with the other invalid bytes.
 - **The parser is `anstyle-parse`'s**, which follows the terminal's own state machine, so that
-  the filter and the terminal agree on where a sequence ends. `avrt` supplies what to keep, and a
+  the filter and the terminal agree on where a sequence ends. `avarice` supplies what to keep, and a
   small guard in front that hands the parser a multi-byte character only once it is whole: left to
   itself the parser consumes the byte that cuts a character short, which loses a newline, or
   turns an escape into visible text.
-- **The environment is decided in `anstream`'s order**, so that `avrt`'s output and clap's help,
+- **The environment is decided in `anstream`'s order**, so that `avarice`'s output and clap's help,
   which still goes through `anstream`, always agree: `NO_COLOR` gives none; `CLICOLOR_FORCE` gives
   colour anywhere; `CLICOLOR=0` gives none; otherwise a terminal takes colour if `TERM` is set and
   not `dumb`, or `CLICOLOR=1`, or `CI` is set. The variables are read with `anstyle-query`, the
@@ -67,9 +67,9 @@ Both are gaps in what a filter *keeps*, and `anstream` offers no way to change t
   recognised, so a caller may write in pieces. `flush` resets the parser, which `print` does after
   every call, so each `print` stands alone: one that ends in the middle of an escape sequence does
   not swallow the start of the next.
-- **The dependencies are `avrt`'s alone.** `anstyle-parse` and `anstyle-query` are optional,
+- **The dependencies are `avarice`'s alone.** `anstyle-parse` and `anstyle-query` are optional,
   behind the `cli` feature, and an embedder with `default-features = false` builds neither.
-  `anstream` stays in the lockfile, and in the `avrt` binary, through clap.
+  `anstream` stays in the lockfile, and in the `avarice` binary, through clap.
 
 ## Considered options
 
@@ -91,7 +91,7 @@ introducer is gone none of it can act as a sequence, so the parsing buys nothing
 
 **Letting cursor movement and the like through on a terminal** was rejected. `print` is a way to
 write text, and a program that wants to draw with the terminal writes its own bytes with `io.write`.
-Nothing in `avrt` needs the exception.
+Nothing in `avarice` needs the exception.
 
 **Passing invalid UTF-8 through**, as `io.write` does, was rejected. `print` is text.
 

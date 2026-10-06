@@ -15,7 +15,7 @@ const SOURCE: &str = include_str!("lua/ansi.lua");
 /// another, so a script that edits the table it was given cannot change what `print` emits.
 pub(crate) fn build(lua: &Lua) -> mlua::Result<Table> {
     lua.load(SOURCE)
-        .set_name("=[avarice-rt ansi]")
+        .set_name("=[avarice ansi]")
         .set_mode(ChunkMode::Text)
         .eval()
 }

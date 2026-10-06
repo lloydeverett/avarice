@@ -1,4 +1,5 @@
-//! Where `avrt` writes: standard output and standard error, through the escape filter (ADR 0010).
+//! Where `avarice` writes: standard output and standard error, through the escape filter
+//! (ADR 0010).
 //!
 //! Text always gets through, and colour when the destination is a colour terminal; see
 //! [`escape`](super::escape). The prompt in the REPL is drawn by reedline and does not come through
@@ -9,7 +10,7 @@ use std::io::{self, IsTerminal, Write};
 
 use super::escape::{Filter, takes_colour};
 
-/// The write sink `avrt` installs: `print`'s output, through the filter.
+/// The write sink `avarice` installs: `print`'s output, through the filter.
 ///
 /// Like the library's own default sink it flushes C stdio first, so `io.write` output, which
 /// bypasses the filter and this sink both, still lands ahead of `print`'s.
@@ -26,12 +27,12 @@ impl Stdout {
 
 impl Write for Stdout {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        avarice_rt::flush_c_stdio();
+        avarice::flush_c_stdio();
         self.0.write(bytes)
     }
 
     fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
-        avarice_rt::flush_c_stdio();
+        avarice::flush_c_stdio();
         self.0.write_all(bytes)
     }
 
