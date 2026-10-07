@@ -107,6 +107,11 @@ carries no privilege an embedder's own module lacks.
 
 A contributed module cannot take a name a runtime already gives another module.
 
+In code, a contributed module is a `HostModule`. The trait is named for the
+broader term because it is the shape any host module could take, but only
+contributed modules implement it: stdlib and core modules are host modules that
+avarice registers without it.
+
 ## Core module
 
 A **host module** the core registers in every runtime, whatever the **profile**,
