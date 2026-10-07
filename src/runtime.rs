@@ -16,13 +16,16 @@ use crate::limits::{
     unless_cancelled,
 };
 use crate::lock::lock;
-use crate::module::{ModuleName, ModuleStore};
+use crate::module::{HostModule, ModuleName, ModuleStore};
 use crate::print::{self, Sink};
 use crate::profile::Profile;
 use crate::stdlib::StdModules;
 
 /// The registry key Lua itself uses for its loaded-module table.
 const LOADED: &str = "_LOADED";
+
+/// The name the core `ansi` module is registered under.
+const ANSI: &str = "ansi";
 
 /// How often [`Runtime::wait_for_tasks`] looks at the executor again.
 ///
@@ -397,6 +400,8 @@ pub struct RuntimeBuilder {
     lua_finalizers: bool,
     store: Option<Arc<dyn ModuleStore>>,
     sink: Option<Sink>,
+    // Behind `Arc`s so that a builder stays `Clone`, and each runtime built from it shares them.
+    contributed: Vec<Arc<dyn HostModule>>,
 }
 
 impl std::fmt::Debug for RuntimeBuilder {
@@ -427,6 +432,7 @@ impl RuntimeBuilder {
             lua_finalizers: profile.allows_lua_finalizers(),
             store: None,
             sink: None,
+            contributed: Vec::new(),
         }
     }
 
@@ -570,6 +576,16 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Registers a module another crate contributes (see [`HostModule`]).
+    ///
+    /// No profile registers one, so the runtime has it only because this asked. It is built on its
+    /// first `require`, as a stdlib module is. [`build`](Self::build) refuses one whose name is
+    /// invalid or already taken, as [`HostModule`] describes.
+    pub fn module(mut self, module: impl HostModule) -> Self {
+        self.contributed.push(Arc::new(module));
+        self
+    }
+
     /// Sends what `print` prints to `writer`, instead of to standard output.
     ///
     /// Clones of a builder share the sink, so two runtimes built from one write to the same
@@ -623,6 +639,7 @@ impl RuntimeBuilder {
             .require_compiled_in()
             .map_err(|e| Error::Config(e.to_string()))?;
         let lua = Lua::new_with(self.std_libs, LuaOptions::default())?;
+        let contributed = check_contributed(&lua, &self.contributed, self.std_modules)?;
 
         let modules = Arc::new(Modules {
             store: Mutex::new(self.store),
@@ -660,13 +677,53 @@ impl RuntimeBuilder {
 
         // `ansi` is a core module: registered in every runtime, whatever the profile, and by the
         // path an embedder's own lazy module takes, so it carries no privilege that one lacks.
-        runtime.register_lazy_module("ansi", |lua| ansi::build(lua).map(Value::Table))?;
+        runtime.register_lazy_module(ANSI, |lua| ansi::build(lua).map(Value::Table))?;
         // The stdlib modules arrive the same way, and none is built until a program requires it.
         for module in self.std_modules.modules() {
             runtime.register_lazy_module(module.name(), crate::stdlib::loader(module))?;
         }
+        // And contributed modules too, which `check_contributed` has made sure replace nothing.
+        for (name, module) in contributed {
+            runtime.register_lazy_module(name.as_str(), move |lua| module.load(lua))?;
+        }
         Ok(runtime)
     }
+}
+
+/// Validates the names of the contributed modules, and pairs each with its name.
+///
+/// A name that is taken is refused, because `require` would otherwise find one module where the
+/// code that registered the other expected its own (ADR 0020). Lua's standard libraries are in
+/// `_LOADED` before anything is required, so a module named after one would never be built.
+fn check_contributed(
+    lua: &Lua,
+    contributed: &[Arc<dyn HostModule>],
+    std_modules: StdModules,
+) -> Result<Vec<(ModuleName, Arc<dyn HostModule>)>> {
+    let loaded = loaded_table(lua)?;
+    let mut checked: Vec<(ModuleName, Arc<dyn HostModule>)> = Vec::new();
+    for module in contributed {
+        let name = ModuleName::new(module.name())?;
+        let taken_by = if checked.iter().any(|(other, _)| *other == name) {
+            Some("another contributed module")
+        } else if name.as_str() == ANSI {
+            Some("the core module")
+        } else if std_modules.modules().any(|m| m.name() == name.as_str()) {
+            Some("a stdlib module this runtime registers")
+        } else if loaded.contains_key(name.as_str())? {
+            Some("one of Lua's standard libraries")
+        } else {
+            None
+        };
+        if let Some(taken_by) = taken_by {
+            return Err(Error::Config(format!(
+                "the contributed module '{name}' cannot be registered: the name is taken by \
+                 {taken_by}"
+            )));
+        }
+        checked.push((name, Arc::clone(module)));
+    }
+    Ok(checked)
 }
 
 /// The executor a runtime drives its Lua on.

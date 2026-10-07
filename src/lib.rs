@@ -80,6 +80,9 @@
 //! # Ok::<_, avarice::Error>(())
 //! ```
 //!
+//! Another crate can contribute a module by implementing [`HostModule`], for an embedder to add
+//! with [`RuntimeBuilder::module`]. No profile registers one.
+//!
 //! A [`ModuleStore`] answers one question: given a module name, produce source or nothing. The
 //! filesystem is one store and currently the only one shipped, but names are hierarchical by
 //! convention rather than by path, so a store backed by a database table is equally valid.
@@ -113,7 +116,7 @@ pub use crate::error::{
 };
 pub use crate::limits::{CancelHandle, DEFAULT_CHECK_INTERVAL, Execution};
 pub use crate::module::{
-    FsStore, MAX_NAME_LEN, MAX_NAME_SEGMENTS, ModuleName, ModuleSource, ModuleStore,
+    FsStore, HostModule, MAX_NAME_LEN, MAX_NAME_SEGMENTS, ModuleName, ModuleSource, ModuleStore,
 };
 pub use crate::print::flush_c_stdio;
 pub use crate::profile::{DEFAULT_SANDBOX_MEMORY_LIMIT, Profile};

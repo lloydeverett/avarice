@@ -7,6 +7,8 @@ pub use fs::FsStore;
 use std::fmt;
 use std::str::FromStr;
 
+use mlua::{Lua, Value};
+
 use crate::error::{InvalidModuleName, StoreError};
 
 /// The longest module name accepted, in bytes.
@@ -177,6 +179,58 @@ impl<T: ModuleStore + ?Sized> ModuleStore for std::sync::Arc<T> {
     fn describe(&self) -> String {
         (**self).describe()
     }
+}
+
+/// A host module that a crate other than avarice contributes, registered with
+/// [`RuntimeBuilder::module`](crate::RuntimeBuilder::module).
+///
+/// This is how another crate adds a module to a runtime it does not build: it exports a type that
+/// implements this, and the embedder hands one to the builder. The module is built on its first
+/// `require` and cached thereafter, as a stdlib module is, and carries no privilege an embedder's
+/// own module lacks.
+///
+/// No profile registers a contributed module, so the embedder decides, runtime by runtime, which
+/// to add. [`build`](crate::RuntimeBuilder::build) refuses one whose name is not a valid
+/// [`ModuleName`] (an [`Error::ModuleName`](crate::Error::ModuleName)), or is already taken (an
+/// [`Error::Config`](crate::Error::Config)): by another contributed module, by a stdlib module the
+/// runtime registers, by the core `ansi` module, or by one of Lua's standard libraries.
+///
+/// ```
+/// use avarice::mlua::{self, Lua, Value};
+/// use avarice::{HostModule, Profile, Runtime};
+///
+/// struct Greeting;
+///
+/// impl HostModule for Greeting {
+///     fn name(&self) -> &str {
+///         "greeting"
+///     }
+///
+///     fn load(&self, lua: &Lua) -> mlua::Result<Value> {
+///         let module = lua.create_table()?;
+///         module.set("hello", lua.create_function(|_, name: String| Ok(format!("hello, {name}")))?)?;
+///         Ok(Value::Table(module))
+///     }
+/// }
+///
+/// let rt = Runtime::builder(Profile::Sandbox).module(Greeting).build()?;
+/// let out: String = rt.block_on(rt.eval("return require('greeting').hello('world')", "=example"))?;
+/// assert_eq!(out, "hello, world");
+/// # Ok::<_, avarice::Error>(())
+/// ```
+///
+/// `Send + Sync` for the reason [`Runtime::register_lazy_module`](crate::Runtime::register_lazy_module)'s
+/// loader is: Lua's `require` holds it. A builder can build several runtimes, so one module value
+/// is shared between them, and `load` runs once in each.
+pub trait HostModule: Send + Sync + 'static {
+    /// The name `require` finds the module by, such as `foo` or `foo.bar`.
+    fn name(&self) -> &str;
+
+    /// Builds the module's value, on its first `require`.
+    ///
+    /// Runs inside the Lua state, under the same limits as the code that called `require`. An
+    /// error is raised from that `require`.
+    fn load(&self, lua: &Lua) -> mlua::Result<Value>;
 }
 
 #[cfg(test)]

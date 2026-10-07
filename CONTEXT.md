@@ -77,7 +77,8 @@ has is decided in Rust at construction; Lua code never causes one to load.
 
 ## Stdlib module
 
-A **host module** that avarice ships, rather than one an embedder wrote.
+A **host module** that avarice ships, rather than one an embedder wrote or a
+**contributed module**.
 `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
 `dirs` and `process`.
 
@@ -93,6 +94,18 @@ the one before.
 
 Named for Lua's standard library by analogy, and separate from it: the standard
 library is Lua's own, opened by `mlua`, and reachable without `require`.
+
+## Contributed module
+
+A **host module** that a crate other than avarice defines, for an **embedder**
+to add to the runtimes it builds. No **profile** registers one, so a runtime
+has it only because the embedder asked.
+
+Unlike a **stdlib module** it is not part of avarice, and avarice does not know
+what it is: whether it is **pure**, what it reaches. Being a host module, it
+carries no privilege an embedder's own module lacks.
+
+A contributed module cannot take a name a runtime already gives another module.
 
 ## Core module
 

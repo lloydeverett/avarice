@@ -251,9 +251,10 @@ avarice = { git = "https://github.com/lloydeverett/avarice", default-features = 
 ```rust
 use std::time::Duration;
 
+use avarice::mlua::{self, Lua, Value};
 use avarice::{
-    CancelHandle, FsStore, ModuleName, ModuleSource, ModuleStore, Profile, Runtime, StdModules,
-    StoreError,
+    CancelHandle, FsStore, HostModule, ModuleName, ModuleSource, ModuleStore, Profile, Runtime,
+    StdModules, StoreError,
 };
 
 fn main() -> avarice::Result<()> {
@@ -265,6 +266,8 @@ fn main() -> avarice::Result<()> {
     let rt = Runtime::builder(Profile::Sandbox)
         // Add or remove stdlib modules, from those the build's features compiled in.
         .with_std_modules(StdModules::SERDE | StdModules::CRYPTO)
+        // Add a module another crate contributes: `require("greeting")`.
+        .module(Greeting)
         // Stop Lua once 5 seconds have passed, the next time it runs, or when `cancel.cancel()` is
         // called from any thread, even while it waits.
         .time_limit(Duration::from_secs(5))
@@ -287,6 +290,21 @@ fn main() -> avarice::Result<()> {
     // Wait for tasks Lua spawned (`utils.spawn_task` and friends).
     rt.block_on(rt.wait_for_tasks())?;
     Ok(())
+}
+
+// A module can come from another crate, which implements `HostModule` for it.
+struct Greeting;
+
+impl HostModule for Greeting {
+    fn name(&self) -> &str {
+        "greeting"
+    }
+
+    fn load(&self, lua: &Lua) -> mlua::Result<Value> {
+        let module = lua.create_table()?;
+        module.set("hello", lua.create_function(|_, name: String| Ok(format!("hello, {name}")))?)?;
+        Ok(Value::Table(module))
+    }
 }
 
 // A store can load modules from anywhere, not just the filesystem.
