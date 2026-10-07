@@ -9,6 +9,11 @@ repository = "https://github.com/lloydeverett/avarice"
 license = "Apache-2.0"
 publish = false
 
+# The example crates, which use avarice as other crates would (examples/README.md). `cargo test` at
+# the root still tests only avarice; `cargo test --workspace` tests them too.
+[workspace]
+members = ["examples/greeting", "examples/app"]
+
 [lib]
 name = "avarice"
 path = "src/lib.rs"

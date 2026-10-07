@@ -233,6 +233,9 @@ print(ansi.fg.hex("#ff8800") .. ansi.bg.color256(236) .. "orange" .. ansi.reset)
 
 ## Embedding
 
+[`examples`](examples) has two crates that use avarice from outside: one that contributes a module,
+and one that builds a runtime with it and runs a program.
+
 Turn off default features to leave out the CLI's dependencies, then list the stdlib modules you
 want. Each module is a feature named `stdlib-<name>`; `stdlib` turns on all of them. A module left
 out isn't compiled, and neither are its dependencies.

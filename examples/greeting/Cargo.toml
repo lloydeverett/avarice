@@ -1,0 +1,13 @@
+[package]
+name = "avarice-greeting"
+version = "0.1.0"
+edition = "2024"
+description = "An example of a module another crate contributes to avarice"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# Only avarice: its re-exported `avarice::mlua` is the mlua it was built against, so a contributed
+# module cannot end up with a second, incompatible one. No default features, so a contributor
+# builds neither the CLI nor a stdlib it does not use.
+avarice = { path = "../..", default-features = false }

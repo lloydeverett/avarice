@@ -1,0 +1,12 @@
+[package]
+name = "example-app"
+version = "0.1.0"
+edition = "2024"
+description = "An example of an embedder: a program that runs Lua with avarice"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# No default features, so no CLI, and only the stdlib modules named.
+avarice = { path = "../..", default-features = false, features = ["stdlib-crypto"] }
+avarice-greeting = { path = "../greeting" }
