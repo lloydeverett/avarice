@@ -9,7 +9,11 @@ mod common;
 #[cfg(feature = "stdlib-crypto")]
 use avarice::FsStore;
 use avarice::{Profile, Runtime, StdModules};
-#[cfg(any(feature = "stdlib-crypto", feature = "stdlib-fs", feature = "stdlib-http"))]
+#[cfg(any(
+    feature = "stdlib-crypto",
+    feature = "stdlib-fs",
+    feature = "stdlib-http"
+))]
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
@@ -917,12 +921,20 @@ fn resolving_a_directory_never_creates_it() {
 // Bytes cross between Lua and the stdlib as Lua strings holding exactly those bytes. Each test
 // sends every byte value, or ones that are not UTF-8, through and checks none is lost or replaced.
 
-#[cfg(any(feature = "stdlib-fs", feature = "stdlib-crypto", feature = "stdlib-http"))]
+#[cfg(any(
+    feature = "stdlib-fs",
+    feature = "stdlib-crypto",
+    feature = "stdlib-http"
+))]
 /// A Lua expression for a string of every byte value once, in order.
 const ALL_BYTES: &str = "(function() local t = {} for i = 0, 255 do t[#t + 1] = string.char(i) end \
                          return table.concat(t) end)()";
 
-#[cfg(any(feature = "stdlib-fs", feature = "stdlib-crypto", feature = "stdlib-http"))]
+#[cfg(any(
+    feature = "stdlib-fs",
+    feature = "stdlib-crypto",
+    feature = "stdlib-http"
+))]
 /// Whether `source`, run in a trusted runtime with `ALL` bound to `ALL_BYTES`, returns true.
 fn holds(source: &str) -> bool {
     let rt = Runtime::new(Profile::Trusted).unwrap();
@@ -938,7 +950,10 @@ fn write_file_writes_a_strings_exact_bytes() {
     assert!(holds(&format!(
         "require('fs').write_file({path:?}, ALL) return true"
     )));
-    assert_eq!(std::fs::read(&path).unwrap(), (0..=255u8).collect::<Vec<_>>());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        (0..=255u8).collect::<Vec<_>>()
+    );
 }
 
 #[cfg(feature = "stdlib-fs")]
@@ -1053,7 +1068,10 @@ fn serve_echo_once() -> (String, std::sync::mpsc::Receiver<Vec<u8>>) {
                 break i + 4;
             }
             let n = stream.read(&mut chunk).unwrap();
-            assert_ne!(n, 0, "the connection closed before the request's head ended");
+            assert_ne!(
+                n, 0,
+                "the connection closed before the request's head ended"
+            );
             seen.extend_from_slice(&chunk[..n]);
         };
         let head = String::from_utf8_lossy(&seen[..head_end]).to_ascii_lowercase();
@@ -1063,7 +1081,10 @@ fn serve_echo_once() -> (String, std::sync::mpsc::Receiver<Vec<u8>>) {
             .map_or(0, |n| n.trim().parse().unwrap());
         while seen.len() < head_end + length {
             let n = stream.read(&mut chunk).unwrap();
-            assert_ne!(n, 0, "the connection closed before the request's body ended");
+            assert_ne!(
+                n, 0,
+                "the connection closed before the request's body ended"
+            );
             seen.extend_from_slice(&chunk[..n]);
         }
         let body = &seen[head_end..head_end + length];
@@ -1189,7 +1210,10 @@ fn set_file_uploads_each_entry_of_a_table_or_a_list() {
     let two = dir.write("two.txt", "SECOND-FILE");
     for (form, expected) in [
         (format!("{one:?}"), &["FIRST-FILE"][..]),
-        (format!("{{ name = 'f', path = {one:?} }}"), &["FIRST-FILE"][..]),
+        (
+            format!("{{ name = 'f', path = {one:?} }}"),
+            &["FIRST-FILE"][..],
+        ),
         (
             format!("{{ {{ name = 'f', path = {one:?} }}, {{ name = 'g', path = {two:?} }} }}"),
             &["FIRST-FILE", "SECOND-FILE"][..],
@@ -1197,7 +1221,10 @@ fn set_file_uploads_each_entry_of_a_table_or_a_list() {
     ] {
         let request = upload(&form).unwrap();
         for contents in expected {
-            assert!(carries(&request, contents.as_bytes()), "{form}: no {contents}");
+            assert!(
+                carries(&request, contents.as_bytes()),
+                "{form}: no {contents}"
+            );
         }
     }
 }
@@ -1224,7 +1251,10 @@ fn a_file_to_upload_that_cannot_be_read_is_an_error_when_the_request_is_sent() {
             format!("{{ name = 'x', {{ name = 'f', path = {good:?} }} }}"),
             "needs a string `path`",
         ),
-        ("5".to_string(), "a path, a `{ name, path }` table, or a list of them"),
+        (
+            "5".to_string(),
+            "a path, a `{ name, path }` table, or a list of them",
+        ),
     ] {
         match upload(&form) {
             Ok(_) => panic!("{form} was sent without the file"),

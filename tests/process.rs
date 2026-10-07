@@ -4,11 +4,7 @@
 //! on every platform and no test leans on a shell or on `echo`, `cat` or `sleep`. That is why these
 //! need the `cli` feature, for the binary, and `utils`, which the Lua given to it uses to wait.
 
-#![cfg(all(
-    feature = "cli",
-    feature = "stdlib-process",
-    feature = "stdlib-utils"
-))]
+#![cfg(all(feature = "cli", feature = "stdlib-process", feature = "stdlib-utils"))]
 
 mod common;
 
@@ -93,7 +89,10 @@ fn a_bare_string_command_is_refused_with_the_table_form_in_the_message() {
     for function in ["run", "spawn"] {
         let message = error_of(&rt, &format!(r#"process.{function}("ls -la")"#));
         assert!(message.contains(r#"{ "ls", "-la" }"#), "{message}");
-        assert!(message.contains(&format!("process.{function}")), "{message}");
+        assert!(
+            message.contains(&format!("process.{function}")),
+            "{message}"
+        );
     }
 }
 
@@ -117,7 +116,10 @@ fn a_field_a_command_does_not_have_is_refused() {
 fn run_only_fields_are_refused_by_spawn() {
     let rt = runtime();
     for field in ["check = true", "timeout = 5"] {
-        let message = error_of(&rt, &format!(r#"process.spawn(avarice("", {{ {field} }}))"#));
+        let message = error_of(
+            &rt,
+            &format!(r#"process.spawn(avarice("", {{ {field} }}))"#),
+        );
         assert!(message.contains("process.run"), "{message}");
     }
 }
@@ -308,15 +310,22 @@ fn run_refuses_a_stdin_nothing_could_write_to() {
     let rt = runtime();
     let message = error_of(&rt, r#"process.run(avarice("", { stdin = "pipe" }))"#);
     assert!(message.contains("stdin"), "{message}");
-    let reads_to_the_end = r#"return process.run(avarice([[io.read("a")]], { stdio = "pipe" })).ok"#;
+    let reads_to_the_end =
+        r#"return process.run(avarice([[io.read("a")]], { stdio = "pipe" })).ok"#;
     let ok: bool = eval(&rt, reads_to_the_end);
-    assert!(ok, "a stdin piped by stdio is closed, so the Child reads to its end");
+    assert!(
+        ok,
+        "a stdin piped by stdio is closed, so the Child reads to its end"
+    );
 }
 
 #[test]
 fn check_is_quiet_about_a_successful_exit() {
     let rt = runtime();
-    let ok: bool = eval(&rt, r#"return process.run(avarice("", { check = true })).ok"#);
+    let ok: bool = eval(
+        &rt,
+        r#"return process.run(avarice("", { check = true })).ok"#,
+    );
     assert!(ok);
 }
 
@@ -406,7 +415,11 @@ fn a_program_on_the_path_is_found_past_a_file_of_its_name_that_cannot_run() {
         &format!(
             r#"return process.run({{ "avarice-copy", "-e", "io.write('found')",
                  env = {{ PATH = {} }} }}).stdout:bytes()"#,
-            lua_string(&format!("{}:{}", dir.path().display(), copy.path().display()))
+            lua_string(&format!(
+                "{}:{}",
+                dir.path().display(),
+                copy.path().display()
+            ))
         ),
     );
     assert_eq!(output, "found");
@@ -592,7 +605,10 @@ fn a_timeout_kills_and_raises_with_what_was_read() {
     assert_eq!(kind, "timeout");
     assert_eq!(stdout, "partial");
     assert!(!ok);
-    assert_eq!(message, format!("process: {AVARICE} timed out after 1500 ms"));
+    assert_eq!(
+        message,
+        format!("process: {AVARICE} timed out after 1500 ms")
+    );
 }
 
 #[test]
@@ -944,7 +960,11 @@ fn feeding_a_child_ends_when_it_exits_though_a_program_it_started_holds_its_inpu
     ))
     .unwrap();
     rt.block_on(rt.wait_for_tasks()).unwrap();
-    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
@@ -995,7 +1015,10 @@ fn losing_the_handle_does_not_kill_a_child() {
     let beat = Heartbeat::new();
     let rt = runtime();
     rt.block_on(rt.exec(
-        format!("process.spawn({}) collectgarbage() collectgarbage()", beating(&beat)),
+        format!(
+            "process.spawn({}) collectgarbage() collectgarbage()",
+            beating(&beat)
+        ),
         "=spawn",
     ))
     .unwrap();
@@ -1010,7 +1033,10 @@ fn an_aborted_task_kills_the_child_its_run_was_waiting_for() {
     let beat = Heartbeat::new();
     let rt = runtime();
     rt.block_on(rt.exec(
-        format!("utils.spawn_task(function() process.run({}) end)", beating(&beat)),
+        format!(
+            "utils.spawn_task(function() process.run({}) end)",
+            beating(&beat)
+        ),
         "=spawn",
     ))
     .unwrap();

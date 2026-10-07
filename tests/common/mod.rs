@@ -112,7 +112,10 @@ impl Heartbeat {
     pub fn beats(&self) -> bool {
         let deadline = Instant::now() + Duration::from_secs(20);
         while self.read().is_none_or(|beat| beat.is_empty()) {
-            assert!(Instant::now() < deadline, "the program never started beating");
+            assert!(
+                Instant::now() < deadline,
+                "the program never started beating"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
         let before = self.read();

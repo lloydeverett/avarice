@@ -110,8 +110,16 @@ fn a_time_limit_does_not_cut_the_wait_for_an_idle_task_short() {
     let started = Instant::now();
     let err = lua_error(rt.block_on(rt.wait_for_tasks()).unwrap_err());
     assert!(was_timed_out(&err), "{err}");
-    assert!(started.elapsed() >= Duration::from_millis(550), "took {:?}", started.elapsed());
-    assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    assert!(
+        started.elapsed() >= Duration::from_millis(550),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]

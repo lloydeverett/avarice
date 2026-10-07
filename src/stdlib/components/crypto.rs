@@ -24,9 +24,9 @@ use base64::{
 };
 
 pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
-    let hash_function = lua.create_function(
-        |_, (hash_type, input): (String, mlua::BString)| Ok(hash(hash_type, input)),
-    )?;
+    let hash_function = lua.create_function(|_, (hash_type, input): (String, mlua::BString)| {
+        Ok(hash(hash_type, input))
+    })?;
     lua.globals().set("astra_internal__hash", hash_function)?;
 
     lua.globals().set(

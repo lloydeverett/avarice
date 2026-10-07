@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use mlua::{
-    IntoLuaMulti, Lua, LuaString, MetaMethod, MultiValue, Table, UserData,
-    UserDataFields, UserDataMethods, Value,
+    IntoLuaMulti, Lua, LuaString, MetaMethod, MultiValue, Table, UserData, UserDataFields,
+    UserDataMethods, Value,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
@@ -37,15 +37,11 @@ const CHUNK: usize = 8 * 1024;
 pub fn register_to_lua(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "astra_internal__process_run",
-        lua.create_async_function(|lua, command: Value| async move {
-            run(&lua, command).await
-        })?,
+        lua.create_async_function(|lua, command: Value| async move { run(&lua, command).await })?,
     )?;
     lua.globals().set(
         "astra_internal__process_spawn",
-        lua.create_async_function(|lua, command: Value| async move {
-            spawn(&lua, command).await
-        })?,
+        lua.create_async_function(|lua, command: Value| async move { spawn(&lua, command).await })?,
     )?;
     Ok(())
 }
@@ -124,9 +120,11 @@ async fn parse(lua: &Lua, tier: Tier, value: Value) -> mlua::Result<Command> {
     let table = match value {
         Value::Table(table) => table,
         Value::String(_) => {
-            return Err(error(format!(
-                r#"{name}: a Command is a table, such as {name}({{ "ls", "-la" }}): a string is "#
-            ) + "not split into a program and its arguments, since no shell is involved"));
+            return Err(error(
+                format!(
+                    r#"{name}: a Command is a table, such as {name}({{ "ls", "-la" }}): a string is "#
+                ) + "not split into a program and its arguments, since no shell is involved",
+            ));
         }
         other => {
             return Err(error(format!(
@@ -198,9 +196,8 @@ async fn parse(lua: &Lua, tier: Tier, value: Value) -> mlua::Result<Command> {
 
     // `stdio` first, so that a stream's own field wins over it whatever order `pairs` gives.
     if let Some((_, stdio)) = fields.iter().find(|(key, _)| key == "stdio") {
-        let stream = stream(name, "stdio", stdio)?.ok_or_else(|| {
-            error(format!(r#"{name}: stdio is "pipe", "inherit" or "null""#))
-        })?;
+        let stream = stream(name, "stdio", stdio)?
+            .ok_or_else(|| error(format!(r#"{name}: stdio is "pipe", "inherit" or "null""#)))?;
         command.stdin = Stdin::Setting(stream);
         command.stdout = stream;
         command.stderr = Stderr::Setting(stream);
@@ -215,18 +212,18 @@ async fn parse(lua: &Lua, tier: Tier, value: Value) -> mlua::Result<Command> {
                         value.type_name()
                     )));
                 };
-                command.cwd = Some(
-                    os_string(&cwd.as_bytes(), || format!("{name}: cwd"))?.into(),
-                );
+                command.cwd = Some(os_string(&cwd.as_bytes(), || format!("{name}: cwd"))?.into());
             }
             "env" => command.env = env(name, value)?,
             "clear_env" => command.clear_env = boolean(name, "clear_env", value)?,
             "stdin" => {
                 command.stdin = match stream(name, "stdin", &value)? {
                     Some(StreamSetting::Pipe) if tier == Tier::Run => {
-                        return Err(error(format!(
-                            r#"{name}: stdin cannot be "pipe", since nothing could write to it: "#
-                        ) + "feed the Child a string or a Buffer, or use process.spawn"));
+                        return Err(error(
+                            format!(
+                                r#"{name}: stdin cannot be "pipe", since nothing could write to it: "#
+                            ) + "feed the Child a string or a Buffer, or use process.spawn",
+                        ));
                     }
                     Some(stream) => Stdin::Setting(stream),
                     None => Stdin::Feed(bytes_of(&value).await.ok_or_else(|| {
@@ -780,12 +777,16 @@ fn merged_reader(
     #[cfg(unix)]
     {
         let fd: std::os::fd::OwnedFd = reader.into();
-        Ok(Box::new(tokio::net::unix::pipe::Receiver::from_owned_fd(fd)?))
+        Ok(Box::new(tokio::net::unix::pipe::Receiver::from_owned_fd(
+            fd,
+        )?))
     }
     #[cfg(windows)]
     {
         let handle: std::os::windows::io::OwnedHandle = reader.into();
-        Ok(Box::new(tokio::fs::File::from_std(std::fs::File::from(handle))))
+        Ok(Box::new(tokio::fs::File::from_std(std::fs::File::from(
+            handle,
+        ))))
     }
 }
 
@@ -917,7 +918,10 @@ fn raise(lua: &Lua, command: &Command, failure: Failure) -> mlua::Result<MultiVa
             fields.set("kind", "start")?;
             fields.set("reason", failure.reason.as_str())?;
             fields.set("message", failure.message.as_str())?;
-            format!("process: could not start '{program}': {}", failure.describe())
+            format!(
+                "process: could not start '{program}': {}",
+                failure.describe()
+            )
         }
         Failure::Exit(parts) => {
             fields.set("kind", "exit")?;
@@ -1012,7 +1016,10 @@ impl UserData for Child {
         methods.add_method("pid", |_, this, ()| Ok(this.shared.pid));
         methods.add_method("kill", |_, this, ()| {
             this.shared.kill().map_err(|e| {
-                error(format!("process: could not kill {}: {e}", this.shared.program))
+                error(format!(
+                    "process: could not kill {}: {e}",
+                    this.shared.program
+                ))
             })
         });
         methods.add_method("terminate", |_, this, ()| {
@@ -1083,7 +1090,10 @@ impl Reader {
     }
 
     fn failed(&self, e: std::io::Error) -> mlua::Error {
-        error(format!("process: could not read the Child's {}: {e}", self.name))
+        error(format!(
+            "process: could not read the Child's {}: {e}",
+            self.name
+        ))
     }
 
     async fn line(&self, lua: &Lua) -> mlua::Result<Option<LuaString>> {
@@ -1123,9 +1133,7 @@ impl UserData for Reader {
             stream.consume(length);
             Ok(Some(chunk))
         });
-        methods.add_async_method("line", |lua, this, ()| async move {
-            this.line(&lua).await
-        });
+        methods.add_async_method("line", |lua, this, ()| async move { this.line(&lua).await });
         methods.add_method("lines", |lua, this, ()| {
             let reader = this.clone();
             lua.create_async_function(move |lua, _: MultiValue| {

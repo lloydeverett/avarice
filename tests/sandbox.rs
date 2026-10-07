@@ -150,7 +150,9 @@ fn trusted_keeps_io_and_os() {
 /// Runs `setmetatable(t, mt)` with `mt` as given in Lua, and gives back its error, if any.
 fn setmetatable_error(rt: &Runtime, mt: &str) -> Option<String> {
     let source = format!("setmetatable({{}}, {mt})");
-    rt.block_on(rt.exec(&source, "=test")).err().map(|e| e.to_string())
+    rt.block_on(rt.exec(&source, "=test"))
+        .err()
+        .map(|e| e.to_string())
 }
 
 /// Whether a table whose metatable has a finalizer has it run once the table is collected.
@@ -216,7 +218,10 @@ fn still_sets_metatables_without_a_finalizer() {
 fn a_bad_argument_to_setmetatable_is_reported_in_lua_s_words_at_the_script_s_line() {
     let rt = sandbox();
     for (call, expected) in [
-        ("setmetatable(1, {})", "bad argument #1 to 'setmetatable' (table expected, got number)"),
+        (
+            "setmetatable(1, {})",
+            "bad argument #1 to 'setmetatable' (table expected, got number)",
+        ),
         (
             "setmetatable({}, 1)",
             "bad argument #2 to 'setmetatable' (nil or table expected, got number)",
@@ -227,7 +232,10 @@ fn a_bad_argument_to_setmetatable_is_reported_in_lua_s_words_at_the_script_s_lin
         ),
     ] {
         let err = rt.block_on(rt.exec(call, "=test")).unwrap_err().to_string();
-        assert!(err.contains(&format!("test:1: {expected}")), "{call}: {err}");
+        assert!(
+            err.contains(&format!("test:1: {expected}")),
+            "{call}: {err}"
+        );
     }
 }
 

@@ -29,9 +29,7 @@ pub fn register_to_lua(lua: &mlua::Lua) -> mlua::Result<()> {
 /// `(app_name, author, top_level_domain)`, as `dirs.lua`'s `App` passes it on every call.
 type Identity = (String, String, String);
 
-fn strategy(
-    (app_name, author, top_level_domain): Identity,
-) -> mlua::Result<impl AppStrategy> {
+fn strategy((app_name, author, top_level_domain): Identity) -> mlua::Result<impl AppStrategy> {
     choose_app_strategy(AppStrategyArgs {
         top_level_domain,
         author,
