@@ -233,9 +233,6 @@ print(ansi.fg.hex("#ff8800") .. ansi.bg.color256(236) .. "orange" .. ansi.reset)
 
 ## Embedding
 
-[`examples`](examples) has two crates that use avarice from outside: one that contributes a module,
-and one that builds a runtime with it and runs a program.
-
 Turn off default features to leave out the CLI's dependencies, then list the stdlib modules you
 want. Each module is a feature named `stdlib-<name>`; `stdlib` turns on all of them. A module left
 out isn't compiled, and neither are its dependencies.
@@ -254,10 +251,9 @@ avarice = { git = "https://github.com/lloydeverett/avarice", default-features = 
 ```rust
 use std::time::Duration;
 
-use avarice::mlua::{self, Lua, Value};
 use avarice::{
-    CancelHandle, FsStore, HostModule, ModuleName, ModuleSource, ModuleStore, Profile, Runtime,
-    StdModules, StoreError,
+    CancelHandle, FsStore, ModuleName, ModuleSource, ModuleStore, Profile, Runtime, StdModules,
+    StoreError,
 };
 
 fn main() -> avarice::Result<()> {
@@ -269,8 +265,6 @@ fn main() -> avarice::Result<()> {
     let rt = Runtime::builder(Profile::Sandbox)
         // Add or remove stdlib modules, from those the build's features compiled in.
         .with_std_modules(StdModules::SERDE | StdModules::CRYPTO)
-        // Add a module another crate contributes: `require("greeting")`.
-        .module(Greeting)
         // Stop Lua once 5 seconds have passed, the next time it runs, or when `cancel.cancel()` is
         // called from any thread, even while it waits.
         .time_limit(Duration::from_secs(5))
@@ -281,11 +275,6 @@ fn main() -> avarice::Result<()> {
         .write_sink(std::io::stderr())
         .build()?;
 
-    // Expose Rust to Lua as a module: `require("clock").now()`.
-    let clock = rt.lua().create_table()?;
-    clock.set("now", rt.lua().create_function(|_, ()| Ok(0))?)?;
-    rt.register_module("clock", clock)?;
-
     // Chunks run as futures on the runtime's Tokio executor.
     let answer: i64 = rt.block_on(rt.eval("return 6 * 7", "=example"))?;
     rt.block_on(rt.exec(r#"print(require("serde").json.encode({ answer = 42 }))"#, "=example"))?;
@@ -293,21 +282,6 @@ fn main() -> avarice::Result<()> {
     // Wait for tasks Lua spawned (`utils.spawn_task` and friends).
     rt.block_on(rt.wait_for_tasks())?;
     Ok(())
-}
-
-// A module can come from another crate, which implements `HostModule` for it.
-struct Greeting;
-
-impl HostModule for Greeting {
-    fn name(&self) -> &str {
-        "greeting"
-    }
-
-    fn load(&self, lua: &Lua) -> mlua::Result<Value> {
-        let module = lua.create_table()?;
-        module.set("hello", lua.create_function(|_, name: String| Ok(format!("hello, {name}")))?)?;
-        Ok(Value::Table(module))
-    }
 }
 
 // A store can load modules from anywhere, not just the filesystem.
@@ -320,6 +294,49 @@ impl ModuleStore for SqliteStore {
     }
 }
 ```
+
+[`examples/app`](examples/app) is a complete embedder.
+
+## Registering host modules
+
+```rust
+// From a value: `require("clock").now()`.
+let clock = rt.lua().create_table()?;
+clock.set("now", rt.lua().create_function(|_, ()| Ok(0))?)?;
+rt.register_module("clock", clock)?;
+
+// From a loader, run on the first `require`.
+rt.register_lazy_module("big", |lua| Ok(Value::Table(lua.create_table()?)))?;
+```
+
+A crate can contribute a module by implementing `HostModule`, using `avarice::mlua` rather than its
+own `mlua`:
+
+```rust
+use avarice::mlua::{self, Lua, Value};
+use avarice::HostModule;
+
+pub struct Greeting;
+
+impl HostModule for Greeting {
+    fn name(&self) -> &str {
+        "greeting"
+    }
+
+    fn load(&self, lua: &Lua) -> mlua::Result<Value> {
+        let module = lua.create_table()?;
+        module.set("hello", lua.create_function(|_, name: String| Ok(format!("hello, {name}")))?)?;
+        Ok(Value::Table(module))
+    }
+}
+```
+
+```rust
+// `build` refuses a name another module in the runtime already has.
+let rt = Runtime::builder(Profile::Sandbox).module(Greeting).build()?;
+```
+
+See [`examples/greeting`](examples/greeting) for a module with a Rust half and a Lua half.
 
 ## Sandbox limitations
 
