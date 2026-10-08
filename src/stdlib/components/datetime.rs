@@ -1009,6 +1009,13 @@ wrapper!(
     Timestamp(jiff::Timestamp), copy
 );
 
+/// For `tidings`, whose times reach Lua as Timestamps (ADR 0021).
+impl From<jiff::Timestamp> for Timestamp {
+    fn from(timestamp: jiff::Timestamp) -> Self {
+        Timestamp(timestamp)
+    }
+}
+
 impl UserData for Timestamp {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         display_and_compare!(methods, Timestamp, ordered);

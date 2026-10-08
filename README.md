@@ -4,7 +4,7 @@ An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates
 command-line interpreter, `avarice`, built on the runtime.
 
 - **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
-  `dirs` and `process`, each behind its own Cargo feature. Most are adapted from
+  `dirs`, `process` and `tidings`, each behind its own Cargo feature. Most are adapted from
   [Astra](https://github.com/ArkForgeLabs/Astra).
 - **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
   one makes can be overridden. The sandbox has no `io`, no `os`, no binary chunks and no `__gc` in
@@ -220,6 +220,53 @@ A running Child counts as a task: `avarice` waits for it before exiting, and Ctr
 the Child is killed, not programs it started. `--timeout` does not cut a wait for a Child short; a
 Command's own `timeout` does.
 
+### `tidings`
+
+Files that outlast the program, in Stores on [tidings](https://github.com/lloydeverett/tidings):
+each Store is a directory, held by the filesystem, SQLite or memory. Files are written only by
+committing a Staging, all or nothing, and every change is reported on the Store's feed.
+
+```lua
+local tidings = require("tidings")
+local utils = require("utils")
+
+local dir = require("dirs").app("myapp", "Example", "com"):data()
+local store <close>, feed = tidings.open_sqlite(dir)
+
+local s = tidings.staging()
+s:write("notes/first.md", "# First\n", { if_absent = true })
+local committed, conflict = store:commit(s)
+if not committed then print("already there:", table.concat(conflict.paths, ", ")) end
+
+local file = store:read("notes/first.md")
+print(file:text(), file.revision, file.modified)   -- modified is a datetime Timestamp
+
+-- Write it back only if nobody changed it since it was read.
+s = tidings.staging()
+s:write(file.path, file:text() .. "more\n", { if_revision = file.revision })
+store:commit(s)
+
+-- Follow the feed in a task of its own, so the script carries on meanwhile.
+utils.spawn_task(function()
+  while true do
+    local item = feed:next()
+    if item == nil then break end           -- closed
+    if item.resync then print("read everything again")
+    else
+      for _, change in ipairs(item.changes) do print(change.kind, change.path, change.origin) end
+    end
+  end
+end)
+```
+
+A Conflict is returned rather than raised, and everything else raises. A Pending commit has
+happened, so it is returned like a finished one, with `committed.pending` set. A Store on the
+filesystem or SQLite counts as a task while it is open, so `avarice` waits for it to be closed
+before exiting, and at the REPL a line that leaves one open waits too: close it, open it with
+`<close>`, or use `tidings.open_memory()` to try things out. If `abort_tasks` (Ctrl-C) ends a
+Store's tasks, the Store raises from then on and its feed gives one Resync and ends: close it and
+open it again.
+
 ### `ansi`
 
 A core module: always present, in every profile and build.
@@ -369,5 +416,5 @@ See [`examples/greeting`](examples/greeting) for a module with a Rust half and a
 ## Licence
 
 Apache License 2.0; see [LICENSE](LICENSE). The stdlib files taken from Astra are under the same
-licence, and each has a header saying where it came from and what changed. `datetime`, `dirs` and
-`process` are original to avarice, and their files say so instead.
+licence, and each has a header saying where it came from and what changed. `datetime`, `dirs`,
+`process` and `tidings` are original to avarice, and their files say so instead.

@@ -10,10 +10,11 @@
 //! registers (ADR 0007). `dirs` and `process` follow the same two-layer shape but are original to
 //! avarice, not Astra's (ADRs 0014 and 0016); they have Rust halves, so they are not pure.
 //! `datetime` is original too (ADR 0019), and differs in one more way: its Rust half sets no
-//! globals, and is handed to its Lua file as a value instead.
+//! globals, and is handed to its Lua file as a value instead. `tidings` (ADR 0021) is original,
+//! and built the way `datetime` is.
 //!
 //! Every module is behind a Cargo feature that compiles it in (ADR 0007). The types here have all
-//! ten modules in every build, so what an embedder matches on does not vary with features; what
+//! eleven modules in every build, so what an embedder matches on does not vary with features; what
 //! varies is which of them are *compiled in*, and asking for one that is not is an error rather
 //! than a silent omission.
 
@@ -51,6 +52,9 @@ pub enum StdModule {
     Dirs,
     /// Running other programs, without a shell. Original to avarice, not derived from Astra.
     Process,
+    /// Stores of files that outlast the program, written through all-or-nothing commits, with a
+    /// change feed, via tidings. Original to avarice, not derived from Astra (ADR 0021).
+    Tidings,
 }
 
 /// What is known about one module. Every fact about a module that is not code lives in [`TABLE`],
@@ -75,7 +79,7 @@ struct Entry {
 /// One row per module, compiled in or not, in the order [`StdModules::modules`] yields them. A
 /// module's row is at the index of its discriminant, which `the_table_is_in_declaration_order`
 /// holds to.
-const TABLE: [Entry; 10] = [
+const TABLE: [Entry; 11] = [
     Entry {
         module: StdModule::Http,
         name: "http",
@@ -156,6 +160,14 @@ const TABLE: [Entry; 10] = [
         compiled_in: cfg!(feature = "stdlib-process"),
         pure: false,
     },
+    Entry {
+        module: StdModule::Tidings,
+        name: "tidings",
+        feature: "stdlib-tidings",
+        flag: StdModules::TIDINGS,
+        compiled_in: cfg!(feature = "stdlib-tidings"),
+        pure: false,
+    },
 ];
 
 const COMPILED_IN_COUNT: usize = {
@@ -188,7 +200,7 @@ const COMPILED_IN: [StdModule; COMPILED_IN_COUNT] = {
 impl StdModule {
     /// The modules compiled into this build, in the order [`StdModules::modules`] yields them.
     ///
-    /// A build that turns a module's feature off has fewer than ten, so this is a slice and not
+    /// A build that turns a module's feature off has fewer than eleven, so this is a slice and not
     /// a fixed array.
     pub const ALL: &'static [StdModule] = &COMPILED_IN;
 
@@ -242,6 +254,8 @@ bitflags! {
         const DIRS = 1 << 8;
         /// [`StdModule::Process`].
         const PROCESS = 1 << 9;
+        /// [`StdModule::Tidings`].
+        const TIDINGS = 1 << 10;
     }
 }
 
@@ -360,7 +374,8 @@ impl FromIterator<StdModule> for StdModules {
 struct Layer {
     source: &'static str,
     /// The module's Rust half as a value. Astra's modules have none: their Rust halves set
-    /// `astra_internal__*` globals instead. `datetime` is ours, and hands its over (ADR 0019).
+    /// `astra_internal__*` globals instead. `datetime` and `tidings` are ours, and hand theirs over
+    /// (ADRs 0019 and 0021).
     rust_half: Option<Value>,
 }
 
@@ -440,6 +455,13 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
             super::components::process::register_to_lua(lua)?;
             Ok(include_str!("lua/process.lua").into())
         }
+        // Original to avarice, and like `datetime`, hands its Rust half over rather than setting
+        // globals.
+        #[cfg(feature = "stdlib-tidings")]
+        StdModule::Tidings => Ok(Layer {
+            source: include_str!("lua/tidings.lua"),
+            rust_half: Some(super::components::tidings::rust_half(lua)?),
+        }),
         // Only reached by a module whose feature is off; in a build with every feature on, every
         // variant has an arm above.
         #[allow(unreachable_patterns)]
@@ -505,7 +527,8 @@ mod tests {
                 "stores",
                 "validation",
                 "dirs",
-                "process"
+                "process",
+                "tidings"
             ]
         );
     }
@@ -561,6 +584,7 @@ mod tests {
         assert_eq!(StdModules::VALIDATION.bits(), 1 << 7);
         assert_eq!(StdModules::DIRS.bits(), 1 << 8);
         assert_eq!(StdModules::PROCESS.bits(), 1 << 9);
+        assert_eq!(StdModules::TIDINGS.bits(), 1 << 10);
     }
 
     #[test]
@@ -598,7 +622,7 @@ mod tests {
     fn set_algebra_adds_and_subtracts() {
         let without_http = StdModules::all() - StdModules::HTTP;
         assert!(!without_http.contains(StdModules::HTTP));
-        assert_eq!(without_http.modules().count(), 9);
+        assert_eq!(without_http.modules().count(), 10);
         assert_eq!(without_http | StdModules::HTTP, StdModules::all());
         assert_eq!(StdModules::all() & !StdModules::all(), StdModules::NONE);
     }

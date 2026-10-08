@@ -52,6 +52,7 @@ stdlib = [
   "stdlib-validation",
   "stdlib-dirs",
   "stdlib-process",
+  "stdlib-tidings",
 ]
 # `net` is the tokio driver reqwest needs, so it follows `http`.
 stdlib-http = [
@@ -66,7 +67,7 @@ stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
 stdlib-crypto = ["dep:sha2", "dep:sha3", "dep:base64"]
 stdlib-serde = ["_astra_serde"]
 # `datetime` is original to avarice, built on jiff (ADR 0019).
-stdlib-datetime = ["dep:jiff"]
+stdlib-datetime = ["_datetime_types"]
 stdlib-utils = ["_astra_utils"]
 # Astra's `stores` has no Rust half, so there is nothing for it to pull in.
 stdlib-stores = []
@@ -88,12 +89,17 @@ stdlib-process = [
   "tokio/fs",
   "_astra_buffers",
 ]
+# `tidings` is original to avarice too (ADR 0021): Stores, on tidings' filesystem, SQLite and
+# memory Backends. Its times are `datetime`'s Timestamps, so it compiles `datetime`'s types, and
+# `macros` waits on a Change feed and its closing at once.
+stdlib-tidings = ["dep:tidings", "_datetime_types", "tokio/macros"]
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
 # another's Rust takes the whole file, and these compile the file without adding the module: `http`
 # calls `sanetize_lua_input` from `astra_serde.rs` and `validation` builds `AstraRegex` from
 # `utils.rs`, and neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and
 # JSON helpers that `src/stdlib/components/mod.rs` holds for `http`, `fs` and `process`.
+# `_datetime_types` is `datetime`'s Rust types, which `tidings` gives its times as.
 _astra_serde = [
   "dep:serde-value",
   "dep:serde_json",
@@ -107,6 +113,9 @@ _astra_serde = [
 ]
 _astra_utils = ["dep:uuid", "dep:regex"]
 _astra_buffers = ["dep:bytes", "dep:serde_json"]
+# `datetime`'s Rust types, compiled for `tidings` as well as for `datetime` (ADR 0021), without
+# registering `datetime`.
+_datetime_types = ["dep:jiff"]
 
 [dependencies]
 # `async` for `exec_async` and friends. `macros`, `send` and `serialize` are what the stdlib's
@@ -192,6 +201,15 @@ jiff = { version = "0.2.37", optional = true }
 # `process`'s own dependencies, not Astra's either (ADR 0016). `which` searches `PATH`, honouring
 # `PATHEXT` on Windows; `libc` is Unix-only, for `kill`.
 which = { version = "8", optional = true }
+
+# `tidings`'s own dependency, not Astra's either (ADR 0021). Not on crates.io, so it comes from git,
+# pinned to a commit. Its `blocking` and `testing` features are for other callers and its own tests.
+[dependencies.tidings]
+git = "https://github.com/lloydeverett/tidings"
+rev = "1345e299482378a46ae0c54755da8cd1863bcda8"
+default-features = false
+features = ["fs", "sqlite"]
+optional = true
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }

@@ -60,6 +60,12 @@
 //         handling is unchanged.
 //       - Added a `__len` metamethod giving the length in bytes, so that `#buffer` need not copy
 //         the bytes into Lua. It waits for the buffer, as `bytes` does. This is an addition.
+//   - Put `pub mod datetime;` behind `_datetime_types` rather than `stdlib-datetime`, which turns
+//     it on, so that `tidings` can compile `datetime`'s types without registering `datetime`
+//     (ADR 0021), and allowed `dead_code` on it, under `cfg_attr`, unless `stdlib-datetime` is on.
+//     Added `pub mod tidings;`, behind `stdlib-tidings`, for another module that owes Astra nothing.
+//     Nothing Astra does is altered: these are additions, and changes to the attributes on a module
+//     that is no longer Astra's.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
@@ -72,8 +78,11 @@ use mlua::{ExternalError, FromLua, LuaSerdeExt};
 pub mod astra_serde;
 #[cfg(feature = "stdlib-crypto")]
 pub mod crypto;
-// Original to avarice since ADR 0019, and no longer Astra's; see its own header.
-#[cfg(feature = "stdlib-datetime")]
+// Original to avarice since ADR 0019, and no longer Astra's; see its own header. Compiled for
+// `tidings` as well as for `datetime`, since `tidings` gives its times as `datetime`'s Timestamps
+// (ADR 0021).
+#[cfg(feature = "_datetime_types")]
+#[cfg_attr(not(feature = "stdlib-datetime"), allow(dead_code))]
 pub mod datetime;
 // Original to avarice, not Astra's; see its own header and ADR 0014.
 #[cfg(feature = "stdlib-dirs")]
@@ -84,6 +93,9 @@ pub mod file_system;
 pub mod http;
 #[cfg(feature = "stdlib-process")]
 pub mod process;
+// Original to avarice, not Astra's; see its own header and ADR 0021.
+#[cfg(feature = "stdlib-tidings")]
+pub mod tidings;
 #[cfg(feature = "_astra_utils")]
 #[cfg_attr(not(feature = "stdlib-utils"), allow(dead_code))]
 pub mod utils;
