@@ -26,10 +26,10 @@ abort. So each such Store also runs a sentinel task beside tidings', and if that
 Store being closed, the Store raises from then on, naming `abort_tasks`, and its feed gives one
 Resync and ends.
 
-A reader would otherwise wonder why, with [ADR 0020](0020-contributed-modules-register-through-the-builder.md)
-giving any crate a way to contribute a module, a binding to a separate crate lives in avarice, and
-why the module is not called `store`. They would also wonder why opening a Store keeps `avarice`
-from exiting.
+A reader would otherwise wonder why, with
+[ADR 0020](0020-contributed-modules-register-through-the-builder.md) giving any crate a way to
+contribute a module, a binding to a separate crate lives in avarice, and why the module is not
+called `store`. They would also wonder why opening a Store keeps `avarice` from exiting.
 
 ## Considered options
 
