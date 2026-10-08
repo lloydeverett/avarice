@@ -247,7 +247,10 @@ fn a_prefix_revision_prints_as_text() {
 #[test]
 fn an_unknown_or_contradictory_option_raises() {
     let message = raises("tidings.staging():write('a', 'a', { if_absnet = true })");
-    assert!(message.contains("unknown key 'if_absnet'"), "{message}");
+    assert!(
+        message.contains("unknown key 'if_absnet' (expected one of: if_absent, if_revision)"),
+        "{message}"
+    );
     let message =
         raises("tidings.staging():write('a', 'a', { if_absent = true, if_revision = 'x' })");
     assert!(
@@ -512,5 +515,121 @@ fn a_store_whose_tasks_were_aborted_raises_and_its_feed_ends_with_a_resync() {
     let got: (bool, bool) = eval_in(&rt, "return feed:next().resync, feed:next() == nil");
     assert_eq!(got, (true, true));
     // Closing it is still allowed, and is what to do with it.
+    eval_in::<()>(&rt, "store:close()");
+}
+
+// -- Arguments ---------------------------------------------------------------------------------
+
+#[test]
+fn an_argument_past_the_last_one_a_function_takes_raises() {
+    for (call, what) in [
+        ("tidings.open_memory('x')", "tidings.open_memory"),
+        ("tidings.staging(1)", "tidings.staging"),
+        ("tidings.open_memory():read('a', 'extra')", "Store:read"),
+        ("tidings.open_memory():close(true)", "Store:close"),
+        (
+            "tidings.staging():write('a', 'b', nil, 'x')",
+            "Staging:write",
+        ),
+        (
+            "local _, feed = tidings.open_memory() feed:next(1)",
+            "Feed:next",
+        ),
+    ] {
+        let message = raises(call);
+        assert!(
+            message.contains(&format!("error: {what}: expected ")),
+            "{call}: {message}"
+        );
+        assert!(message.contains(", got "), "{call}: {message}");
+    }
+}
+
+#[test]
+fn a_message_names_the_function_once() {
+    let message = raises("tidings.staging():write(5, 'x')");
+    let first_line = message.lines().next().unwrap();
+    assert_eq!(
+        first_line,
+        "runtime error: Staging:write: expected a string for the Path, got integer"
+    );
+}
+
+// -- More of the feed and of closing -----------------------------------------------------------
+
+#[test]
+fn a_feed_on_sqlite_reports_a_commit_as_local() {
+    let dir = TempDir::new();
+    let got: String = eval(&format!(
+        "local store <close>, feed = tidings.open_sqlite({})
+         local s = tidings.staging()
+         s:write('a.txt', 'a')
+         store:commit(s)
+         local change = feed:next().changes[1]
+         return change.path .. ':' .. change.kind .. ':' .. change.origin",
+        lua_path(&dir.path().join("db"))
+    ));
+    assert_eq!(got, "a.txt:changed:local");
+}
+
+#[test]
+fn a_snapshot_stays_readable_after_its_store_is_closed() {
+    let got: (String, String) = eval(
+        "local store = tidings.open_memory()
+         local s = tidings.staging()
+         s:write('a.txt', 'a')
+         store:commit(s)
+         local snap <close> = store:snapshot()
+         store:close()
+         return snap:read('a.txt'):text(), table.concat(snap:list(), ',')",
+    );
+    assert_eq!(got, ("a".into(), "a.txt".into()));
+}
+
+#[cfg(all(feature = "stdlib-utils", feature = "stdlib-datetime"))]
+#[test]
+fn closing_the_store_ends_a_wait_on_its_feed_with_nil() {
+    let got: bool = eval(
+        "local utils = require('utils')
+         local store, feed = tidings.open_memory()
+         local got = 'unset'
+         local task = utils.spawn_task(function() got = feed:next() end)
+         require('datetime').sleep(10)
+         store:close()
+         task:await()
+         return got == nil",
+    );
+    assert!(got);
+}
+
+#[test]
+fn an_abort_wakes_a_wait_on_the_feed_with_a_resync() {
+    // A wait that outlives `abort_tasks` is one the embedder holds itself: here, a chunk started
+    // and left waiting on the feed, then finished after the abort.
+    let dir = TempDir::new();
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    eval_in::<()>(
+        &rt,
+        &format!(
+            "store, feed = tidings.open_sqlite({})",
+            lua_path(&dir.path().join("s"))
+        ),
+    );
+    let waiting = rt.eval::<bool>(
+        "local item = feed:next() return item.resync == true",
+        "=test",
+    );
+    let mut waiting = std::pin::pin!(waiting);
+    let started = rt.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut waiting).await
+    });
+    assert!(
+        started.is_err(),
+        "the feed should have had nothing to give yet"
+    );
+    assert!(rt.abort_tasks().unwrap() > 0);
+    assert!(rt.block_on(waiting).unwrap());
+    let ended: bool = eval_in(&rt, "return feed:next() == nil");
+    assert!(ended);
     eval_in::<()>(&rt, "store:close()");
 }

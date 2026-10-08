@@ -89,9 +89,9 @@ stdlib-process = [
   "tokio/fs",
   "_astra_buffers",
 ]
-# `tidings` is original to avarice too (ADR 0021): Stores, on tidings' filesystem, SQLite and
-# memory Backends. Its times are `datetime`'s Timestamps, so it compiles `datetime`'s types, and
-# `macros` waits on a Change feed and its closing at once.
+# `tidings` is original to avarice too (ADR 0021): stores of files on tidings' filesystem, SQLite
+# and memory backends. Its times are `datetime`'s Timestamps, so it compiles `datetime`'s types,
+# and `macros` waits on a change feed, its closing and an abort at once.
 stdlib-tidings = ["dep:tidings", "_datetime_types", "tokio/macros"]
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
@@ -99,7 +99,7 @@ stdlib-tidings = ["dep:tidings", "_datetime_types", "tokio/macros"]
 # calls `sanetize_lua_input` from `astra_serde.rs` and `validation` builds `AstraRegex` from
 # `utils.rs`, and neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and
 # JSON helpers that `src/stdlib/components/mod.rs` holds for `http`, `fs` and `process`.
-# `_datetime_types` is `datetime`'s Rust types, which `tidings` gives its times as.
+# `_datetime_types` is `datetime`'s Rust types, which `tidings` gives its times as (ADR 0021).
 _astra_serde = [
   "dep:serde-value",
   "dep:serde_json",
@@ -113,8 +113,6 @@ _astra_serde = [
 ]
 _astra_utils = ["dep:uuid", "dep:regex"]
 _astra_buffers = ["dep:bytes", "dep:serde_json"]
-# `datetime`'s Rust types, compiled for `tidings` as well as for `datetime` (ADR 0021), without
-# registering `datetime`.
 _datetime_types = ["dep:jiff"]
 
 [dependencies]

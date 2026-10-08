@@ -146,11 +146,9 @@ It says what was built, not what a runtime has: that is **registered**.
 ## tidings Store
 
 A place a **program** keeps files that outlast it, reached through the `tidings`
-**stdlib module**: one directory, held by one backend (the filesystem, SQLite or
-memory), written only through all-or-nothing commits, and reporting every change
-on a feed. The term, and the terms beneath it (File, Path, Revision, Staging,
-Precondition, Commit, Conflict, Change feed, Resync), are tidings' own, and mean
-what tidings' glossary says they mean.
+**stdlib module**. The term, and the terms beneath it (File, Path, Revision,
+Staging, Precondition, Commit, Conflict, Change feed, Resync), are tidings' own,
+and mean what tidings' glossary says they mean.
 
 Not the `stores` module, which is observables and pubsub and keeps nothing, and
 not a **Module store**, which is where a program's source comes from.

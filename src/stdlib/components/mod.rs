@@ -63,9 +63,9 @@
 //   - Put `pub mod datetime;` behind `_datetime_types` rather than `stdlib-datetime`, which turns
 //     it on, so that `tidings` can compile `datetime`'s types without registering `datetime`
 //     (ADR 0021), and allowed `dead_code` on it, under `cfg_attr`, unless `stdlib-datetime` is on.
-//     Added `pub mod tidings;`, behind `stdlib-tidings`, for another module that owes Astra nothing.
-//     Nothing Astra does is altered: these are additions, and changes to the attributes on a module
-//     that is no longer Astra's.
+//     Added `pub mod tidings;`, behind `stdlib-tidings`, for another module that owes Astra
+//     nothing. Nothing Astra does is altered: these are additions, and changes to the attributes on
+//     a module that is no longer Astra's.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]

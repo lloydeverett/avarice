@@ -11,6 +11,7 @@
 --     back from it.
 --   - Times are `datetime` Timestamps.
 --   - A Store, its feed and a Snapshot can each be closed, by `close` or `<close>`.
+--   - An argument past the last one a function takes raises, where Lua would drop it.
 -- An open Store on the filesystem or SQLite counts as a task: `avarice` waits for it to be closed
 -- before exiting, and so does each line at the REPL.
 
@@ -68,6 +69,7 @@ function Store:close() end
 ---Commit to the Store fails until it is finished.
 ---@field pending boolean
 
+---A File that was read.
 ---@class tidings.File
 ---@field path string
 ---@field revision string
@@ -119,22 +121,35 @@ function Staging:require(path, condition) end
 ---@return tidings.Staging
 function Staging:require_prefix(prefix, revision) end
 
+---The state of everything under a Prefix, from `stat_prefix`. It prints as text, and compares
+---with `==`, but cannot be made from text.
 ---@class tidings.PrefixRevision
 
+---A Store as it stood when the Snapshot was taken, read as the Store is. It stays readable after
+---the Store is closed.
 ---@class tidings.Snapshot
 local Snapshot = {}
+
+---The File at `path` as it stood, or `nil` if there was none.
 ---@param path string
 ---@return tidings.File?
 function Snapshot:read(path) end
+
+---The File at `path`'s Revision and last-modified time as they stood, or `nil`.
 ---@param path string
 ---@return { revision: string, modified: datetime.Timestamp }?
 function Snapshot:stat(path) end
+
+---The Paths under a Prefix as they stood, in order. With none, every Path.
 ---@param prefix string?
 ---@return string[]
 function Snapshot:list(prefix) end
----A long-held SQLite Snapshot makes the database's log grow, so close it when done.
+
+---Closes the Snapshot. A long-held SQLite Snapshot makes the database's log grow, so close it
+---when done.
 function Snapshot:close() end
 
+---That one Path was changed or removed, and whether this Store did it or something else did.
 ---@class tidings.Change
 ---@field path string
 ---@field kind "changed"|"removed"
@@ -175,6 +190,7 @@ function tidings.open_memory() end
 ---@return "fs"|"sqlite"|nil
 function tidings.detect(location) end
 
+---A new, empty Staging: writes and deletes to commit to a Store together.
 ---@return tidings.Staging
 function tidings.staging() end
 
