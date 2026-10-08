@@ -143,13 +143,12 @@ use CompileError::{Failed, Incomplete};
 /// `1 + 1` is not a statement, so a bare expression would be a syntax error; stock `lua` tries
 /// `return <entry>` first for exactly this reason, and prints whatever it evaluates to.
 fn compile(rt: &Runtime, entry: &str) -> Result<Function, CompileError> {
-    if !entry.contains('\n') {
-        if let Ok(chunk) = rt
+    if !entry.contains('\n')
+        && let Ok(chunk) = rt
             .load(format!("return {entry};"), "=stdin")
             .into_function()
-        {
-            return Ok(chunk);
-        }
+    {
+        return Ok(chunk);
     }
     match rt.load(entry.to_owned(), "=stdin").into_function() {
         Ok(chunk) => Ok(chunk),

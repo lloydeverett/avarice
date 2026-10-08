@@ -228,17 +228,17 @@ impl Limits {
         if let Some(trip) = self.tripped.get() {
             return Some(trip.to_error());
         }
-        if let Some(cancel) = &self.cancel {
-            if cancel.is_cancelled() {
-                self.tripped.set(Some(Trip::Cancelled));
-                return Some(Trip::Cancelled.to_error());
-            }
+        if let Some(cancel) = &self.cancel
+            && cancel.is_cancelled()
+        {
+            self.tripped.set(Some(Trip::Cancelled));
+            return Some(Trip::Cancelled.to_error());
         }
-        if let Some(deadline) = self.deadline.get() {
-            if Instant::now() >= deadline {
-                self.tripped.set(Some(Trip::TimedOut));
-                return Some(Trip::TimedOut.to_error());
-            }
+        if let Some(deadline) = self.deadline.get()
+            && Instant::now() >= deadline
+        {
+            self.tripped.set(Some(Trip::TimedOut));
+            return Some(Trip::TimedOut.to_error());
         }
         None
     }

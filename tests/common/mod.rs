@@ -37,6 +37,18 @@ impl Write for Buffer {
     }
 }
 
+/// Whether the filesystem holding `dir` takes a name holding bytes that are not UTF-8. Linux's
+/// usually do. APFS, on macOS, refuses one with "Illegal byte sequence", so a test of such a name
+/// can only be skipped there.
+#[cfg(unix)]
+pub fn takes_names_that_are_not_utf8(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let probe = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xe9"));
+    let taken = std::fs::write(&probe, "").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    taken
+}
+
 /// A scratch directory that deletes itself.
 pub struct TempDir(PathBuf);
 

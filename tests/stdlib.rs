@@ -37,6 +37,8 @@ fn pure_names() -> Vec<&'static str> {
 }
 
 /// What a sandbox with `extra` added to it registers: the pure modules and those, in `NAMES` order.
+/// Only the tests that add `fs` or `validation` to a sandbox use it.
+#[cfg(any(feature = "stdlib-fs", feature = "stdlib-validation"))]
 fn sandbox_plus(extra: &[&str]) -> Vec<&'static str> {
     let pure = pure_names();
     NAMES
@@ -534,7 +536,10 @@ fn a_directory_listing_shows_each_entry_rather_than_its_address() {
     let a = dir.write("a.txt", "");
     let b = dir.write("sub/b.txt", "");
     let printed = printed_in_fs(&dir, "print(fs.read_dir(dir))");
-    assert!(!printed.contains("0x"), "{printed}");
+    // Without the paths, which can hold `0x` themselves: macOS names its temporary directories at
+    // random, as in `/var/folders/ab/c0xd…`.
+    let without_paths = printed.replace(&dir.path().display().to_string(), "");
+    assert!(!without_paths.contains("0x"), "{printed}");
     // `read_dir` gives no order, so each entry is looked for rather than the listing compared.
     assert!(
         printed.contains(&format!("AstraDirEntry({}),", a.display())),
@@ -585,6 +590,10 @@ fn a_symlink_prints_as_a_symlink() {
 fn a_dir_entry_whose_name_is_not_utf8_still_prints() {
     use std::os::unix::ffi::OsStrExt;
     let dir = TempDir::new();
+    if !common::takes_names_that_are_not_utf8(dir.path()) {
+        eprintln!("skipped: this filesystem refuses names that are not UTF-8");
+        return;
+    }
     let name = std::ffi::OsStr::from_bytes(b"caf\xe9");
     std::fs::write(dir.path().join(name), "").unwrap();
     // `entry:path()` raises for this name. Printing must not: a directory listing is what one
@@ -1269,6 +1278,10 @@ fn a_file_to_upload_that_cannot_be_read_is_an_error_when_the_request_is_sent() {
 fn a_file_in_a_directory_whose_name_is_not_utf8_is_found_by_its_exact_bytes() {
     use std::os::unix::ffi::OsStrExt;
     let dir = TempDir::new();
+    if !common::takes_names_that_are_not_utf8(dir.path()) {
+        eprintln!("skipped: this filesystem refuses names that are not UTF-8");
+        return;
+    }
     // `caf` and then E9: Latin-1 for `café`, which Linux allows in a name.
     let latin1 = dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
     std::fs::create_dir(&latin1).unwrap();
@@ -1287,6 +1300,10 @@ fn a_file_whose_own_name_is_not_utf8_is_an_error_since_its_name_is_sent_as_text(
     // otherwise be sent with U+FFFD in place of what is not UTF-8.
     use std::os::unix::ffi::OsStrExt;
     let dir = TempDir::new();
+    if !common::takes_names_that_are_not_utf8(dir.path()) {
+        eprintln!("skipped: this filesystem refuses names that are not UTF-8");
+        return;
+    }
     std::fs::write(
         dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt")),
         "LATIN1-NAMED-FILE",
