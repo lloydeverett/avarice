@@ -38,6 +38,29 @@ function Subscription:unsubscribe() end
 ---@return bridge.Subscription
 function bridge.table.subscribe(t, fn) end
 
+---Calls `fn`, and tells every write it makes to `t`, however it makes it, as one list when it
+---returns, in the order they were made; a key written twice is in the list twice. A batch inside
+---a batch of the same table joins the outermost. If `fn` raises, its writes stay, are told, and
+---the error is raised again.
+---@param t bridge.Table
+---@param fn fun()
+function bridge.table.batch(t, fn) end
+
+---As `table.insert`: puts `value` at `pos`, or at the end, moving the items from `pos` on up one.
+---Its writes are one batch, so subscribers are told them as one list.
+---@param t bridge.Table
+---@param pos integer
+---@param value any
+---@overload fun(t: bridge.Table, value: any)
+function bridge.table.insert(t, pos, value) end
+
+---As `table.remove`: takes out the item at `pos`, or the last, moving the items after it down one,
+---and gives it back. Its writes are one batch, so subscribers are told them as one list.
+---@param t bridge.Table
+---@param pos integer?
+---@return any
+function bridge.table.remove(t, pos) end
+
 -- Everything above is for LuaLS. What runs is this: the Rust half hands the module over as a value
 -- (see `components/bridge.rs`), and this file returns it.
 return ...

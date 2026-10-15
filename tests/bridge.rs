@@ -872,6 +872,341 @@ fn a_cancel_inside_a_lua_subscriber_ends_the_write_and_tells_no_one_else() {
     );
 }
 
+// -- Batching ----------------------------------------------------------------------------------
+
+#[test]
+fn a_batch_tells_its_writes_as_one_list_in_write_order_when_it_returns() {
+    let host = Host::new();
+    let got: (String, String) = host.eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ a = 1 }})
+         host.watch(t)
+         bridge.table.subscribe(t, record)
+         local during
+         bridge.table.batch(t, function()
+             t.a = 2
+             t.b = 'x'
+             t.a = 3
+             during = told()
+         end)
+         return during, told()"
+    ));
+    assert_eq!(got, ("".into(), "[a:1>2,b:nil>x,a:2>3]".into()));
+    assert_eq!(host.told.get(), "[a:1>2,b:nil>x,a:2>3]");
+}
+
+#[test]
+fn the_table_library_writes_inside_a_batch_join_it() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'c', 'a' }})
+         bridge.table.subscribe(t, record)
+         bridge.table.batch(t, function()
+             table.insert(t, 'b')
+             table.sort(t)
+         end)
+         return table.concat(t, ',') .. ' ' .. #log .. ' ' .. told()"
+    ));
+    // Which slots `table.sort` writes, and in what order, is up to its algorithm: what matters is
+    // that they come after the insert, in the same one list.
+    assert!(got.starts_with("a,b,c 1 [3:nil>b,"), "{got}");
+    assert!(got.ends_with(']') && got.matches('[').count() == 1, "{got}");
+}
+
+#[test]
+fn a_write_from_rust_inside_a_batch_joins_it() {
+    let host = Host::new();
+    let got: String = host.eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         host.watch(t)
+         bridge.table.subscribe(t, record)
+         bridge.table.batch(t, function()
+             t.a = 1
+             host.set('b', 2)
+         end)
+         return told()"
+    ));
+    assert_eq!(got, "[a:nil>1,b:nil>2]");
+    assert_eq!(host.told.get(), "[a:nil>1,b:nil>2]");
+}
+
+#[test]
+fn a_nested_batch_tells_nothing_until_the_outermost_ends() {
+    let got: (String, String) = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         bridge.table.subscribe(t, record)
+         local after_inner
+         bridge.table.batch(t, function()
+             t.a = 1
+             bridge.table.batch(t, function()
+                 t.b = 2
+             end)
+             after_inner = told()
+             t.c = 3
+         end)
+         return after_inner, told()"
+    ));
+    assert_eq!(got, ("".into(), "[a:nil>1,b:nil>2,c:nil>3]".into()));
+}
+
+#[test]
+fn a_batch_with_no_writes_tells_nothing() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ a = 1 }})
+         bridge.table.subscribe(t, record)
+         bridge.table.batch(t, function() local _ = t.a end)
+         return told()"
+    ));
+    assert_eq!(got, "");
+}
+
+#[test]
+fn a_batch_that_raises_keeps_and_tells_its_writes_then_raises_again() {
+    let got: (String, bool, String, i64) = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         bridge.table.subscribe(t, record)
+         local ok, err = pcall(bridge.table.batch, t, function()
+             t.a = 1
+             error('the batch broke')
+         end)
+         local told_by_then = told()
+         local raised = {{}}
+         local _, again = pcall(bridge.table.batch, t, function() error(raised) end)
+         return told_by_then, not ok and rawequal(again, raised), tostring(err), t.a"
+    ));
+    assert_eq!(got.0, "[a:nil>1]");
+    assert!(got.1, "the error was not raised again as it was raised");
+    assert!(got.2.contains("the batch broke"), "{}", got.2);
+    assert_eq!(got.3, 1);
+}
+
+#[test]
+fn a_write_by_a_subscriber_told_of_a_batch_is_told_on_its_own() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         bridge.table.subscribe(t, function(changes)
+             if changes[1].key == 'a' then t.c = 3 end
+         end)
+         bridge.table.subscribe(t, record)
+         bridge.table.batch(t, function()
+             t.a = 1
+             t.b = 2
+         end)
+         return told()"
+    ));
+    assert_eq!(got, "[c:nil>3] [a:nil>1,b:nil>2]");
+}
+
+#[test]
+fn a_cancel_inside_a_batch_ends_it_as_a_cancel() {
+    let cancel = CancelHandle::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .check_interval(100)
+        .build()
+        .unwrap();
+    let stop = rt
+        .lua()
+        .create_function(move |_, ()| {
+            cancel.cancel();
+            Ok(())
+        })
+        .unwrap();
+    rt.lua().globals().set("stop", stop).unwrap();
+    let err = rt
+        .block_on(rt.eval::<()>(
+            "local bridge = require('bridge')
+             local t = bridge.table()
+             bridge.table.batch(t, function() t.a = 1 stop() while true do end end)",
+            "=test",
+        ))
+        .unwrap_err();
+    let Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_cancelled(&err), "{err}");
+}
+
+#[test]
+fn table_insert_at_the_front_outside_a_batch_tells_each_shifted_slot_on_its_own() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'b', 'c' }})
+         bridge.table.subscribe(t, record)
+         table.insert(t, 1, 'a')
+         return told()"
+    ));
+    assert_eq!(got, "[3:nil>c] [2:c>b] [1:b>a]");
+}
+
+#[test]
+fn bridge_insert_in_the_middle_shifts_the_sequence_as_one_list() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'a', 'c', 'd' }})
+         bridge.table.subscribe(t, record)
+         bridge.table.insert(t, 2, 'b')
+         return table.concat(t, ',') .. ' ' .. told()"
+    ));
+    assert_eq!(got, "a,b,c,d [4:nil>d,3:d>c,2:c>b]");
+}
+
+#[test]
+fn bridge_insert_without_a_position_appends() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'a' }})
+         bridge.table.subscribe(t, record)
+         bridge.table.insert(t, 'b')
+         return table.concat(t, ',') .. ' ' .. told()"
+    ));
+    assert_eq!(got, "a,b [2:nil>b]");
+}
+
+#[test]
+fn bridge_remove_in_the_middle_shifts_the_sequence_as_one_list_and_gives_the_value() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'a', 'b', 'c' }})
+         bridge.table.subscribe(t, record)
+         local removed = bridge.table.remove(t, 2)
+         return removed .. ' ' .. table.concat(t, ',') .. ' ' .. #t .. ' ' .. told()"
+    ));
+    assert_eq!(got, "b a,c 2 [2:b>c,3:c>nil]");
+}
+
+#[test]
+fn bridge_remove_without_a_position_removes_the_last() {
+    let got: (String, String, String) = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'a', 'b' }})
+         bridge.table.subscribe(t, record)
+         local removed = bridge.table.remove(t)
+         return removed, table.concat(t, ','), told()"
+    ));
+    assert_eq!(got, ("b".into(), "a".into(), "[2:b>nil]".into()));
+}
+
+#[test]
+fn bridge_insert_and_remove_inside_a_batch_join_it() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'a', 'b' }})
+         bridge.table.subscribe(t, record)
+         bridge.table.batch(t, function()
+             bridge.table.insert(t, 1, 'z')
+             bridge.table.remove(t, 1)
+         end)
+         return told()"
+    ));
+    assert_eq!(got, "[3:nil>b,2:b>a,1:a>z,1:z>a,2:a>b,3:b>nil]");
+}
+
+#[test]
+fn bridge_insert_and_remove_take_the_positions_table_insert_and_remove_do() {
+    // The same calls on a plain table through the `table` library, and on a Bridge table through
+    // `bridge.table`, give the same contents and the same values back.
+    let got: (String, String) = eval(
+        "local function run(insert, remove, t)
+             local out = {}
+             insert(t, 1, 'x')
+             insert(t, #t + 1, 'y')
+             insert(t, 'z')
+             out[#out + 1] = tostring(remove(t, 1))
+             out[#out + 1] = tostring(remove(t))
+             out[#out + 1] = tostring(remove(t, #t + 1))
+             out[#out + 1] = tostring(remove(t, '2'))
+             local all = {}
+             for i = 1, #t do all[i] = tostring(t[i]) end
+             return table.concat(out, ',') .. ' | ' .. table.concat(all, ',')
+         end
+         local plain = run(table.insert, table.remove, { 'a', 'b' })
+         local bridged = run(bridge.table.insert, bridge.table.remove, bridge.table({ 'a', 'b' }))
+         return plain, bridged",
+    );
+    assert_eq!(got.0, got.1);
+    assert_eq!(got.0, "x,z,nil,b | a,y");
+}
+
+#[test]
+fn bridge_insert_and_remove_refuse_a_position_out_of_bounds() {
+    for call in [
+        "bridge.table.insert(bridge.table({ 'a' }), 3, 'x')",
+        "bridge.table.insert(bridge.table({ 'a' }), 0, 'x')",
+        "bridge.table.remove(bridge.table({ 'a' }), 3)",
+        "bridge.table.remove(bridge.table({ 'a' }), -1)",
+    ] {
+        let message = raises(call);
+        assert!(
+            message.contains("position out of bounds"),
+            "{call}: {message}"
+        );
+    }
+}
+
+#[test]
+fn bridge_insert_and_remove_check_their_arguments() {
+    for (call, expected) in [
+        (
+            "bridge.table.insert({}, 'x')",
+            "bridge.table.insert: expected a bridge.table, got table",
+        ),
+        (
+            "bridge.table.insert(bridge.table())",
+            "bridge.table.insert: wrong number of arguments",
+        ),
+        (
+            "bridge.table.insert(bridge.table(), 1, 'x', 'y')",
+            "bridge.table.insert: wrong number of arguments",
+        ),
+        (
+            "bridge.table.insert(bridge.table(), 'one', 'x')",
+            "bridge.table.insert: expected an integer position, got string",
+        ),
+        (
+            "bridge.table.remove({})",
+            "bridge.table.remove: expected a bridge.table, got table",
+        ),
+        (
+            "bridge.table.remove(bridge.table(), 1.5)",
+            "bridge.table.remove: expected an integer position, got number",
+        ),
+        (
+            "bridge.table.remove(bridge.table(), 1, 2)",
+            "bridge.table.remove: expected at most 2 arguments, got 3",
+        ),
+    ] {
+        let message = raises(call);
+        assert!(message.contains(expected), "{call}: {message}");
+    }
+}
+
+#[test]
+fn batch_checks_its_arguments() {
+    for (call, expected) in [
+        (
+            "bridge.table.batch({}, function() end)",
+            "bridge.table.batch: expected a bridge.table, got table",
+        ),
+        (
+            "bridge.table.batch(bridge.table(), 'x')",
+            "bridge.table.batch: expected a function, got string",
+        ),
+        (
+            "bridge.table.batch(bridge.table(), print, 1)",
+            "bridge.table.batch: expected at most 2 arguments, got 3",
+        ),
+    ] {
+        let message = raises(call);
+        assert!(message.contains(expected), "{call}: {message}");
+    }
+}
+
 // -- What it is --------------------------------------------------------------------------------
 
 #[test]

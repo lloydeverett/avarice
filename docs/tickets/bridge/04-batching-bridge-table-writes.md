@@ -8,11 +8,11 @@ batch.
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Several writes inside `batch` reach a Lua and a Rust subscriber as one list, in order
-- [ ] `table.insert`/`table.sort` inside a batch join it
-- [ ] A nested batch delivers nothing until the outermost ends
-- [ ] A raising `fn`: writes kept, told, then the error re-raised at the `batch` call
-- [ ] `insert` and `remove` in the middle of a sequence are one list;
+- [x] Several writes inside `batch` reach a Lua and a Rust subscriber as one list, in order
+- [x] `table.insert`/`table.sort` inside a batch join it
+- [x] A nested batch delivers nothing until the outermost ends
+- [x] A raising `fn`: writes kept, told, then the error re-raised at the `batch` call
+- [x] `insert` and `remove` in the middle of a sequence are one list;
       `table.insert(t, 1, v)` outside a batch is still one notification per shifted slot

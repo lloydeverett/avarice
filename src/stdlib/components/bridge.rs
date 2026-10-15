@@ -23,11 +23,17 @@
 //! or unsubscribe. Nor is a subscriber dropped under one, since it may own a subscription whose
 //! drop takes it.
 //!
+//! A batch holds back the changes made inside it, and the outermost tells them as one list when
+//! it ends. They hold Lua values, so they are a user value too, for as long as the batch is open,
+//! which is as long as the call to `bridge.table.batch` is on the stack; the depth, which is not
+//! Lua's, is in [`TableState`]. The list is taken before it is told, so a subscriber that writes
+//! is told of its own write on its own, as outside a batch.
+//!
 //! Nothing here sets a global. [`rust_half`] builds the module's table, and `modules.rs` hands it
 //! to `lua/bridge.lua`, which returns it.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use mlua::{
@@ -61,8 +67,8 @@ const HANDLES: &str = "avarice.bridge.handles";
 const HOST_READ: &str = "avarice.bridge.read";
 const HOST_WRITE: &str = "avarice.bridge.write";
 
-// User values, by index. Each userdata numbers its own from 1: `BACKING` and `LUA_SUBSCRIBERS` are
-// a Bridge table's, and `SUBSCRIBED_TO` a subscription handle's.
+// User values, by index. Each userdata numbers its own from 1: `BACKING`, `LUA_SUBSCRIBERS` and
+// `PENDING` are a Bridge table's, and `SUBSCRIBED_TO` a subscription handle's.
 
 /// The user value of a Bridge table's userdata that holds its backing table.
 const BACKING: usize = 1;
@@ -70,6 +76,10 @@ const BACKING: usize = 1;
 /// The user value of a Bridge table's userdata that holds its Lua subscribers, by subscription id,
 /// once it has had one.
 const LUA_SUBSCRIBERS: usize = 2;
+
+/// The user value of a Bridge table's userdata that holds, while a batch is open, the changes it
+/// will tell when it ends: a list of `{ key, old, new }` tables, in write order.
+const PENDING: usize = 3;
 
 /// The user value of a subscription handle's userdata that holds the Bridge table it is of.
 const SUBSCRIBED_TO: usize = 1;
@@ -133,9 +143,180 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
         })?,
     )?;
 
+    // `pcall` as it was when the module was built, as with `next` above. `batch` runs `fn` under it
+    // from Rust, so that the error comes back as the value it was raised with, which an
+    // `mlua::Error` would make a string; and the Lua below raises it again, which Rust cannot.
+    let pcall: Function = lua.globals().raw_get("pcall")?;
+    let run = lua.create_function(move |lua, values: MultiValue| {
+        const WHAT: &str = "bridge.table.batch";
+        let [this, body] = args(values, WHAT)?;
+        let this = bridge_table(this, WHAT)?;
+        let Value::Function(body) = body else {
+            return Err(error(format!(
+                "{WHAT}: expected a function, got {}",
+                body.type_name()
+            )));
+        };
+        batched(lua, &this, || pcall.call::<MultiValue>(body))
+    })?;
+    table_fn.set(
+        "batch",
+        lua.load(BATCH)
+            .set_name("=[bridge]")
+            .call::<Function>(run)?,
+    )?;
+
+    table_fn.set(
+        "insert",
+        lua.create_function(|lua, values: MultiValue| {
+            const WHAT: &str = "bridge.table.insert";
+            let given = values.len();
+            if !(2..=3).contains(&given) {
+                return Err(error(format!("{WHAT}: wrong number of arguments")));
+            }
+            let [this, pos, value] = args(values, WHAT)?;
+            let this = bridge_table(this, WHAT)?;
+            let (pos, value) = match given {
+                2 => (None, pos),
+                _ => (Some(position(lua, pos, WHAT)?), value),
+            };
+            insert(lua, &this, pos, value)
+        })?,
+    )?;
+    table_fn.set(
+        "remove",
+        lua.create_function(|lua, values: MultiValue| {
+            const WHAT: &str = "bridge.table.remove";
+            let [this, pos] = args(values, WHAT)?;
+            let this = bridge_table(this, WHAT)?;
+            let pos = match pos {
+                Value::Nil => None,
+                pos => Some(position(lua, pos, WHAT)?),
+            };
+            remove(lua, &this, pos)
+        })?,
+    )?;
+
     let module = lua.create_table()?;
     module.set("table", table_fn)?;
     Ok(Value::Table(module))
+}
+
+/// `bridge.table.batch(t, fn)`, given the Rust half that runs `fn` under `pcall` inside a batch and
+/// gives back what `pcall` did. Raises `fn`'s error again, with the value it was raised with, once
+/// the batch has been told.
+const BATCH: &str = "
+    local run = ...
+    local error = error
+    local function finish(ok, ...)
+        if not ok then error((...), 0) end
+    end
+    return function(...) finish(run(...)) end
+";
+
+/// Runs `body` inside a batch of `this`: every write to `this` until it returns, by any path, is
+/// held back, and the outermost batch tells them all as one list, in write order, when it ends,
+/// whether or not `body` failed. The list is taken before it is told, so a subscriber that writes
+/// is told of its write on its own, as a write outside a batch is.
+fn batched<R>(lua: &Lua, this: &AnyUserData, body: impl FnOnce() -> Result<R>) -> Result<R> {
+    let state = state_of(this)?;
+    let (outermost, result) = {
+        let depth = BatchDepth::enter(&state);
+        if depth.outermost {
+            // Any left by a batch that a panic unwound out of was never told, and is not now.
+            this.set_nth_user_value(PENDING, Value::Nil)?;
+        }
+        (depth.outermost, body())
+    };
+    if outermost {
+        let pending: Option<LuaTable> = this.nth_user_value(PENDING)?;
+        this.set_nth_user_value(PENDING, Value::Nil)?;
+        if let Some(pending) = pending {
+            let changes = pending
+                .sequence_values::<LuaTable>()
+                .map(|entry| {
+                    let entry = entry?;
+                    Ok(Change {
+                        key: entry.raw_get("key")?,
+                        old: entry.raw_get("old")?,
+                        new: entry.raw_get("new")?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            tell(lua, this, &changes)?;
+        }
+    }
+    result
+}
+
+/// A batch's hold on its table's batch depth, given back when it is dropped, even by a panic.
+struct BatchDepth<'a> {
+    state: &'a TableState,
+    outermost: bool,
+}
+
+impl<'a> BatchDepth<'a> {
+    fn enter(state: &'a TableState) -> Self {
+        let outermost = state.batch_depth.fetch_add(1, Ordering::Relaxed) == 0;
+        BatchDepth { state, outermost }
+    }
+}
+
+impl Drop for BatchDepth<'_> {
+    fn drop(&mut self) {
+        self.state.batch_depth.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// `bridge.table.insert(t, pos?, value)`: as `table.insert`, `value` at `pos`, or at the end, the
+/// items from `pos` on moved up one, all as one batch.
+fn insert(lua: &Lua, this: &AnyUserData, pos: Option<i64>, value: Value) -> Result<()> {
+    let backing = backing(this)?;
+    let end = backing.raw_len() as i64 + 1;
+    let pos = pos.unwrap_or(end);
+    if !(1..=end).contains(&pos) {
+        return Err(error(
+            "bridge.table.insert: position out of bounds".to_owned(),
+        ));
+    }
+    batched(lua, this, || {
+        for i in (pos + 1..=end).rev() {
+            write(lua, this, Value::Integer(i), backing.raw_get(i - 1)?)?;
+        }
+        write(lua, this, Value::Integer(pos), value)
+    })
+}
+
+/// `bridge.table.remove(t, pos?)`: as `table.remove`, the item at `pos`, or the last, taken out and
+/// given back, the items after it moved down one, all as one batch.
+fn remove(lua: &Lua, this: &AnyUserData, pos: Option<i64>) -> Result<Value> {
+    let backing = backing(this)?;
+    let size = backing.raw_len() as i64;
+    let pos = pos.unwrap_or(size);
+    // As `table.remove` has it: the length itself, even 0, or 1 to one past the length.
+    if pos != size && !(1..=size + 1).contains(&pos) {
+        return Err(error(
+            "bridge.table.remove: position out of bounds".to_owned(),
+        ));
+    }
+    let removed: Value = backing.raw_get(pos)?;
+    batched(lua, this, || {
+        for i in pos..size {
+            write(lua, this, Value::Integer(i), backing.raw_get(i + 1)?)?;
+        }
+        write(lua, this, Value::Integer(pos.max(size)), Value::Nil)
+    })?;
+    Ok(removed)
+}
+
+/// `pos` as an integer, as `table.insert` and `table.remove` take one, or an error naming `what`.
+fn position(lua: &Lua, pos: Value, what: &str) -> Result<i64> {
+    let type_name = pos.type_name();
+    lua.coerce_integer(pos)?.ok_or_else(|| {
+        error(format!(
+            "{what}: expected an integer position, got {type_name}"
+        ))
+    })
 }
 
 /// `bridge.table(init?)`: a new Bridge table, holding a shallow copy of `init` if it is given.
@@ -154,6 +335,7 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
     let state = TableState {
         id: next_id(),
         subscribers: Mutex::new(Vec::new()),
+        batch_depth: AtomicUsize::new(0),
     };
     let this = lua.create_userdata(BridgeTable(Arc::new(state)))?;
     this.set_nth_user_value(BACKING, backing)?;
@@ -201,7 +383,7 @@ fn state_of(this: &AnyUserData) -> Result<Arc<TableState>> {
 }
 
 /// Writes `value` at `key` in the Bridge table `this`, from Lua or from Rust, and tells every
-/// subscriber once it is in place.
+/// subscriber once it is in place, or, while a batch of it is open, adds the change to the batch.
 fn write(lua: &Lua, this: &AnyUserData, key: Value, value: Value) -> Result<()> {
     // As a table would. mlua leaves these to Lua, which in a build with its API checks on asserts
     // rather than raising.
@@ -213,6 +395,21 @@ fn write(lua: &Lua, this: &AnyUserData, key: Value, value: Value) -> Result<()> 
     let backing = backing(this)?;
     let old: Value = backing.raw_get(&key)?;
     backing.raw_set(&key, &value)?;
+    if state_of(this)?.batch_depth.load(Ordering::Relaxed) > 0 {
+        let pending = match this.nth_user_value::<Option<LuaTable>>(PENDING)? {
+            Some(pending) => pending,
+            None => {
+                let pending = lua.create_table()?;
+                this.set_nth_user_value(PENDING, &pending)?;
+                pending
+            }
+        };
+        let entry = lua.create_table_with_capacity(0, 3)?;
+        entry.raw_set("key", key)?;
+        entry.raw_set("old", old)?;
+        entry.raw_set("new", value)?;
+        return pending.raw_push(entry);
+    }
     let change = Change {
         key,
         old,
@@ -306,13 +503,16 @@ enum Subscriber {
 
 /// The part of a Bridge table that is not Lua's, shared between its userdata and the host's
 /// handles. It holds no Lua value, for the reasons the module's header gives: the backing table
-/// and the Lua subscribers' functions are user values of the userdata. It will hold whether the
-/// table is closed, and the batch depth.
+/// and the Lua subscribers' functions are user values of the userdata, and so are the changes a
+/// batch holds back. It will hold whether the table is closed.
 struct TableState {
     /// The key the host's handles find the userdata by, in the table at [`HANDLES`].
     id: u64,
     /// Every subscriber, Lua's and Rust's, by subscription id, in the order they subscribed.
     subscribers: Mutex<Vec<(u64, Subscriber)>>,
+    /// How many batches of this table are open, one inside another. Only the Lua thread, under the
+    /// Lua lock, reads or writes it.
+    batch_depth: AtomicUsize,
 }
 
 impl TableState {
@@ -337,8 +537,9 @@ impl TableState {
     }
 }
 
-/// The userdata Lua holds a Bridge table as. Its first user value is the backing table, and its
-/// second, once it has had a Lua subscriber, the Lua subscribers.
+/// The userdata Lua holds a Bridge table as. Its first user value is the backing table, its
+/// second, once it has had a Lua subscriber, the Lua subscribers, and its third, while a batch is
+/// open and has been written to, the changes the batch holds back.
 struct BridgeTable(Arc<TableState>);
 
 impl UserData for BridgeTable {
