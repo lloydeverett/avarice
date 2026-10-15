@@ -7,10 +7,11 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use avarice::mlua::{self, Value};
-use avarice::{Profile, Runtime, StdModules, bridge};
+use avarice::{CancelHandle, Error, Profile, Runtime, StdModules, bridge, was_cancelled};
 
 /// Runs `body` with `bridge` bound to the module, and returns what it returns.
 fn eval<R: mlua::FromLuaMulti>(body: &str) -> R {
@@ -399,6 +400,35 @@ fn every_operation_refuses_something_that_is_not_a_bridge_table() {
     }
 }
 
+#[test]
+fn unsubscribe_takes_no_arguments() {
+    let message = raises("bridge.table.subscribe(bridge.table(), print):unsubscribe(1)");
+    assert!(
+        message.contains("bridge.subscription.unsubscribe: expected no arguments, got 1"),
+        "{message}"
+    );
+}
+
+#[test]
+fn unsubscribe_refuses_something_that_is_not_a_subscription() {
+    for (given, named) in [
+        ("{}", "table"),
+        ("nil", "nil"),
+        ("bridge.table()", "userdata"),
+    ] {
+        let message = raises(&format!(
+            "local handle = bridge.table.subscribe(bridge.table(), print)
+             handle.unsubscribe({given})"
+        ));
+        assert!(
+            message.contains(&format!(
+                "bridge.subscription.unsubscribe: expected a bridge.subscription, got {named}"
+            )),
+            "{given}: {message}"
+        );
+    }
+}
+
 // -- Telling in turn --------------------------------------------------------------------------
 
 #[test]
@@ -527,7 +557,10 @@ struct Host {
 
 impl Host {
     fn new() -> Self {
-        let rt = Runtime::new(Profile::Trusted).unwrap();
+        Host::on(Runtime::new(Profile::Trusted).unwrap())
+    }
+
+    fn on(rt: Runtime) -> Self {
         let host = Host {
             rt,
             told: Told::default(),
@@ -744,6 +777,99 @@ fn a_rust_subscriber_dropped_while_a_change_is_told_is_not_called_again() {
          t.b = 2",
     );
     assert_eq!(host.told.get(), "");
+}
+
+#[test]
+fn a_write_from_another_thread_tells_lua_and_rust_subscribers() {
+    let host = Host::new();
+    host.eval::<()>(&format!(
+        "{RECORD}
+         log_of = told
+         local t = bridge.table()
+         host.watch(t)
+         bridge.table.subscribe(t, record)
+         held = t"
+    ));
+    let t = host.kept();
+    std::thread::spawn(move || t.set("n", 3).unwrap())
+        .join()
+        .unwrap();
+    let got: String = host.eval("return log_of()");
+    assert_eq!(got, "[n:nil>3]");
+    assert_eq!(host.told.get(), "[n:nil>3]");
+}
+
+#[test]
+fn dropping_a_subscription_whose_subscriber_holds_another_does_not_deadlock() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let held: Arc<Mutex<Option<bridge::Subscription>>> = Arc::default();
+    let tangle = {
+        let held = Arc::clone(&held);
+        rt.lua()
+            .create_function(move |_, t: bridge::Table| {
+                let inner = t.subscribe(|_, _| {});
+                let outer = t.subscribe(move |_, _| {
+                    let _ = &inner;
+                });
+                *held.lock().unwrap() = Some(outer);
+                Ok(())
+            })
+            .unwrap()
+    };
+    let module = rt.lua().create_table().unwrap();
+    module.set("tangle", tangle).unwrap();
+    rt.register_module("host", module).unwrap();
+    eval_in::<()>(&rt, "held = bridge.table() require('host').tangle(held)");
+
+    let outer = held.lock().unwrap().take().unwrap();
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || {
+        drop(outer);
+        done.send(()).unwrap();
+    });
+    finished
+        .recv_timeout(Duration::from_secs(5))
+        .expect("dropping the subscription deadlocked");
+}
+
+#[test]
+fn a_cancel_inside_a_lua_subscriber_ends_the_write_and_tells_no_one_else() {
+    let cancel = CancelHandle::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .check_interval(100)
+        .build()
+        .unwrap();
+    let stop = rt
+        .lua()
+        .create_function(move |_, ()| {
+            cancel.cancel();
+            Ok(())
+        })
+        .unwrap();
+    rt.lua().globals().set("stop", stop).unwrap();
+    let host = Host::on(rt);
+    let err = host
+        .rt
+        .block_on(host.rt.eval::<()>(
+            "local bridge = require('bridge')
+             local host = require('host')
+             local t = bridge.table()
+             bridge.table.subscribe(t, function() stop() while true do end end)
+             host.watch(t)
+             t.a = 1",
+            "=test",
+        ))
+        .unwrap_err();
+    let Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_cancelled(&err), "{err}");
+    assert_eq!(
+        host.told.get(),
+        "",
+        "a subscriber was told after the cancel"
+    );
 }
 
 // -- What it is --------------------------------------------------------------------------------

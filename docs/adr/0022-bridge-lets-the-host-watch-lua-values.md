@@ -80,7 +80,8 @@ functions, which receive it as a `bridge::Table` or a `bridge::Cell`. Lua owns i
   `c:close()` in Lua, and so does collecting it once Lua holds no reference. Every subscriber is
   then told once that it has closed: subscribing from Lua takes a second function, and a Rust
   subscription a second callback, given no `Lua`, since collection and dropping the runtime are
-  where it may run.
+  where it may run. Collection tells only the Rust callbacks: a Lua one is being collected with
+  the object, and nothing is left in Lua to hear it.
 - **A closed one can be read and not written.** A write raises in Lua and returns an error in
   Rust.
 - **Subscribing gives a way to stop.** Subscribing from Lua returns a handle with `unsubscribe`;

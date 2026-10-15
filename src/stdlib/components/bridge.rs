@@ -18,19 +18,25 @@
 //! [`Table`], is likewise weak: an id it looks up in a weak-valued table, through a `WeakLua`, and
 //! never an `AnyUserData` or an `mlua::Table`, which are registry references too.
 //!
-//! A subscriber is called inside the write, with no lock held, since it may write in turn or
-//! subscribe or unsubscribe, and a Rust subscriber may be running while Lua is mid-call.
+//! A subscriber is called inside the write, under the Lua lock, even when the host writes from
+//! another thread, and with no lock of this module's held, since it may write in turn or subscribe
+//! or unsubscribe. Nor is a subscriber dropped under one, since it may own a subscription whose
+//! drop takes it.
 //!
 //! Nothing here sets a global. [`rust_half`] builds the module's table, and `modules.rs` hands it
 //! to `lua/bridge.lua`, which returns it.
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use mlua::{
-    AnyUserData, FromLua, Function, IntoLua, Lua, MetaMethod, MultiValue, Table as LuaTable,
-    UserData, Value, WeakLua,
+    AnyUserData, FromLua, FromLuaMulti, Function, IntoLua, IntoLuaMulti, Lua, MetaMethod,
+    MultiValue, Table as LuaTable, UserData, Value, WeakLua,
 };
+
+use crate::error::{was_cancelled, was_out_of_memory, was_timed_out};
+use crate::lock::lock;
 
 type Result<T> = mlua::Result<T>;
 
@@ -48,6 +54,15 @@ const PAIRS_ITERATOR: &str = "avarice.bridge.pairs";
 /// Where `rust_half` keeps the weak-valued table through which a [`Table`] finds its userdata: by
 /// the id in its [`TableState`], so that the host's hold does not keep a Bridge table alive.
 const HANDLES: &str = "avarice.bridge.handles";
+
+/// Where `rust_half` keeps the functions through which a [`Table`] reads and writes. Each is called
+/// into Lua, so that the whole of a read, or of a write and the telling of it, runs under the Lua
+/// lock, as one call, even when the host makes it from another thread.
+const HOST_READ: &str = "avarice.bridge.read";
+const HOST_WRITE: &str = "avarice.bridge.write";
+
+// User values, by index. Each userdata numbers its own from 1: `BACKING` and `LUA_SUBSCRIBERS` are
+// a Bridge table's, and `SUBSCRIBED_TO` a subscription handle's.
 
 /// The user value of a Bridge table's userdata that holds its backing table.
 const BACKING: usize = 1;
@@ -71,8 +86,8 @@ fn next_id() -> u64 {
 pub fn rust_half(lua: &Lua) -> Result<Value> {
     let next: Function = lua.globals().raw_get("next")?;
     // `pairs` passes it the userdata as its state, so it is all a script is given.
-    let iterator = lua.create_function(move |_, (this, key): (AnyUserData, Value)| {
-        next.call::<MultiValue>((backing(&this)?, key))
+    let iterator = lua.create_function(move |_, (this, key): (Value, Value)| {
+        next.call::<MultiValue>((backing(&bridge_table(this, TABLE_NAME)?)?, key))
     })?;
     lua.set_named_registry_value(PAIRS_ITERATOR, iterator)?;
 
@@ -81,6 +96,14 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
     weak_values.set("__mode", "v")?;
     handles.set_metatable(Some(weak_values))?;
     lua.set_named_registry_value(HANDLES, handles)?;
+    let read = lua.create_function(|lua, (id, key): (u64, Value)| {
+        backing(&handled(lua, id)?)?.raw_get::<Value>(key)
+    })?;
+    lua.set_named_registry_value(HOST_READ, read)?;
+    let write = lua.create_function(|lua, (id, key, value): (u64, Value, Value)| {
+        self::write(lua, &handled(lua, id)?, key, value)
+    })?;
+    lua.set_named_registry_value(HOST_WRITE, write)?;
 
     let table_fn = lua.create_table()?;
     let table_meta = lua.create_table()?;
@@ -137,23 +160,40 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
     Ok(this)
 }
 
-/// `value` as a Bridge table's userdata, or an error naming `what` was given something else.
-fn bridge_table(value: Value, what: &str) -> Result<AnyUserData> {
+/// `value` as a Bridge table's userdata, or `value` back if it is not one. Everything that takes
+/// a Bridge table from Lua comes through here.
+fn as_bridge_table(value: Value) -> std::result::Result<AnyUserData, Value> {
     match value {
         Value::UserData(this) if this.is::<BridgeTable>() => Ok(this),
-        other => Err(error(format!(
-            "{what}: expected a {TABLE_NAME}, got {}",
-            other.type_name()
-        ))),
+        other => Err(other),
     }
 }
 
-/// The backing table of `this`, which must be a Bridge table's userdata.
+/// `value` as a Bridge table's userdata, or an error naming `what` was given something else.
+fn bridge_table(value: Value, what: &str) -> Result<AnyUserData> {
+    as_bridge_table(value).map_err(|other| {
+        error(format!(
+            "{what}: expected a {TABLE_NAME}, got {}",
+            other.type_name()
+        ))
+    })
+}
+
+/// The backing table of `this`, a Bridge table's userdata from [`bridge_table`].
 fn backing(this: &AnyUserData) -> Result<LuaTable> {
-    if !this.is::<BridgeTable>() {
-        return Err(error(format!("expected a {TABLE_NAME}")));
-    }
     this.nth_user_value(BACKING)
+}
+
+/// The Bridge table a [`Table`] with the id `id` is a handle on, if it has not been collected.
+fn handled(lua: &Lua, id: u64) -> Result<AnyUserData> {
+    let handles: LuaTable = lua.named_registry_value(HANDLES)?;
+    handles
+        .raw_get::<Option<AnyUserData>>(id)?
+        .ok_or_else(collected)
+}
+
+fn collected() -> mlua::Error {
+    error(format!("{TABLE_NAME}: the Bridge table has been collected"))
 }
 
 fn state_of(this: &AnyUserData) -> Result<Arc<TableState>> {
@@ -217,9 +257,15 @@ fn tell(lua: &Lua, this: &AnyUserData, changes: &[Change]) -> Result<()> {
                     list.raw_push(entry)?;
                 }
                 // ADR 0022: the write has succeeded whatever a subscriber does, and the others are
-                // still told. Reported as Astra reports a task's error, but on standard error.
-                if let Err(e) = subscriber.call::<()>(list) {
-                    eprintln!("Error running a {TABLE_NAME} subscriber: {e}");
+                // still told. Reported as Astra reports a task's error, but on standard error. A
+                // limit is not the subscriber failing but the runtime ending the run, so it goes
+                // on out of the write.
+                match subscriber.call::<()>(list) {
+                    Ok(()) => {}
+                    Err(e) if was_cancelled(&e) || was_timed_out(&e) || was_out_of_memory(&e) => {
+                        return Err(e);
+                    }
+                    Err(e) => eprintln!("Error running a {TABLE_NAME} subscriber: {e}"),
                 }
             }
         }
@@ -272,19 +318,22 @@ struct TableState {
 impl TableState {
     /// The subscribers, locked. Never held across a call to one.
     fn subscribers(&self) -> MutexGuard<'_, Vec<(u64, Subscriber)>> {
-        // A panic while it is held leaves it as it was, since nothing runs then but a push or a
-        // retain.
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock(&self.subscribers)
     }
 
     fn is_subscribed(&self, id: u64) -> bool {
         self.subscribers().iter().any(|(each, _)| *each == id)
     }
 
+    /// Removes the subscriber `id`. It is dropped once the lock is released, since a Rust
+    /// subscriber may own a [`Subscription`] to this same table, whose drop takes the lock.
     fn unsubscribe(&self, id: u64) {
-        self.subscribers().retain(|(each, _)| *each != id);
+        let removed = {
+            let mut subscribers = self.subscribers();
+            let at = subscribers.iter().position(|(each, _)| *each == id);
+            at.map(|at| subscribers.remove(at))
+        };
+        drop(removed);
     }
 }
 
@@ -298,19 +347,23 @@ impl UserData for BridgeTable {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_function(MetaMethod::Index, |_, (this, key): (AnyUserData, Value)| {
-            backing(&this)?.raw_get::<Value>(key)
+        // A script can take these out of the metatable and call them with something else, so each
+        // checks what it was given.
+        methods.add_meta_function(MetaMethod::Index, |_, (this, key): (Value, Value)| {
+            backing(&bridge_table(this, TABLE_NAME)?)?.raw_get::<Value>(key)
         });
         methods.add_meta_function(
             MetaMethod::NewIndex,
-            |lua, (this, key, value): (AnyUserData, Value, Value)| write(lua, &this, key, value),
+            |lua, (this, key, value): (Value, Value, Value)| {
+                write(lua, &bridge_table(this, TABLE_NAME)?, key, value)
+            },
         );
-        methods.add_meta_function(MetaMethod::Len, |_, this: AnyUserData| {
-            Ok(backing(&this)?.raw_len())
+        methods.add_meta_function(MetaMethod::Len, |_, this: Value| {
+            Ok(backing(&bridge_table(this, TABLE_NAME)?)?.raw_len())
         });
-        methods.add_meta_function(MetaMethod::Pairs, |lua, this: AnyUserData| {
+        methods.add_meta_function(MetaMethod::Pairs, |lua, this: Value| {
             let iterator: Function = lua.named_registry_value(PAIRS_ITERATOR)?;
-            Ok((iterator, this, Value::Nil))
+            Ok((iterator, bridge_table(this, TABLE_NAME)?, Value::Nil))
         });
         methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
             Ok(format!(
@@ -335,7 +388,18 @@ impl UserData for LuaSubscription {
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         // A second call does nothing.
-        methods.add_function("unsubscribe", |_, handle: AnyUserData| {
+        methods.add_function("unsubscribe", |_, mut values: MultiValue| {
+            const WHAT: &str = "bridge.subscription.unsubscribe";
+            let handle = match values.pop_front().unwrap_or(Value::Nil) {
+                Value::UserData(handle) if handle.is::<LuaSubscription>() => handle,
+                other => {
+                    return Err(error(format!(
+                        "{WHAT}: expected a {SUBSCRIPTION_NAME}, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
+            let [] = args(values, WHAT)?;
             let (state, id) = {
                 let this = handle.borrow::<LuaSubscription>()?;
                 (Arc::clone(&this.state), this.id)
@@ -379,17 +443,14 @@ pub struct Table {
 impl Table {
     /// The value at `key`, as a script's `t[key]` reads it.
     pub fn get<V: FromLua>(&self, key: impl IntoLua) -> Result<V> {
-        let (lua, this) = self.userdata()?;
-        V::from_lua(backing(&this)?.raw_get(key)?, &lua)
+        self.call(HOST_READ, (self.id, key))
     }
 
     /// Writes `value` at `key`, as a script's `t[key] = value` does, and tells every subscriber,
-    /// Lua's included, before it returns.
+    /// Lua's included, before it returns. The write and the telling are one call into Lua, so they
+    /// hold the Lua lock throughout, from whichever thread this is called.
     pub fn set(&self, key: impl IntoLua, value: impl IntoLua) -> Result<()> {
-        let (lua, this) = self.userdata()?;
-        let key = key.into_lua(&lua)?;
-        let value = value.into_lua(&lua)?;
-        write(&lua, &this, key, value)
+        self.call(HOST_WRITE, (self.id, key, value))
     }
 
     /// Calls `subscriber` with every change to the table from now on, until the returned
@@ -417,30 +478,33 @@ impl Table {
         }
     }
 
-    /// The `Lua` and the Bridge table's userdata, if both are still there.
-    fn userdata(&self) -> Result<(Lua, AnyUserData)> {
-        let gone = || error(format!("{TABLE_NAME}: the Bridge table has been collected"));
-        let lua = self.lua.try_upgrade().ok_or_else(gone)?;
-        let handles: LuaTable = lua.named_registry_value(HANDLES)?;
-        let this = handles
-            .raw_get::<Option<AnyUserData>>(self.id)?
-            .ok_or_else(gone)?;
-        Ok((lua, this))
+    /// Calls the function `rust_half` kept at `name`, giving back its own error rather than one
+    /// wrapped as raised in a callback.
+    fn call<R: FromLuaMulti>(&self, name: &str, args: impl IntoLuaMulti) -> Result<R> {
+        let lua = self.lua.try_upgrade().ok_or_else(collected)?;
+        let function: Function = lua.named_registry_value(name)?;
+        function.call(args).map_err(|e| match e {
+            mlua::Error::CallbackError { cause, .. } => Arc::unwrap_or_clone(cause),
+            e => e,
+        })
+    }
+}
+
+impl fmt::Debug for Table {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Table")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
     }
 }
 
 impl FromLua for Table {
     fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
-        let this = match value {
-            Value::UserData(this) if this.is::<BridgeTable>() => this,
-            other => {
-                return Err(mlua::Error::FromLuaConversionError {
-                    from: other.type_name(),
-                    to: "bridge::Table".to_owned(),
-                    message: Some(format!("expected a {TABLE_NAME}")),
-                });
-            }
-        };
+        let this = as_bridge_table(value).map_err(|other| mlua::Error::FromLuaConversionError {
+            from: other.type_name(),
+            to: "bridge::Table".to_owned(),
+            message: Some(format!("expected a {TABLE_NAME}")),
+        })?;
         let state = state_of(&this)?;
         let handles: LuaTable = lua.named_registry_value(HANDLES)?;
         handles.raw_set(state.id, &this)?;
@@ -459,6 +523,14 @@ impl FromLua for Table {
 pub struct Subscription {
     state: Weak<TableState>,
     id: u64,
+}
+
+impl fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Subscription")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Drop for Subscription {
