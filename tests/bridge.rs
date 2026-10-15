@@ -209,6 +209,20 @@ fn ipairs_walks_the_sequence_in_order() {
 }
 
 #[test]
+fn pairs_gives_out_nothing_that_writes_past_the_bridge_table() {
+    // What `pairs` returns is the iterator, its state and the first key. None of them may be a
+    // table that holds the contents, or a write to it would reach them without the Bridge table
+    // knowing.
+    let got: (bool, bool) = eval(
+        "local t = bridge.table({ a = 1 })
+         local _, state = pairs(t)
+         local wrote = pcall(function() rawset(state, 'a', 99) end)
+         return wrote, t.a == 1",
+    );
+    assert_eq!(got, (false, true));
+}
+
+#[test]
 fn pairs_does_not_follow_a_script_that_replaces_next() {
     let got: i64 = eval(
         "local t = bridge.table({ 'a', 'b' })
@@ -292,6 +306,29 @@ fn raw_access_and_type_see_a_userdata() {
          return type(t), pcall(rawget, t, 'a')",
     );
     assert_eq!(got, ("userdata".into(), false));
+}
+
+// -- Collection --------------------------------------------------------------------------------
+
+#[test]
+fn a_bridge_table_that_refers_to_itself_is_collected() {
+    // Made in a function of their own, so that no register of the chunk still holds one.
+    let got: bool = eval(
+        "local weak = setmetatable({}, { __mode = 'v' })
+         local function make()
+             local direct = bridge.table()
+             direct.self = direct
+             local captured = bridge.table()
+             captured.fn = function() return captured end
+             weak.direct, weak.captured = direct, captured
+         end
+         make()
+         assert(weak.direct and weak.captured)
+         collectgarbage()
+         collectgarbage()
+         return weak.direct == nil and weak.captured == nil",
+    );
+    assert!(got, "a Bridge table in a cycle was kept alive");
 }
 
 // -- Who has it --------------------------------------------------------------------------------

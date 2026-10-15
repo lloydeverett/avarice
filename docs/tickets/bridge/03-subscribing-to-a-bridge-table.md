@@ -6,6 +6,13 @@ an array of `{ key, old, new }` and a handle with `unsubscribe()`. Rust receives
 function as `bridge::Table` (via `FromLua`), subscribes with `Fn(&Lua, &[bridge::Change])`, gets a
 guard that unsubscribes on drop, and can read and write the table, which tells Lua's subscribers.
 
+Where things live (see the header of `src/stdlib/components/bridge.rs`): Lua subscriber functions
+are stored in a user value of the Bridge table's userdata, as the backing table is, and not in Rust
+state, so that a subscriber that captures its own table can still be collected. The host's
+`bridge::Table` holds the object weakly, for example as an id it looks up in a weak-valued table
+through a `WeakLua`, and never as an `AnyUserData` or `mlua::Table`, which are registry references
+and so keep it alive.
+
 **Blocked by:** 02
 
 **Status:** ready-for-agent

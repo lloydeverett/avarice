@@ -1,11 +1,22 @@
 //! `bridge` is original to avarice, not derived from Astra: ADR 0022 records why. It gives Lua a
 //! **Bridge table**, a value a script writes and reads as a Lua table, which the host can watch.
 //!
-//! A Bridge table is a userdata that is a thin handle on shared state, which holds its contents in
-//! an ordinary Lua table, its backing table. Its metamethods reach the backing table and nothing
-//! else, and it has no methods, so every key is the script's: whatever is done to one besides
-//! reading and writing it is a function of `bridge.table`, taking it first. `__pairs` and `__len`
-//! make `pairs`, `ipairs`, `#` and the `table` library work on it as on a table.
+//! A Bridge table is a userdata whose contents are an ordinary Lua table, its backing table. Its
+//! metamethods reach the backing table and nothing else, and it has no methods, so every key is
+//! the script's: whatever is done to one besides reading and writing it is a function of
+//! `bridge.table`, taking it first. `__pairs` and `__len` make `pairs`, `ipairs`, `#` and the
+//! `table` library work on it as on a table, and the backing table itself never reaches a script,
+//! which could otherwise write past the Bridge table.
+//!
+//! Where each part lives is decided by the garbage collector. ADR 0022 has Lua own a Bridge table,
+//! collected once Lua holds no reference to it, and a script will store one in itself, or in a
+//! closure stored in itself. So whatever is Lua's lives in Lua, as the userdata's user values,
+//! which the collector traces: the backing table now, and Lua's subscribers when there are any. A
+//! Lua value held from Rust is a registry reference, which the collector treats as a root, so a
+//! Bridge table holding itself through one would never be collected. Rust holds only what is not
+//! Lua's, in [`TableState`]. The host's handle on a Bridge table must likewise be weak: something
+//! like an id it looks up in a weak-valued table, through a `WeakLua`, and never an `AnyUserData`
+//! or an `mlua::Table`, which are registry references too.
 //!
 //! Nothing here sets a global. [`rust_half`] builds the module's table, and `modules.rs` hands it
 //! to `lua/bridge.lua`, which returns it.
@@ -19,18 +30,26 @@ type Result<T> = mlua::Result<T>;
 /// The name a Bridge table gives itself, as its `__name` and in `tostring`.
 const TABLE_NAME: &str = "bridge.table";
 
-/// Where `rust_half` keeps Lua's `next`, for `__pairs` to give. Taken when the module is built, so
-/// that a script that later replaces the global `next` does not change how a Bridge table walks.
-const NEXT: &str = "avarice.bridge.next";
+/// Where `rust_half` keeps the iterator `__pairs` gives, which walks a Bridge table's backing table
+/// with the `next` there was when the module was built, so that a script that later replaces the
+/// global `next` does not change how a Bridge table walks.
+const PAIRS_ITERATOR: &str = "avarice.bridge.pairs";
+
+/// The user value of a Bridge table's userdata that holds its backing table.
+const BACKING: usize = 1;
 
 /// Builds the module's table: `bridge.table`, a table whose `__call` makes a Bridge table.
 pub fn rust_half(lua: &Lua) -> Result<Value> {
     let next: Function = lua.globals().raw_get("next")?;
-    lua.set_named_registry_value(NEXT, next)?;
+    // `pairs` passes it the userdata as its state, so it is all a script is given.
+    let iterator = lua.create_function(move |_, (this, key): (AnyUserData, Value)| {
+        next.call::<MultiValue>((backing(&this)?, key))
+    })?;
+    lua.set_named_registry_value(PAIRS_ITERATOR, iterator)?;
 
-    let table = lua.create_table()?;
-    let make = lua.create_table()?;
-    make.set(
+    let table_fn = lua.create_table()?;
+    let table_meta = lua.create_table()?;
+    table_meta.set(
         "__call",
         lua.create_function(|lua, mut values: MultiValue| {
             // The first is `bridge.table` itself.
@@ -39,10 +58,10 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
             make_table(lua, init)
         })?,
     )?;
-    table.set_metatable(Some(make))?;
+    table_fn.set_metatable(Some(table_meta))?;
 
     let module = lua.create_table()?;
-    module.set("table", table)?;
+    module.set("table", table_fn)?;
     Ok(Value::Table(module))
 }
 
@@ -59,18 +78,29 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
             )));
         }
     }
-    let state = Arc::new(TableState { backing });
-    lua.create_userdata(BridgeTable(state))
+    let this = lua.create_userdata(BridgeTable(Arc::new(TableState {})))?;
+    this.set_nth_user_value(BACKING, backing)?;
+    Ok(this)
 }
 
-/// What a Bridge table is: its backing table. The userdata, and later the host's handles, are
-/// handles on this.
-struct TableState {
-    backing: Table,
+/// The backing table of `this`, which must be a Bridge table's userdata.
+fn backing(this: &AnyUserData) -> Result<Table> {
+    if !this.is::<BridgeTable>() {
+        return Err(error(format!("expected a {TABLE_NAME}")));
+    }
+    this.nth_user_value(BACKING)
 }
 
-/// The userdata Lua holds a Bridge table as.
-struct BridgeTable(Arc<TableState>);
+/// The part of a Bridge table that is not Lua's, shared between its userdata and, later, the
+/// host's handles. It holds no Lua value, for the reasons the module's header gives: the backing
+/// table is a user value of the userdata. It will hold whether the table is closed, the Rust
+/// subscribers and the batch depth.
+struct TableState {}
+
+/// The userdata Lua holds a Bridge table as. Its first user value is the backing table.
+// Nothing reads the state until there is something in it: subscribing and closing (tickets 03 and
+// 05).
+struct BridgeTable(#[allow(dead_code)] Arc<TableState>);
 
 impl UserData for BridgeTable {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
@@ -78,25 +108,27 @@ impl UserData for BridgeTable {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method(MetaMethod::Index, |_, this, key: Value| {
-            this.0.backing.raw_get::<Value>(key)
+        methods.add_meta_function(MetaMethod::Index, |_, (this, key): (AnyUserData, Value)| {
+            backing(&this)?.raw_get::<Value>(key)
         });
-        methods.add_meta_method(
+        methods.add_meta_function(
             MetaMethod::NewIndex,
-            |_, this, (key, value): (Value, Value)| {
+            |_, (this, key, value): (AnyUserData, Value, Value)| {
                 // As a table would. mlua leaves these to Lua, which in a build with its API checks
                 // on asserts rather than raising.
                 match key {
                     Value::Nil => Err(error("index is nil".to_owned())),
                     Value::Number(n) if n.is_nan() => Err(error("index is NaN".to_owned())),
-                    key => this.0.backing.raw_set(key, value),
+                    key => backing(&this)?.raw_set(key, value),
                 }
             },
         );
-        methods.add_meta_method(MetaMethod::Len, |_, this, ()| Ok(this.0.backing.raw_len()));
-        methods.add_meta_method(MetaMethod::Pairs, |lua, this, ()| {
-            let next: Function = lua.named_registry_value(NEXT)?;
-            Ok((next, this.0.backing.clone(), Value::Nil))
+        methods.add_meta_function(MetaMethod::Len, |_, this: AnyUserData| {
+            Ok(backing(&this)?.raw_len())
+        });
+        methods.add_meta_function(MetaMethod::Pairs, |lua, this: AnyUserData| {
+            let iterator: Function = lua.named_registry_value(PAIRS_ITERATOR)?;
+            Ok((iterator, this, Value::Nil))
         });
         methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
             Ok(format!(

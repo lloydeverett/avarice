@@ -15,4 +15,6 @@ closes the table the same way, through the userdata's Rust `Drop`.
 - [ ] After close, writes raise in Lua and return an error in Rust; reads and `pairs` work
 - [ ] A table Lua no longer references is closed by a full collection, even while Rust holds a
       `bridge::Table` and a subscription
+- [ ] A Bridge table that refers to itself, or is captured by its own Lua subscriber, is collected
+      and closed
 - [ ] Dropping the runtime with an open table runs close callbacks without panicking
