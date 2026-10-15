@@ -8,10 +8,10 @@ for a Bridge table.
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `bridge.cell()` starts at nil, `bridge.cell(v)` at `v`; `get`/`set`/`update` work
-- [ ] Every `set`, including of a `rawequal` value, tells Lua and Rust subscribers `(old, new)`
-- [ ] Lua subscriber errors, re-entrancy and unsubscribing behave as for a Bridge table
-- [ ] Closing and collection behave as for a Bridge table
-- [ ] `__tostring` gives `bridge.cell: 0x...`
+- [x] `bridge.cell()` starts at nil, `bridge.cell(v)` at `v`; `get`/`set`/`update` work
+- [x] Every `set`, including of a `rawequal` value, tells Lua and Rust subscribers `(old, new)`
+- [x] Lua subscriber errors, re-entrancy and unsubscribing behave as for a Bridge table
+- [x] Closing and collection behave as for a Bridge table
+- [x] `__tostring` gives `bridge.cell: 0x...`

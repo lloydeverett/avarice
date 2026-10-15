@@ -2,7 +2,8 @@
 --
 -- Values a script writes and reads that the host can watch. A Bridge table is written and read as
 -- a Lua table is: `t.k = v`, `t[k]`, `#t`, `pairs`, `ipairs` and the `table` library all work on
--- it, and every key is the script's. `type`, `next`, `rawget` and `rawset` see a userdata.
+-- it, and every key is the script's. `type`, `next`, `rawget` and `rawset` see a userdata. A Bridge
+-- cell holds one value, replaced whole, and has methods.
 
 ---@meta
 
@@ -23,7 +24,7 @@ bridge.table = {}
 ---@field old any
 ---@field new any
 
----What `bridge.table.subscribe` gives back.
+---What `bridge.table.subscribe` and a Bridge cell's `subscribe` give back.
 ---@class bridge.Subscription
 local Subscription = {}
 
@@ -79,6 +80,48 @@ function bridge.table.insert(t, pos, value) end
 ---@param pos integer?
 ---@return any
 function bridge.table.remove(t, pos) end
+
+---A Bridge cell: one value, replaced whole.
+---@class bridge.Cell
+local Cell = {}
+
+---Makes a Bridge cell holding `value`, or nil.
+---@param value any
+---@return bridge.Cell
+function bridge.cell(value) end
+
+---The value the cell holds. It still works once the cell is closed.
+---@return any
+function Cell:get() end
+
+---Replaces the value the cell holds with `value`, and tells every subscriber, even when `value` is
+---the value it held, so that a table changed in place can be set again to say so. On a closed
+---cell it raises.
+---@param value any
+function Cell:set(value) end
+
+---Sets the value to `fn(old)`, the first value `fn` gives, as `set` does. If `fn` raises, nothing
+---is set and the error is raised again. `fn` cannot yield, and on a closed cell it is not called
+---and this raises.
+---@param fn fun(old: any): any
+function Cell:update(fn) end
+
+---Calls `fn(old, new)` on every set of the cell from now on, inside the set, once the value is in
+---place, and `on_close`, if it is given, once when the cell is closed. A subscriber that raises
+---does not fail the set or the close: its error goes to standard error, and the other subscribers
+---are still told. Subscribing to a closed cell raises.
+---
+---`on_close` is called only when the cell is closed by `close` or by the host. A cell collected
+---unclosed takes `on_close` with it, uncalled.
+---@param fn fun(old: any, new: any)
+---@param on_close fun()?
+---@return bridge.Subscription
+function Cell:subscribe(fn, on_close) end
+
+---Closes the cell, calling every subscriber's `on_close`, Lua's and the host's, once, in the order
+---they subscribed. A closed cell can still be read with `get`, but `set`, `update` and `subscribe`
+---raise. Closing it again does nothing.
+function Cell:close() end
 
 -- Everything above is for LuaLS. What runs is this: the Rust half hands the module over as a value
 -- (see `components/bridge/mod.rs`), and this file returns it.

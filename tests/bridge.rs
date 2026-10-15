@@ -541,6 +541,15 @@ impl Told {
             .push(format!("[{}]", parts.join(",")));
     }
 
+    /// Records a Bridge cell's set, as `old>new`.
+    fn record_set(&self, old: &Value, new: &Value) {
+        let shown = |v: &Value| v.to_string().unwrap();
+        self.0
+            .lock()
+            .unwrap()
+            .push(format!("{}>{}", shown(old), shown(new)));
+    }
+
     /// Records that the table closed, as `closed`.
     fn closed(&self) {
         self.0.lock().unwrap().push("closed".to_owned());
@@ -2123,6 +2132,706 @@ fn a_close_callback_panicking_in_collection_or_runtime_drop_is_reported_and_the_
         2,
         "{stderr}"
     );
+}
+
+// -- A Bridge cell ----------------------------------------------------------------------------
+
+#[test]
+fn bridge_cell_starts_at_nil_or_at_the_value_given_and_set_replaces_it() {
+    let got: (bool, i64, String) = eval(
+        "local empty, cell = bridge.cell(), bridge.cell(1)
+         local before = cell:get()
+         cell:set('two')
+         return empty:get() == nil, before, cell:get()",
+    );
+    assert_eq!(got, (true, 1, "two".into()));
+}
+
+#[test]
+fn update_sets_what_fn_gives_for_the_old_value() {
+    let got: (i64, i64) = eval(
+        "local cell = bridge.cell(20)
+         cell:update(function(old) return old + 1 end)
+         local first = cell:get()
+         cell:update(function(old) return old * 2, 'ignored' end)
+         return first, cell:get()",
+    );
+    assert_eq!(got, (21, 42));
+}
+
+/// Lua that defines `record(old, new)`, which appends `old>new` to `log`, nil shown as `nil`, and
+/// `told()`, which gives the log joined with spaces.
+const RECORD_CELL: &str = "
+    local log = {}
+    local function record(old, new) log[#log + 1] = tostring(old) .. '>' .. tostring(new) end
+    local function told() return table.concat(log, ' ') end
+";
+
+#[test]
+fn every_set_tells_a_lua_subscriber_old_and_new_even_of_the_same_value() {
+    let got: (String, String) = eval(&format!(
+        "{RECORD_CELL}
+         local cell = bridge.cell(1)
+         local inner = {{}}
+         local seen
+         cell:subscribe(function(old, new) record(old, new) seen = cell:get() end)
+         cell:set(2)
+         cell:set(2)
+         cell:set(nil)
+         cell:set(inner)
+         cell:set(inner)
+         cell:update(function(old) return 'u' end)
+         return told():gsub('table: 0x%x+', 'inner'), seen"
+    ));
+    assert_eq!(
+        got,
+        (
+            "1>2 2>2 2>nil nil>inner inner>inner inner>u".into(),
+            "u".into()
+        )
+    );
+}
+
+#[test]
+fn update_whose_fn_raises_raises_it_again_as_it_is_and_changes_nothing() {
+    let got: (bool, String, i64, String) = eval(&format!(
+        "{RECORD_CELL}
+         local cell = bridge.cell(1)
+         cell:subscribe(record)
+         local raised = {{ code = 7 }}
+         local ok, err = pcall(cell.update, cell, function() error(raised) end)
+         return rawequal(err, raised), tostring(ok), cell:get(), told()"
+    ));
+    assert_eq!(got, (true, "false".into(), 1, String::new()));
+}
+
+#[test]
+fn a_cancel_inside_update_ends_it_as_a_cancel_and_sets_nothing() {
+    let cancel = CancelHandle::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .check_interval(100)
+        .build()
+        .unwrap();
+    let stop = {
+        let cancel = cancel.clone();
+        rt.lua()
+            .create_function(move |_, ()| {
+                cancel.cancel();
+                Ok(())
+            })
+            .unwrap()
+    };
+    rt.lua().globals().set("stop", stop).unwrap();
+    let err = rt
+        .block_on(rt.eval::<()>(
+            "local bridge = require('bridge')
+             held = bridge.cell(1)
+             told = false
+             held:subscribe(function() told = true end)
+             held:update(function() stop() while true do end end)",
+            "=test",
+        ))
+        .unwrap_err();
+    let Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_cancelled(&err), "{err}");
+    let told: bool = rt.lua().globals().get("told").unwrap();
+    assert!(!told, "a subscriber was told after the cancel");
+    cancel.reset();
+    assert_eq!(eval_in::<i64>(&rt, "return held:get()"), 1);
+}
+
+#[test]
+fn update_whose_fn_yields_raises_that_it_cannot() {
+    let got: (bool, String) = eval(
+        "local cell = bridge.cell(1)
+         local co = coroutine.wrap(function()
+             return pcall(cell.update, cell, function(old) coroutine.yield() return old end)
+         end)
+         local ok, err = co()
+         return ok, tostring(err)",
+    );
+    assert!(!got.0);
+    assert!(
+        got.1.contains("bridge.cell.update: fn cannot yield"),
+        "{}",
+        got.1
+    );
+}
+
+#[test]
+fn a_cell_subscriber_that_sets_has_its_set_told_to_everyone_before_the_one_it_was_told_of() {
+    let got: (String, i64) = eval(&format!(
+        "{RECORD_CELL}
+         local cell = bridge.cell(0)
+         cell:subscribe(function(old, new) if new > 10 then cell:set(10) end end)
+         cell:subscribe(record)
+         cell:set(50)
+         return told(), cell:get()"
+    ));
+    assert_eq!(got, ("50>10 0>50".into(), 10));
+}
+
+#[test]
+fn a_cell_subscriber_added_or_removed_while_a_set_is_told_hears_only_later_ones() {
+    let got: String = eval(&format!(
+        "{RECORD_CELL}
+         local cell = bridge.cell(0)
+         local late
+         cell:subscribe(function(old, new)
+             if new == 1 then
+                 late = cell:subscribe(function(o, n) record('late ' .. o, n) end)
+             elseif new == 3 then
+                 late:unsubscribe()
+             end
+         end)
+         local handle = cell:subscribe(record)
+         cell:set(1)
+         cell:set(2)
+         handle:unsubscribe()
+         cell:set(3)
+         cell:set(4)
+         return told()"
+    ));
+    assert_eq!(got, "0>1 1>2 late 1>2");
+}
+
+#[test]
+fn a_lua_cell_subscriber_that_raises_does_not_fail_the_set_or_starve_the_rest() {
+    // Run again as a child of its own, to read what it writes to standard error.
+    const CHILD: &str = "AVARICE_BRIDGE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let got: (String, i64) = eval(&format!(
+            "{RECORD_CELL}
+             local cell = bridge.cell()
+             cell:subscribe(function() error('the cell subscriber broke') end)
+             cell:subscribe(record)
+             cell:set(1)
+             return told(), cell:get()"
+        ));
+        assert_eq!(got, ("nil>1".into(), 1));
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_lua_cell_subscriber_that_raises_does_not_fail_the_set_or_starve_the_rest",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("1 passed"),
+        "the child ran no test: {stdout}"
+    );
+    assert!(
+        stderr.contains("Error running a bridge.cell subscriber")
+            && stderr.contains("the cell subscriber broke"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn cell_methods_check_their_arguments() {
+    for (call, expected) in [
+        (
+            "bridge.cell(1, 2)",
+            "bridge.cell: expected at most 1 argument, got 2",
+        ),
+        (
+            "bridge.cell().get({})",
+            "bridge.cell.get: expected a bridge.cell, got table",
+        ),
+        (
+            "bridge.cell():get(1)",
+            "bridge.cell.get: expected no arguments, got 1",
+        ),
+        (
+            "bridge.cell().set(bridge.table(), 1)",
+            "bridge.cell.set: expected a bridge.cell, got userdata",
+        ),
+        (
+            "bridge.cell():set(1, 2)",
+            "bridge.cell.set: expected at most 1 argument, got 2",
+        ),
+        (
+            "bridge.cell():update('x')",
+            "bridge.cell.update: expected a function, got string",
+        ),
+        (
+            "bridge.cell().update(nil, print)",
+            "bridge.cell.update: expected a bridge.cell, got nil",
+        ),
+        (
+            "bridge.cell():subscribe('x')",
+            "bridge.cell.subscribe: expected a function, got string",
+        ),
+        (
+            "bridge.cell():subscribe(print, 'x')",
+            "bridge.cell.subscribe: expected a function for on_close, got string",
+        ),
+        (
+            "bridge.cell():subscribe(print, print, 1)",
+            "bridge.cell.subscribe: expected at most 2 arguments, got 3",
+        ),
+        (
+            "bridge.cell().close(true)",
+            "bridge.cell.close: expected a bridge.cell, got boolean",
+        ),
+        (
+            "bridge.cell():close(1)",
+            "bridge.cell.close: expected no arguments, got 1",
+        ),
+    ] {
+        let message = raises(call);
+        assert!(message.contains(expected), "{call}: {message}");
+    }
+}
+
+#[test]
+fn a_bridge_cell_names_itself_and_gives_an_address() {
+    let got: (String, String, bool) = eval(
+        "local c, d = bridge.cell(), bridge.cell()
+         return type(c), tostring(c), tostring(c) ~= tostring(d)",
+    );
+    assert_eq!(got.0, "userdata");
+    assert!(got.1.starts_with("bridge.cell: 0x"), "{}", got.1);
+    assert!(got.2, "two Bridge cells have the same address");
+}
+
+#[test]
+fn closing_a_cell_runs_each_lua_close_callback_once_and_a_second_close_does_nothing() {
+    let got: String = eval(
+        "local log = {}
+         local cell = bridge.cell()
+         cell:subscribe(print, function() log[#log + 1] = 'first' end)
+         cell:subscribe(print)
+         cell:subscribe(print, function() log[#log + 1] = 'second' end)
+         cell:close()
+         cell:close()
+         return table.concat(log, ' ')",
+    );
+    assert_eq!(got, "first second");
+}
+
+#[test]
+fn a_closed_cell_can_be_read_and_refuses_set_update_and_subscribe() {
+    let got: (i64, String) = eval(
+        "local cell = bridge.cell(1)
+         local called = false
+         cell:subscribe(function() called = true end)
+         cell:close()
+         local refused = {}
+         for _, try in ipairs({
+             function() cell:set(2) end,
+             function() cell:update(function() called = true return 3 end) end,
+             function() cell:subscribe(print) end,
+         }) do
+             local ok, err = pcall(try)
+             local refusal = tostring(err):match('bridge[%w.]+: the Bridge cell is closed')
+             refused[#refused + 1] = ok and 'allowed' or refusal
+         end
+         assert(not called, 'something was called after the close')
+         return cell:get(), table.concat(refused, ', ')",
+    );
+    assert_eq!(
+        got,
+        (
+            1,
+            "bridge.cell.set: the Bridge cell is closed, \
+             bridge.cell.update: the Bridge cell is closed, \
+             bridge.cell.subscribe: the Bridge cell is closed"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn a_cell_closed_while_a_set_is_told_lets_every_subscriber_hear_it_then_tells_the_close() {
+    let got: String = eval(
+        "local log = {}
+         local cell = bridge.cell(0)
+         cell:subscribe(function(old, new)
+             log[#log + 1] = 'A:' .. new
+             cell:close()
+             local ok = pcall(cell.set, cell, 2)
+             log[#log + 1] = ok and 'set' or 'refused'
+         end, function() log[#log + 1] = 'A closed' end)
+         cell:subscribe(function(old, new)
+             log[#log + 1] = 'B:' .. new
+         end, function() log[#log + 1] = 'B closed' end)
+         cell:set(1)
+         return table.concat(log, ', ')",
+    );
+    assert_eq!(got, "A:1, refused, B:1, A closed, B closed");
+}
+
+#[test]
+fn a_bridge_cell_holding_itself_or_captured_by_its_subscriber_is_collected() {
+    let got: bool = eval(
+        "local weak = setmetatable({}, { __mode = 'k' })
+         local function make()
+             local direct = bridge.cell()
+             direct:set(direct)
+             local captured = bridge.cell()
+             local handle
+             handle = captured:subscribe(function() return captured, handle end,
+                 function() return captured end)
+             weak[direct], weak[captured] = true, true
+         end
+         make()
+         assert(next(weak))
+         collectgarbage()
+         collectgarbage()
+         return next(weak) == nil",
+    );
+    assert!(got, "a Bridge cell in a cycle was kept alive");
+}
+
+// -- A Bridge cell from Rust ------------------------------------------------------------------
+
+/// A host module of the test's own, `host`, which receives Bridge cells from the script, as
+/// [`Host`] does Bridge tables: `host.watch(c)` subscribes, recording each set into `told` as
+/// `old>new`, its close as `closed`; `host.unwatch()` drops every subscription; `host.keep(c)`
+/// keeps a handle; `host.set(v)`, `host.get()` and `host.close()` set, get and close through the
+/// last one kept or watched.
+struct CellHost {
+    rt: Runtime,
+    told: Told,
+    kept: Arc<Mutex<Option<bridge::Cell>>>,
+    subscriptions: Arc<Mutex<Vec<bridge::Subscription>>>,
+}
+
+impl CellHost {
+    fn new() -> Self {
+        let host = CellHost {
+            rt: Runtime::new(Profile::Trusted).unwrap(),
+            told: Told::default(),
+            kept: Arc::default(),
+            subscriptions: Arc::default(),
+        };
+        let lua = host.rt.lua();
+        let module = lua.create_table().unwrap();
+        let (told, kept, subscriptions) = (
+            host.told.clone(),
+            Arc::clone(&host.kept),
+            Arc::clone(&host.subscriptions),
+        );
+        let watch = lua
+            .create_function(move |_, c: bridge::Cell| {
+                let (on_set, on_close) = (told.clone(), told.clone());
+                let subscription = c.subscribe_with_close(
+                    move |_, old, new| on_set.record_set(&old, &new),
+                    move || on_close.closed(),
+                );
+                subscriptions.lock().unwrap().push(subscription);
+                *kept.lock().unwrap() = Some(c);
+                Ok(())
+            })
+            .unwrap();
+        module.set("watch", watch).unwrap();
+        let subscriptions = Arc::clone(&host.subscriptions);
+        let unwatch = lua
+            .create_function(move |_, ()| {
+                subscriptions.lock().unwrap().clear();
+                Ok(())
+            })
+            .unwrap();
+        module.set("unwatch", unwatch).unwrap();
+        let kept = Arc::clone(&host.kept);
+        let keep = lua
+            .create_function(move |_, c: bridge::Cell| {
+                *kept.lock().unwrap() = Some(c);
+                Ok(())
+            })
+            .unwrap();
+        module.set("keep", keep).unwrap();
+        let kept = Arc::clone(&host.kept);
+        let set = lua
+            .create_function(move |_, v: Value| kept.lock().unwrap().clone().unwrap().set(v))
+            .unwrap();
+        module.set("set", set).unwrap();
+        let kept = Arc::clone(&host.kept);
+        let get = lua
+            .create_function(move |_, ()| kept.lock().unwrap().clone().unwrap().get::<Value>())
+            .unwrap();
+        module.set("get", get).unwrap();
+        let kept = Arc::clone(&host.kept);
+        let close = lua
+            .create_function(move |_, ()| kept.lock().unwrap().clone().unwrap().close())
+            .unwrap();
+        module.set("close", close).unwrap();
+        host.rt.register_module("host", module).unwrap();
+        host
+    }
+
+    fn eval<R: mlua::FromLuaMulti>(&self, body: &str) -> R {
+        eval_in(&self.rt, &format!("local host = require('host')\n{body}"))
+    }
+
+    /// The handle `host` last kept, from outside any Lua call.
+    fn kept(&self) -> bridge::Cell {
+        self.kept.lock().unwrap().clone().unwrap()
+    }
+}
+
+#[test]
+fn a_host_function_receives_a_bridge_cell_and_is_told_every_set_as_old_and_new() {
+    let host = CellHost::new();
+    host.eval::<()>(
+        "local cell = bridge.cell(1)
+         host.watch(cell)
+         cell:set(2)
+         cell:set(2)
+         cell:update(function(old) return old .. '!' end)
+         cell:set(nil)",
+    );
+    assert_eq!(host.told.get(), "1>2 2>2 2>2! 2!>nil");
+}
+
+#[test]
+fn a_host_function_refuses_what_is_not_a_bridge_cell() {
+    let host = CellHost::new();
+    let message: String = host.eval(
+        "local ok, err = pcall(host.watch, bridge.table())
+         assert(not ok)
+         return tostring(err)",
+    );
+    assert!(message.contains("bridge::Cell"), "{message}");
+}
+
+#[test]
+fn a_set_from_rust_tells_lua_subscribers_inside_that_call_and_rust_ones_too() {
+    let host = CellHost::new();
+    let got: (String, String, String) = host.eval(&format!(
+        "{RECORD_CELL}
+         local cell = bridge.cell()
+         host.watch(cell)
+         cell:subscribe(record)
+         host.set('v')
+         cell:set('w')
+         return told(), cell:get(), host.get()"
+    ));
+    assert_eq!(got, ("nil>v v>w".into(), "w".into(), "w".into()));
+    assert_eq!(host.told.get(), "nil>v v>w");
+}
+
+#[test]
+fn a_set_from_another_thread_tells_lua_and_rust_subscribers() {
+    let host = CellHost::new();
+    host.eval::<()>(&format!(
+        "{RECORD_CELL}
+         log_of = told
+         held = bridge.cell(1)
+         host.watch(held)
+         held:subscribe(record)"
+    ));
+    let cell = host.kept();
+    std::thread::spawn(move || cell.set(3).unwrap())
+        .join()
+        .unwrap();
+    let got: String = host.eval("return log_of()");
+    assert_eq!(got, "1>3");
+    assert_eq!(host.told.get(), "1>3");
+    assert_eq!(host.kept().get::<i64>().unwrap(), 3);
+}
+
+#[test]
+fn a_rust_cell_subscriber_may_set_the_cell_it_is_told_of() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let subscriptions: Arc<Mutex<Vec<bridge::Subscription>>> = Arc::default();
+    let clamp = rt
+        .lua()
+        .create_function(move |_, c: bridge::Cell| {
+            let handle = c.clone();
+            let subscription = c.subscribe(move |_, _, new| {
+                if let Value::Integer(n) = new
+                    && n > 10
+                {
+                    handle.set(10).unwrap();
+                }
+            });
+            subscriptions.lock().unwrap().push(subscription);
+            Ok(())
+        })
+        .unwrap();
+    let module = rt.lua().create_table().unwrap();
+    module.set("clamp", clamp).unwrap();
+    rt.register_module("host", module).unwrap();
+    let got: (i64, String) = eval_in(
+        &rt,
+        &format!(
+            "{RECORD_CELL}
+             local cell = bridge.cell(0)
+             require('host').clamp(cell)
+             cell:subscribe(record)
+             cell:set(50)
+             return cell:get(), told()"
+        ),
+    );
+    assert_eq!(got, (10, "50>10 0>50".into()));
+}
+
+#[test]
+fn dropping_the_rust_cell_subscription_stops_its_notifications() {
+    let host = CellHost::new();
+    host.eval::<()>(
+        "local cell = bridge.cell()
+         host.watch(cell)
+         cell:set(1)
+         host.unwatch()
+         cell:set(2)
+         cell:close()",
+    );
+    assert_eq!(host.told.get(), "nil>1");
+}
+
+#[test]
+fn closing_a_cell_from_rust_tells_lua_and_rust_in_the_order_they_subscribed() {
+    let host = CellHost::new();
+    let got: (String, String, i64) = host.eval(
+        "local log = {}
+         local cell = bridge.cell(1)
+         cell:subscribe(print, function() log[#log + 1] = 'lua first' end)
+         host.watch(cell)
+         cell:subscribe(print, function() log[#log + 1] = 'lua last' end)
+         host.close()
+         host.close()
+         local ok, err = pcall(host.set, 2)
+         return table.concat(log, ' '), tostring(err), host.get()",
+    );
+    assert_eq!(got.0, "lua first lua last");
+    assert!(
+        got.1.contains("bridge.cell: the Bridge cell is closed"),
+        "{}",
+        got.1
+    );
+    assert_eq!(got.2, 1);
+    assert_eq!(host.told.get(), "closed");
+    let message = host.kept().set(3).unwrap_err().to_string();
+    assert!(message.contains("the Bridge cell is closed"), "{message}");
+}
+
+#[test]
+fn closing_a_cell_from_lua_tells_rust_and_subscribing_after_tells_the_close_at_once() {
+    let host = CellHost::new();
+    host.eval::<()>(
+        "local cell = bridge.cell()
+         host.watch(cell)
+         cell:close()
+         host.unwatch()
+         host.watch(cell)",
+    );
+    assert_eq!(host.told.get(), "closed closed");
+}
+
+#[test]
+fn collection_closes_a_bridge_cell_the_host_holds_telling_only_rust_close_callbacks() {
+    let host = CellHost::new();
+    let got: bool = host.eval(
+        "lua_told = false
+         local weak = setmetatable({}, { __mode = 'k' })
+         local function make()
+             local cell = bridge.cell(1)
+             host.watch(cell)
+             cell:subscribe(print, function() lua_told = true end)
+             weak[cell] = true
+         end
+         make()
+         collectgarbage()
+         collectgarbage()
+         assert(next(weak) == nil, 'the host kept the Bridge cell alive')
+         return lua_told",
+    );
+    assert!(!got, "a Lua close callback was called by collection");
+    assert_eq!(host.told.get(), "closed");
+    let message = host.kept().set(2).unwrap_err().to_string();
+    assert!(message.contains("collected"), "{message}");
+    assert!(host.kept().get::<Value>().is_err());
+    host.kept().close().unwrap();
+    assert_eq!(host.told.get(), "closed", "closing it again told it again");
+}
+
+#[test]
+fn a_cell_close_callback_run_by_collection_cannot_call_into_lua() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let reached: Reached = Arc::default();
+    let subscriptions: Held = Arc::default();
+    let tangle = {
+        let (reached, subscriptions) = (Arc::clone(&reached), Arc::clone(&subscriptions));
+        rt.lua()
+            .create_function(move |_, (c, other): (bridge::Cell, bridge::Cell)| {
+                let reached = Arc::clone(&reached);
+                let reaching = c.subscribe_with_close(
+                    |_, _, _| {},
+                    move || {
+                        let shown = |e: mlua::Error| e.to_string();
+                        let mut reached = reached.lock().unwrap();
+                        reached.push(other.set(1).map_err(shown).err().unwrap_or_default());
+                        reached.push(
+                            other
+                                .get::<Value>()
+                                .map_err(shown)
+                                .err()
+                                .unwrap_or_default(),
+                        );
+                        reached.push(other.close().map_err(shown).err().unwrap_or_default());
+                    },
+                );
+                subscriptions.lock().unwrap().push(reaching);
+                Ok(())
+            })
+            .unwrap()
+    };
+    let module = rt.lua().create_table().unwrap();
+    module.set("tangle", tangle).unwrap();
+    rt.register_module("host", module).unwrap();
+    let other_told: String = eval_in(
+        &rt,
+        "local log = {}
+         other = bridge.cell()
+         other:subscribe(function() log[#log + 1] = 'told' end)
+         local function make() require('host').tangle(bridge.cell(), other) end
+         make()
+         collectgarbage()
+         collectgarbage()
+         return table.concat(log, ' ')",
+    );
+    assert_eq!(other_told, "", "a script subscriber ran inside collection");
+    let reached = reached.lock().unwrap();
+    assert_eq!(reached.len(), 3, "the close callback did not run");
+    for got in reached.iter() {
+        assert!(
+            got.contains("a Bridge cell cannot be used from a close callback run by collection"),
+            "{got}"
+        );
+    }
+}
+
+#[test]
+fn dropping_the_runtime_with_an_open_bridge_cell_runs_its_rust_close_callbacks() {
+    let host = CellHost::new();
+    host.eval::<()>(
+        "held = bridge.cell(1)
+         host.watch(held)
+         held:subscribe(print, function() error('not to be called') end)",
+    );
+    let CellHost {
+        rt,
+        told,
+        subscriptions,
+        ..
+    } = host;
+    drop(rt);
+    assert_eq!(told.get(), "closed");
+    drop(subscriptions);
 }
 
 // -- Who has it --------------------------------------------------------------------------------

@@ -1,7 +1,8 @@
-//! `bridge` is original to avarice, not derived from Astra: ADR 0022 records why. It gives Lua a
-//! **Bridge table**, a value a script writes and reads as a Lua table, which the host can watch.
-//! What is the Bridge table's alone is in `table.rs`; what any Bridge object has, its subscribers,
-//! the telling of a change, its closing and the host's weak hold, is in `shared.rs`.
+//! `bridge` is original to avarice, not derived from Astra: ADR 0022 records why. It gives Lua two
+//! values the host can watch: a **Bridge table**, which a script writes and reads as a Lua table,
+//! and a **Bridge cell**, which holds one value, replaced whole. What is each one's alone is in
+//! `table.rs` and `cell.rs`; what any Bridge object has, its subscribers, the telling of a change,
+//! its closing and the host's weak hold, is in `shared.rs`.
 //!
 //! Where each part lives is decided by the garbage collector. ADR 0022 has Lua own a Bridge
 //! object, collected once Lua holds no reference to it, and a script will store one in itself, or
@@ -31,23 +32,26 @@
 //! Nothing here sets a global. [`rust_half`] builds the module's table, and `modules.rs` hands it
 //! to `lua/bridge.lua`, which returns it.
 
+mod cell;
 mod shared;
 mod table;
 
 use mlua::{Function, IntoLua, IntoLuaMulti, Lua, Value};
 
+pub use cell::Cell;
 pub use shared::Subscription;
 pub use table::{Change, Table};
 
 use shared::Result;
 
 /// Builds the module's table: `bridge.table`, a table whose `__call` makes a Bridge table and
-/// whose fields are the operations on one.
+/// whose fields are the operations on one, and `bridge.cell`, which makes a Bridge cell.
 pub fn rust_half(lua: &Lua) -> Result<Value> {
     shared::register(lua)?;
     let helpers = Helpers::load(lua)?;
     let module = lua.create_table()?;
     module.set("table", table::build(lua, &helpers)?)?;
+    module.set("cell", cell::build(lua, &helpers)?)?;
     Ok(Value::Table(module))
 }
 
