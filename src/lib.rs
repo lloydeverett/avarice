@@ -124,6 +124,14 @@ pub use crate::profile::{DEFAULT_SANDBOX_MEMORY_LIMIT, Profile};
 pub use crate::runtime::{Runtime, RuntimeBuilder};
 pub use crate::stdlib::{StdModule, StdModules};
 
+/// The Rust side of the `bridge` stdlib module (ADR 0022): a host function receives a Bridge table
+/// a script made as a [`bridge::Table`], through `FromLua`, and can read it, write it and subscribe
+/// to it. The types are named through the module, `bridge::Table`, rather than imported bare.
+#[cfg(feature = "stdlib-bridge")]
+pub mod bridge {
+    pub use crate::stdlib::components::bridge::{Change, Subscription, Table};
+}
+
 /// mlua, re-exported.
 ///
 /// Values, tables and functions crossing the boundary are mlua's, so an embedder needs the same

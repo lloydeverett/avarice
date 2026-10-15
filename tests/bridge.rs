@@ -7,7 +7,10 @@
 
 mod common;
 
-use avarice::{Profile, Runtime, StdModules};
+use std::sync::{Arc, Mutex};
+
+use avarice::mlua::{self, Value};
+use avarice::{Profile, Runtime, StdModules, bridge};
 
 /// Runs `body` with `bridge` bound to the module, and returns what it returns.
 fn eval<R: mlua::FromLuaMulti>(body: &str) -> R {
@@ -287,6 +290,462 @@ fn table_unpack_unpacks_as_on_a_table() {
     assert_eq!(got, ("a".into(), "b".into(), "c".into()));
 }
 
+// -- Subscribing from Lua ----------------------------------------------------------------------
+
+/// Lua that defines `record(changes)`, which appends each change to `log` as `key:old>new`, nil
+/// shown as `nil`, and `told()`, which gives the log joined with spaces.
+const RECORD: &str = "
+    local log = {}
+    local function record(changes)
+        local parts = {}
+        for i, c in ipairs(changes) do
+            parts[i] = tostring(c.key) .. ':' .. tostring(c.old) .. '>' .. tostring(c.new)
+        end
+        log[#log + 1] = '[' .. table.concat(parts, ',') .. ']'
+    end
+    local function told() return table.concat(log, ' ') end
+";
+
+#[test]
+fn a_write_tells_a_lua_subscriber_one_change_after_it_is_in_place() {
+    let got: (String, i64) = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ a = 1 }})
+         local seen
+         bridge.table.subscribe(t, function(changes) record(changes) seen = t.a end)
+         t.a = 2
+         return told(), seen"
+    ));
+    assert_eq!(got, ("[a:1>2]".into(), 2));
+}
+
+#[test]
+fn an_add_has_nil_old_and_a_removal_nil_new() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ gone = true }})
+         bridge.table.subscribe(t, record)
+         t.added = 'x'
+         t.gone = nil
+         return told()"
+    ));
+    assert_eq!(got, "[added:nil>x] [gone:true>nil]");
+}
+
+#[test]
+fn a_write_tells_every_lua_subscriber_in_the_order_they_subscribed() {
+    let got: String = eval(
+        "local t = bridge.table()
+         local order = {}
+         for i = 1, 3 do
+             bridge.table.subscribe(t, function(changes)
+                 order[#order + 1] = i .. changes[1].key
+             end)
+         end
+         t.k = 1
+         return table.concat(order, ' ')",
+    );
+    assert_eq!(got, "1k 2k 3k");
+}
+
+#[test]
+fn the_table_library_writes_are_told() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table({{ 'a' }})
+         bridge.table.subscribe(t, record)
+         table.insert(t, 'b')
+         table.remove(t)
+         return told()"
+    ));
+    assert_eq!(got, "[2:nil>b] [2:b>nil]");
+}
+
+#[test]
+fn unsubscribe_stops_a_lua_subscriber() {
+    let got: (String, String) = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         local handle = bridge.table.subscribe(t, record)
+         t.a = 1
+         handle:unsubscribe()
+         t.b = 2
+         handle:unsubscribe()
+         local first = told()
+         bridge.table.subscribe(t, record)
+         t.c = 3
+         return first, told()"
+    ));
+    assert_eq!(got, ("[a:nil>1]".into(), "[a:nil>1] [c:nil>3]".into()));
+}
+
+#[test]
+fn subscribe_refuses_something_that_is_not_a_function() {
+    let message = raises("bridge.table.subscribe(bridge.table(), 'x')");
+    assert!(
+        message.contains("bridge.table.subscribe: expected a function, got string"),
+        "{message}"
+    );
+}
+
+#[test]
+fn every_operation_refuses_something_that_is_not_a_bridge_table() {
+    for given in ["{}", "nil", "1", "io.stdout"] {
+        let message = raises(&format!("bridge.table.subscribe({given}, function() end)"));
+        assert!(
+            message.contains("bridge.table.subscribe: expected a bridge.table"),
+            "{given}: {message}"
+        );
+    }
+}
+
+// -- Telling in turn --------------------------------------------------------------------------
+
+#[test]
+fn a_subscriber_that_writes_has_its_write_told_to_everyone_before_the_one_it_was_told_of() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         local first = {{}}
+         bridge.table.subscribe(t, function(changes)
+             first[#first + 1] = changes[1].key
+             if changes[1].key == 'a' then t.b = t.a + 1 end
+         end)
+         bridge.table.subscribe(t, record)
+         t.a = 1
+         return table.concat(first, ' ') .. ' | ' .. told()"
+    ));
+    assert_eq!(got, "a b | [b:nil>2] [a:nil>1]");
+}
+
+#[test]
+fn a_subscriber_added_while_a_change_is_told_hears_only_later_changes() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         local added = false
+         bridge.table.subscribe(t, function()
+             if not added then
+                 added = true
+                 bridge.table.subscribe(t, record)
+             end
+         end)
+         t.a = 1
+         t.b = 2
+         return told()"
+    ));
+    assert_eq!(got, "[b:nil>2]");
+}
+
+#[test]
+fn a_subscriber_removed_while_a_change_is_told_is_not_called_again() {
+    let got: String = eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         local second
+         bridge.table.subscribe(t, function() second:unsubscribe() end)
+         second = bridge.table.subscribe(t, record)
+         t.a = 1
+         t.b = 2
+         return told()"
+    ));
+    assert_eq!(got, "");
+}
+
+#[test]
+fn a_lua_subscriber_that_raises_does_not_fail_the_write_or_starve_the_rest() {
+    // Run again as a child of its own, so that what it writes to standard error can be read. The
+    // child is this same test, told by the variable that it is the child.
+    const CHILD: &str = "AVARICE_BRIDGE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let got: (String, i64) = eval(&format!(
+            "{RECORD}
+             local t = bridge.table()
+             bridge.table.subscribe(t, function() error('the subscriber broke') end)
+             bridge.table.subscribe(t, record)
+             t.a = 1
+             return told(), t.a"
+        ));
+        assert_eq!(got, ("[a:nil>1]".into(), 1));
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_lua_subscriber_that_raises_does_not_fail_the_write_or_starve_the_rest",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("1 passed"),
+        "the child ran no test: {stdout}"
+    );
+    assert!(stderr.contains("the subscriber broke"), "{stderr}");
+    assert!(!stdout.contains("the subscriber broke"), "{stdout}");
+}
+
+// -- Subscribing from Rust ---------------------------------------------------------------------
+
+/// What a host's subscriber was told, a list per call, each change as `key:old>new`.
+#[derive(Clone, Default)]
+struct Told(Arc<Mutex<Vec<String>>>);
+
+impl Told {
+    fn record(&self, changes: &[bridge::Change]) {
+        let shown = |v: &Value| v.to_string().unwrap();
+        let parts: Vec<String> = changes
+            .iter()
+            .map(|c| format!("{}:{}>{}", shown(&c.key), shown(&c.old), shown(&c.new)))
+            .collect();
+        self.0
+            .lock()
+            .unwrap()
+            .push(format!("[{}]", parts.join(",")));
+    }
+
+    fn get(&self) -> String {
+        self.0.lock().unwrap().join(" ")
+    }
+}
+
+/// A host module of the test's own, `host`, which receives Bridge tables from the script:
+/// `host.watch(t)` subscribes, recording into `told`; `host.unwatch()` drops every subscription;
+/// `host.keep(t)` keeps a handle; `host.set(k, v)` and `host.get(k)` write and read through the
+/// last one kept or watched.
+struct Host {
+    rt: Runtime,
+    told: Told,
+    kept: Arc<Mutex<Option<bridge::Table>>>,
+    subscriptions: Arc<Mutex<Vec<bridge::Subscription>>>,
+}
+
+impl Host {
+    fn new() -> Self {
+        let rt = Runtime::new(Profile::Trusted).unwrap();
+        let host = Host {
+            rt,
+            told: Told::default(),
+            kept: Arc::default(),
+            subscriptions: Arc::default(),
+        };
+        let lua = host.rt.lua();
+        let module = lua.create_table().unwrap();
+        let (told, kept, subscriptions) = (
+            host.told.clone(),
+            Arc::clone(&host.kept),
+            Arc::clone(&host.subscriptions),
+        );
+        module
+            .set(
+                "watch",
+                lua.create_function(move |_, t: bridge::Table| {
+                    let told = told.clone();
+                    let subscription = t.subscribe(move |_, changes| told.record(changes));
+                    subscriptions.lock().unwrap().push(subscription);
+                    *kept.lock().unwrap() = Some(t);
+                    Ok(())
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let subscriptions = Arc::clone(&host.subscriptions);
+        module
+            .set(
+                "unwatch",
+                lua.create_function(move |_, ()| {
+                    subscriptions.lock().unwrap().clear();
+                    Ok(())
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let kept = Arc::clone(&host.kept);
+        module
+            .set(
+                "keep",
+                lua.create_function(move |_, t: bridge::Table| {
+                    *kept.lock().unwrap() = Some(t);
+                    Ok(())
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let kept = Arc::clone(&host.kept);
+        module
+            .set(
+                "set",
+                lua.create_function(move |_, (k, v): (Value, Value)| {
+                    let t = kept.lock().unwrap().clone().unwrap();
+                    t.set(k, v)
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let kept = Arc::clone(&host.kept);
+        module
+            .set(
+                "get",
+                lua.create_function(move |_, k: Value| {
+                    let t = kept.lock().unwrap().clone().unwrap();
+                    t.get::<Value>(k)
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        host.rt.register_module("host", module).unwrap();
+        host
+    }
+
+    fn eval<R: mlua::FromLuaMulti>(&self, body: &str) -> R {
+        eval_in(&self.rt, &format!("local host = require('host')\n{body}"))
+    }
+
+    /// The handle `host` last kept, from outside any Lua call.
+    fn kept(&self) -> bridge::Table {
+        self.kept.lock().unwrap().clone().unwrap()
+    }
+}
+
+#[test]
+fn a_host_function_receives_a_bridge_table_and_is_told_each_write() {
+    let host = Host::new();
+    host.eval::<()>(
+        "local t = bridge.table({ a = 1 })
+         host.watch(t)
+         t.a = 2
+         t.b = 'x'
+         t.a = nil",
+    );
+    assert_eq!(host.told.get(), "[a:1>2] [b:nil>x] [a:2>nil]");
+}
+
+#[test]
+fn a_host_function_refuses_what_is_not_a_bridge_table() {
+    let host = Host::new();
+    let message: String = host.eval(
+        "local ok, err = pcall(host.watch, {})
+         assert(not ok)
+         return tostring(err)",
+    );
+    assert!(message.contains("bridge::Table"), "{message}");
+}
+
+#[test]
+fn a_write_from_rust_tells_lua_subscribers_inside_that_call_and_rust_ones_too() {
+    let host = Host::new();
+    let got: (String, String) = host.eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         host.watch(t)
+         bridge.table.subscribe(t, record)
+         host.set('k', 'v')
+         return told(), t.k"
+    ));
+    assert_eq!(got, ("[k:nil>v]".into(), "v".into()));
+    assert_eq!(host.told.get(), "[k:nil>v]");
+}
+
+#[test]
+fn a_write_from_rust_outside_lua_tells_lua_subscribers() {
+    let host = Host::new();
+    host.eval::<()>(&format!(
+        "{RECORD}
+         log_of = told
+         local t = bridge.table()
+         host.keep(t)
+         bridge.table.subscribe(t, record)
+         held = t"
+    ));
+    host.kept().set("n", 3).unwrap();
+    let got: String = host.eval("return log_of()");
+    assert_eq!(got, "[n:nil>3]");
+    assert_eq!(host.kept().get::<i64>("n").unwrap(), 3);
+}
+
+#[test]
+fn a_read_from_rust_sees_what_lua_wrote() {
+    let host = Host::new();
+    let got: (String, bool) = host.eval(
+        "local t = bridge.table()
+         host.keep(t)
+         t.name = 'x'
+         return host.get('name'), host.get('missing') == nil",
+    );
+    assert_eq!(got, ("x".into(), true));
+}
+
+#[test]
+fn a_rust_subscriber_may_write_to_the_table_it_is_told_of() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let lua = rt.lua();
+    let subscriptions: Arc<Mutex<Vec<bridge::Subscription>>> = Arc::default();
+    let normalise = lua
+        .create_function(move |_, t: bridge::Table| {
+            let handle = t.clone();
+            let subscription = t.subscribe(move |_, changes| {
+                for change in changes {
+                    let Value::String(s) = &change.new else {
+                        continue;
+                    };
+                    let upper = s.to_str().unwrap().to_uppercase();
+                    if *s.to_str().unwrap() != *upper {
+                        handle.set(change.key.clone(), upper).unwrap();
+                    }
+                }
+            });
+            subscriptions.lock().unwrap().push(subscription);
+            Ok(())
+        })
+        .unwrap();
+    let module = lua.create_table().unwrap();
+    module.set("normalise", normalise).unwrap();
+    rt.register_module("host", module).unwrap();
+    let got: (String, String) = eval_in(
+        &rt,
+        &format!(
+            "{RECORD}
+             local t = bridge.table()
+             require('host').normalise(t)
+             bridge.table.subscribe(t, record)
+             t.name = 'ada'
+             return t.name, told()"
+        ),
+    );
+    assert_eq!(got, ("ADA".into(), "[name:ada>ADA] [name:nil>ada]".into()));
+}
+
+#[test]
+fn dropping_the_rust_subscription_stops_its_notifications() {
+    let host = Host::new();
+    host.eval::<()>(
+        "local t = bridge.table()
+         host.watch(t)
+         t.a = 1
+         host.unwatch()
+         t.b = 2",
+    );
+    assert_eq!(host.told.get(), "[a:nil>1]");
+}
+
+#[test]
+fn a_rust_subscriber_dropped_while_a_change_is_told_is_not_called_again() {
+    let host = Host::new();
+    host.eval::<()>(
+        "local t = bridge.table()
+         bridge.table.subscribe(t, function() host.unwatch() end)
+         host.watch(t)
+         t.a = 1
+         t.b = 2",
+    );
+    assert_eq!(host.told.get(), "");
+}
+
 // -- What it is --------------------------------------------------------------------------------
 
 #[test]
@@ -329,6 +788,47 @@ fn a_bridge_table_that_refers_to_itself_is_collected() {
          return weak.direct == nil and weak.captured == nil",
     );
     assert!(got, "a Bridge table in a cycle was kept alive");
+}
+
+#[test]
+fn a_bridge_table_its_own_lua_subscriber_captures_is_collected() {
+    let got: bool = eval(
+        "local weak = setmetatable({}, { __mode = 'k' })
+         local function make()
+             local t = bridge.table()
+             local handle
+             handle = bridge.table.subscribe(t, function() return t, handle end)
+             weak[t] = true
+         end
+         make()
+         assert(next(weak))
+         collectgarbage()
+         collectgarbage()
+         return next(weak) == nil",
+    );
+    assert!(got, "a Bridge table its subscriber captures was kept alive");
+}
+
+#[test]
+fn the_hosts_handle_and_subscription_do_not_keep_a_bridge_table_alive() {
+    let host = Host::new();
+    let got: bool = host.eval(
+        "local weak = setmetatable({}, { __mode = 'k' })
+         local function make()
+             local t = bridge.table({ a = 1 })
+             host.watch(t)
+             weak[t] = true
+         end
+         make()
+         assert(next(weak))
+         collectgarbage()
+         collectgarbage()
+         return next(weak) == nil",
+    );
+    assert!(got, "the host's hold kept a Bridge table alive");
+    let message = host.kept().set("a", 2).unwrap_err().to_string();
+    assert!(message.contains("collected"), "{message}");
+    assert!(host.kept().get::<Value>("a").is_err());
 }
 
 // -- Who has it --------------------------------------------------------------------------------

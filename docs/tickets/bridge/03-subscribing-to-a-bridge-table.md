@@ -15,16 +15,16 @@ and so keep it alive.
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One write tells every subscriber, the writer's side included, a list of one change; adds have
+- [x] One write tells every subscriber, the writer's side included, a list of one change; adds have
       nil `old`, removals nil `new`
-- [ ] A test's own host module receives a `bridge::Table`, subscribes, and records what it is told
-- [ ] A write from Rust tells Lua subscribers inside that call
-- [ ] A subscriber may write to the same table (nested notification); one added mid-notification
+- [x] A test's own host module receives a `bridge::Table`, subscribes, and records what it is told
+- [x] A write from Rust tells Lua subscribers inside that call
+- [x] A subscriber may write to the same table (nested notification); one added mid-notification
       hears only later changes; one removed mid-notification is not called again
-- [ ] A Lua subscriber that raises: the write succeeds, the error goes to stderr, the remaining
+- [x] A Lua subscriber that raises: the write succeeds, the error goes to stderr, the remaining
       subscribers are told
-- [ ] `bridge.table.subscribe` (and every `bridge.table.*` operation) raises when given something
+- [x] `bridge.table.subscribe` (and every `bridge.table.*` operation) raises when given something
       other than a Bridge table
-- [ ] Dropping the Rust guard, or calling `unsubscribe()`, stops notifications
+- [x] Dropping the Rust guard, or calling `unsubscribe()`, stops notifications
