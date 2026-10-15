@@ -89,12 +89,19 @@ functions, which receive it as a `bridge::Table` or a `bridge::Cell`. Lua owns i
 - **A closed one can be read and not written.** A write raises in Lua and returns an error in
   Rust. Closing one inside a batch of it tells the batch's writes first, then the close.
   Subscribing to a closed one raises in Lua; in Rust, whose `subscribe` gives a guard and no
-  error, the close callback is called at once.
+  error, the close callback is called at once. A close made while a change is being told takes
+  effect for writes at once, but its close callbacks wait until that change, and any told inside
+  it, has reached every subscriber, so the close is always the last thing a subscriber hears. A
+  write by a subscriber hearing the batch a close told raises, since the table is closed.
 - **Subscribing gives a way to stop.** Subscribing from Lua returns a handle with `unsubscribe`;
   from Rust, a guard that unsubscribes when dropped.
 
 Collection closes it through the userdata's Rust `Drop`, which is the host's, so the refusal of
 **Lua finalizers** in [ADR 0018](0018-the-sandbox-refuses-lua-finalizers.md) does not reach it.
+That `Drop` runs inside Lua's collector, where no time limit or cancel applies, so a close
+callback run by collection or by dropping the runtime cannot call into Lua through a
+`bridge::Table`, and a panic in one is written to standard error rather than unwinding through
+Lua; one run by an explicit close may call into Lua, and its panic panics.
 
 ## Considered options
 

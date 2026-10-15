@@ -27,8 +27,12 @@
 //! userdata's `Drop`, when it is collected or the runtime is dropped. Each subscriber is taken out
 //! in turn and told by its close callback, outside any lock, so a close callback may drop a
 //! subscription. `Drop` has no `Lua`, and Lua may be tearing down, so it tells only the Rust close
-//! callbacks, which take none; a Lua one is collected with the table. The flag that it is closed
-//! is in [`TableState`], so that the host's handles find it without calling into Lua.
+//! callbacks, which take none; a Lua one is collected with the table. `Drop` runs inside Lua's
+//! collector, with no limits, so while it runs the host's handles refuse to call into Lua, and a
+//! close callback's panic is caught there. A close while a change is being told refuses writes at
+//! once and tells its close callbacks once the outermost telling ends, so that the close is the
+//! last a subscriber hears. The flags are in [`TableState`], so that the host's handles find them
+//! without calling into Lua.
 //!
 //! A batch holds back the changes made inside it, and the outermost tells them as one list when
 //! it ends. They hold Lua values, so they are a user value too, for as long as the batch is open,
@@ -39,7 +43,9 @@
 //! Nothing here sets a global. [`rust_half`] builds the module's table, and `modules.rs` hands it
 //! to `lua/bridge.lua`, which returns it.
 
+use std::cell::Cell;
 use std::fmt;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
@@ -290,7 +296,7 @@ const HELPERS: &str = "
 fn batched<R>(lua: &Lua, this: &AnyUserData, body: impl FnOnce() -> Result<R>) -> Result<R> {
     let state = state_of(this)?;
     let (outermost, result) = {
-        let depth = BatchDepth::enter(&state);
+        let depth = Depth::enter(&state.batch_depth);
         if depth.outermost {
             // Any left by a batch that a panic unwound out of was never told, and is not now.
             this.set_nth_user_value(PENDING, Value::Nil)?;
@@ -320,22 +326,23 @@ fn batched<R>(lua: &Lua, this: &AnyUserData, body: impl FnOnce() -> Result<R>) -
     }
 }
 
-/// A batch's hold on its table's batch depth, given back when it is dropped, even by a panic.
-struct BatchDepth<'a> {
-    state: &'a TableState,
+/// A batch's hold on its table's batch depth, or a telling's on its telling depth, given back when
+/// it is dropped, even by a panic.
+struct Depth<'a> {
+    depth: &'a AtomicUsize,
     outermost: bool,
 }
 
-impl<'a> BatchDepth<'a> {
-    fn enter(state: &'a TableState) -> Self {
-        let outermost = state.batch_depth.fetch_add(1, Ordering::Relaxed) == 0;
-        BatchDepth { state, outermost }
+impl<'a> Depth<'a> {
+    fn enter(depth: &'a AtomicUsize) -> Self {
+        let outermost = depth.fetch_add(1, Ordering::Relaxed) == 0;
+        Depth { depth, outermost }
     }
 }
 
-impl Drop for BatchDepth<'_> {
+impl Drop for Depth<'_> {
     fn drop(&mut self) {
-        self.state.batch_depth.fetch_sub(1, Ordering::Relaxed);
+        self.depth.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -408,6 +415,8 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
         subscribers: Mutex::new(Vec::new()),
         batch_depth: AtomicUsize::new(0),
         closed: AtomicBool::new(false),
+        telling: AtomicUsize::new(0),
+        close_waiting: AtomicBool::new(false),
     };
     let this = lua.create_userdata(BridgeTable(Arc::new(state)))?;
     this.set_nth_user_value(BACKING, backing)?;
@@ -531,8 +540,45 @@ fn is_limit(e: &mlua::Error) -> bool {
 /// A batch's list is made into [`Change`]s only for a Rust subscriber, since each value of one
 /// holds a slot of mlua's reference stack, and then a slice at a time, of at most [`RUST_SLICE`]:
 /// a Lua subscriber's list is copied in Lua, whole.
+///
+/// A close made while this runs, by a subscriber or by a write nested in one, waits for it: the
+/// outermost telling of the table tells the close once every subscriber has heard the change.
 fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
+    tell_to(lua, this, changes, this.nth_user_value(LUA_SUBSCRIBERS)?)
+}
+
+/// [`tell`], with the Lua subscribers given, as [`close`] gives them once it has taken them.
+fn tell_to(
+    lua: &Lua,
+    this: &AnyUserData,
+    changes: Changes<'_>,
+    lua_subscribers: Option<LuaTable>,
+) -> Result<()> {
     let state = state_of(this)?;
+    let (outermost, told) = {
+        let depth = Depth::enter(&state.telling);
+        (
+            depth.outermost,
+            tell_each(lua, &state, changes, lua_subscribers),
+        )
+    };
+    if outermost && state.close_waiting.swap(false, Ordering::SeqCst) {
+        let (on_close, failed) = match (told, take_user_value(this, LUA_ON_CLOSE)) {
+            (Ok(()), Ok(on_close)) => (on_close, None),
+            (Err(e), _) | (_, Err(e)) => (None, Some(e)),
+        };
+        return tell_close(&state, on_close, failed);
+    }
+    told
+}
+
+/// The body of [`tell`], with no close waiting on it.
+fn tell_each(
+    lua: &Lua,
+    state: &TableState,
+    changes: Changes<'_>,
+    lua_subscribers: Option<LuaTable>,
+) -> Result<()> {
     let subscribers: Vec<(u64, Subscriber)> = state
         .subscribers()
         .iter()
@@ -541,7 +587,6 @@ fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
     if subscribers.is_empty() {
         return Ok(());
     }
-    let lua_subscribers: Option<LuaTable> = this.nth_user_value(LUA_SUBSCRIBERS)?;
     for (id, subscriber) in subscribers {
         match subscriber {
             Subscriber::Rust(subscriber) => {
@@ -667,29 +712,62 @@ fn user_table(lua: &Lua, this: &AnyUserData, n: usize) -> Result<LuaTable> {
 /// A Lua close callback that raises is reported, as a subscriber is, and the next is told. A limit,
 /// the run cancelled or timed out or out of memory, ends the telling of Lua's; Rust's are still
 /// told, since this is the only time they can be, and the limit then goes on.
+///
+/// While a change is being told, the close takes effect for writes at once, but its close
+/// callbacks wait until the change has reached every subscriber (see [`tell`]), so that the close
+/// is the last a subscriber hears.
 fn close(lua: &Lua, this: &AnyUserData) -> Result<()> {
     let state = state_of(this)?;
     if !state.mark_closed() {
         return Ok(());
     }
-    let lua_half = (|| {
-        if state.batch_depth.load(Ordering::Relaxed) > 0 {
-            let pending = this.nth_user_value::<Option<LuaTable>>(PENDING)?;
-            this.set_nth_user_value(PENDING, Value::Nil)?;
-            if let Some(pending) = pending {
-                tell(lua, this, Changes::Batch(&pending))?;
-            }
-        }
-        let on_close: Option<LuaTable> = this.nth_user_value(LUA_ON_CLOSE)?;
-        this.set_nth_user_value(LUA_SUBSCRIBERS, Value::Nil)?;
-        this.set_nth_user_value(LUA_ON_CLOSE, Value::Nil)?;
-        Ok(on_close)
+    // Taken out before anything that a limit could fail, since after one even this would.
+    let waits = state.telling.load(Ordering::Relaxed) > 0;
+    let taken = (|| {
+        let on_close = match waits {
+            true => None,
+            false => take_user_value(this, LUA_ON_CLOSE)?,
+        };
+        let pending = match state.batch_depth.load(Ordering::Relaxed) > 0 {
+            true => take_user_value(this, PENDING)?,
+            false => None,
+        };
+        Ok((on_close, take_user_value(this, LUA_SUBSCRIBERS)?, pending))
     })();
-    let (mut on_close, mut failed) = match lua_half {
-        Ok(on_close) => (on_close, None),
-        Err(e) => (None, Some(e)),
+    let (on_close, flushed) = match taken {
+        Ok((on_close, lua_subscribers, Some(pending))) => (
+            on_close,
+            tell_to(lua, this, Changes::Batch(&pending), lua_subscribers),
+        ),
+        Ok((on_close, _, None)) => (on_close, Ok(())),
+        Err(e) => (None, Err(e)),
     };
-    while let Some(entry) = state.next_to_close() {
+    if waits {
+        state.close_waiting.store(true, Ordering::SeqCst);
+        return flushed;
+    }
+    tell_close(&state, on_close, flushed.err())
+}
+
+/// The table in the user value `n` of `this`, if there is one, taken out.
+fn take_user_value(this: &AnyUserData, n: usize) -> Result<Option<LuaTable>> {
+    let value = this.nth_user_value(n)?;
+    this.set_nth_user_value(n, Value::Nil)?;
+    Ok(value)
+}
+
+/// Tells every subscriber that the table has closed, in the order they subscribed, by `on_close`,
+/// the Lua close callbacks [`close`] took out, and by their own: the part of a close that waits for
+/// a change being told. `failed` is how what came before failed, if it did, which goes on, and
+/// after which no Lua close callback is called.
+fn tell_close(
+    state: &TableState,
+    on_close: Option<LuaTable>,
+    failed: Option<mlua::Error>,
+) -> Result<()> {
+    let mut failed = failed;
+    let mut on_close = on_close.filter(|_| failed.is_none());
+    state.drain(|entry| {
         if let Some(lua_on_close) = &on_close {
             let called = lua_on_close
                 .raw_get::<Option<Function>>(entry.id)
@@ -703,8 +781,8 @@ fn close(lua: &Lua, this: &AnyUserData) -> Result<()> {
                 Err(e) => eprintln!("Error running a {TABLE_NAME} close callback: {e}"),
             }
         }
-        entry.close_rust();
-    }
+        entry.call_on_close();
+    });
     failed.map_or(Ok(()), Err)
 }
 
@@ -730,7 +808,7 @@ struct Entry {
 
 impl Entry {
     /// Calls the Rust close callback, if this has one, and drops the rest.
-    fn close_rust(self) {
+    fn call_on_close(self) {
         if let Some(on_close) = self.on_close {
             on_close();
         }
@@ -759,6 +837,11 @@ struct TableState {
     batch_depth: AtomicUsize,
     /// Whether the table has been closed, from either side or by being collected.
     closed: AtomicBool,
+    /// How many tellings of a change to this table are running, one inside another. Only the Lua
+    /// thread, under the Lua lock, reads or writes it.
+    telling: AtomicUsize,
+    /// Whether a close made while a change was being told waits to tell its subscribers.
+    close_waiting: AtomicBool,
 }
 
 impl TableState {
@@ -787,10 +870,11 @@ impl TableState {
         (!subscribers.is_empty()).then(|| subscribers.remove(0))
     }
 
-    /// Tells the Rust subscribers of the close, in the order they subscribed, and drops the rest.
-    fn close_rust(&self) {
+    /// Takes out each subscriber in turn, in the order they subscribed, and gives it to `tell`,
+    /// with the lock released, until none is left.
+    fn drain(&self, mut tell: impl FnMut(Entry)) {
         while let Some(entry) = self.next_to_close() {
-            entry.close_rust();
+            tell(entry);
         }
     }
 
@@ -848,11 +932,54 @@ impl UserData for BridgeTable {
 /// Collection closes a Bridge table nobody closed, and so does dropping the runtime, which collects
 /// everything. Only the Rust close callbacks are told: a Lua one is being collected with the table,
 /// and this has no `Lua` to call it with (ADR 0022).
+///
+/// It runs inside Lua's collection, or its closing of the state, where neither hooks nor limits
+/// run, so while it does a [`Table`] refuses to call into Lua, and a close callback that panics is
+/// reported rather than unwinding through Lua's C code.
 impl Drop for BridgeTable {
     fn drop(&mut self) {
-        if self.0.mark_closed() {
-            self.0.close_rust();
+        let state = &self.0;
+        // A close that was waiting for a telling a panic unwound out of has yet to be told.
+        if !state.mark_closed() && !state.close_waiting.swap(false, Ordering::SeqCst) {
+            return;
         }
+        let _collecting = Collecting::enter();
+        state.drain(|entry| {
+            let called = std::panic::catch_unwind(AssertUnwindSafe(|| entry.call_on_close()));
+            if let Err(panic) = called {
+                let message = panic
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("a panic");
+                eprintln!("A {TABLE_NAME} close callback panicked during collection: {message}");
+            }
+        });
+    }
+}
+
+thread_local! {
+    /// How many closes by collection are telling their close callbacks on this thread.
+    static COLLECTING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// A close by collection's mark on its thread, taken off when it is dropped, even by a panic.
+struct Collecting;
+
+impl Collecting {
+    fn enter() -> Self {
+        COLLECTING.with(|collecting| collecting.set(collecting.get() + 1));
+        Collecting
+    }
+
+    fn is_running() -> bool {
+        COLLECTING.with(Cell::get) > 0
+    }
+}
+
+impl Drop for Collecting {
+    fn drop(&mut self) {
+        COLLECTING.with(|collecting| collecting.set(collecting.get() - 1));
     }
 }
 
@@ -968,6 +1095,12 @@ impl Table {
     /// module's held, so it may drop a [`Subscription`]. It is not called once the subscription
     /// is dropped.
     ///
+    /// One run by an explicit close may call into Lua, through a [`Table`]. One run by collection
+    /// or by dropping the runtime is inside Lua's collector, where no time limit or cancel applies,
+    /// and must not: a [`Table`] refuses to read, write or close from there, with an error. A panic
+    /// in one run by an explicit close goes on, as a subscriber's does; in one run by collection
+    /// or dropping it is written to standard error, and the rest are still told.
+    ///
     /// Subscribing to one that is closed, or has been collected, calls `on_close` at once, before
     /// this returns.
     pub fn subscribe_with_close<F, C>(&self, subscriber: F, on_close: C) -> Subscription
@@ -1021,6 +1154,12 @@ impl Table {
     /// Calls the function `rust_half` kept at `name`, giving back its own error rather than one
     /// wrapped as raised in a callback.
     fn call<R: FromLuaMulti>(&self, name: &str, args: impl IntoLuaMulti) -> Result<R> {
+        if Collecting::is_running() {
+            return Err(error(format!(
+                "{TABLE_NAME}: a Bridge table cannot be used from a close callback run by \
+                 collection"
+            )));
+        }
         let lua = self.lua.try_upgrade().ok_or_else(collected)?;
         let function: Function = lua.named_registry_value(name)?;
         function.call(args).map_err(|e| match e {
