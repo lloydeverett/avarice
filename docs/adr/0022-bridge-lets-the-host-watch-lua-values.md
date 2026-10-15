@@ -87,7 +87,9 @@ functions, which receive it as a `bridge::Table` or a `bridge::Cell`. Lua owns i
   where it may run. Collection tells only the Rust callbacks: a Lua one is being collected with
   the object, and nothing is left in Lua to hear it.
 - **A closed one can be read and not written.** A write raises in Lua and returns an error in
-  Rust.
+  Rust. Closing one inside a batch of it tells the batch's writes first, then the close.
+  Subscribing to a closed one raises in Lua; in Rust, whose `subscribe` gives a guard and no
+  error, the close callback is called at once.
 - **Subscribing gives a way to stop.** Subscribing from Lua returns a handle with `unsubscribe`;
   from Rust, a guard that unsubscribes when dropped.
 

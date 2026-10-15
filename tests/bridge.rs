@@ -541,15 +541,20 @@ impl Told {
             .push(format!("[{}]", parts.join(",")));
     }
 
+    /// Records that the table closed, as `closed`.
+    fn closed(&self) {
+        self.0.lock().unwrap().push("closed".to_owned());
+    }
+
     fn get(&self) -> String {
         self.0.lock().unwrap().join(" ")
     }
 }
 
 /// A host module of the test's own, `host`, which receives Bridge tables from the script:
-/// `host.watch(t)` subscribes, recording into `told`; `host.unwatch()` drops every subscription;
-/// `host.keep(t)` keeps a handle; `host.set(k, v)` and `host.get(k)` write and read through the
-/// last one kept or watched.
+/// `host.watch(t)` subscribes, recording into `told`, its close as `closed`; `host.unwatch()` drops
+/// every subscription; `host.keep(t)` keeps a handle; `host.set(k, v)`, `host.get(k)` and
+/// `host.close()` write, read and close through the last one kept or watched.
 struct Host {
     rt: Runtime,
     told: Told,
@@ -580,8 +585,11 @@ impl Host {
             .set(
                 "watch",
                 lua.create_function(move |_, t: bridge::Table| {
-                    let told = told.clone();
-                    let subscription = t.subscribe(move |_, changes| told.record(changes));
+                    let (on_change, on_close) = (told.clone(), told.clone());
+                    let subscription = t.subscribe_with_close(
+                        move |_, changes| on_change.record(changes),
+                        move || on_close.closed(),
+                    );
                     subscriptions.lock().unwrap().push(subscription);
                     *kept.lock().unwrap() = Some(t);
                     Ok(())
@@ -629,6 +637,17 @@ impl Host {
                 lua.create_function(move |_, k: Value| {
                     let t = kept.lock().unwrap().clone().unwrap();
                     t.get::<Value>(k)
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let kept = Arc::clone(&host.kept);
+        module
+            .set(
+                "close",
+                lua.create_function(move |_, ()| {
+                    let t = kept.lock().unwrap().clone().unwrap();
+                    t.close()
                 })
                 .unwrap(),
             )
@@ -867,10 +886,11 @@ fn a_cancel_inside_a_lua_subscriber_ends_the_write_and_tells_no_one_else() {
         panic!("expected a Lua error, got {err:?}");
     };
     assert!(was_cancelled(&err), "{err}");
-    assert_eq!(
-        host.told.get(),
-        "",
-        "a subscriber was told after the cancel"
+    // Its close, should the table have been collected since, is not a change.
+    let told = host.told.get();
+    assert!(
+        !told.contains('['),
+        "a subscriber was told after the cancel: {told}"
     );
 }
 
@@ -1327,6 +1347,329 @@ fn raw_access_and_type_see_a_userdata() {
     assert_eq!(got, ("userdata".into(), false));
 }
 
+// -- Closing -----------------------------------------------------------------------------------
+
+#[test]
+fn closing_from_lua_runs_each_lua_close_callback_once_and_a_second_close_does_nothing() {
+    let got: String = eval(
+        "local log = {}
+         local t = bridge.table()
+         bridge.table.subscribe(t, function() end, function() log[#log + 1] = 'first' end)
+         bridge.table.subscribe(t, function() end)
+         bridge.table.subscribe(t, function() end, function() log[#log + 1] = 'second' end)
+         bridge.table.close(t)
+         bridge.table.close(t)
+         return table.concat(log, ' ')",
+    );
+    assert_eq!(got, "first second");
+}
+
+#[test]
+fn closing_from_lua_runs_each_rust_close_callback_once() {
+    let host = Host::new();
+    host.eval::<()>(
+        "local t = bridge.table()
+         host.watch(t)
+         t.a = 1
+         bridge.table.close(t)
+         bridge.table.close(t)",
+    );
+    assert_eq!(host.told.get(), "[a:nil>1] closed");
+}
+
+#[test]
+fn closing_from_rust_runs_lua_and_rust_close_callbacks_once_in_the_order_they_subscribed() {
+    let host = Host::new();
+    host.eval::<()>(
+        "log = {}
+         local t = bridge.table()
+         bridge.table.subscribe(t, print, function() log[#log + 1] = 'lua' end)
+         host.watch(t)
+         held = t",
+    );
+    host.kept().close().unwrap();
+    host.kept().close().unwrap();
+    let got: String = host.eval("return table.concat(log, ' ')");
+    assert_eq!(got, "lua");
+    assert_eq!(host.told.get(), "closed");
+    // From inside Lua as well.
+    let got: String = host.eval(
+        "local log = {}
+         local t = bridge.table()
+         host.watch(t)
+         bridge.table.subscribe(t, print, function() log[#log + 1] = 'lua' end)
+         host.close()
+         host.close()
+         return table.concat(log, ' ')",
+    );
+    assert_eq!(got, "lua");
+    assert_eq!(host.told.get(), "closed closed");
+}
+
+#[test]
+fn a_closed_bridge_table_can_be_read_and_walked() {
+    let got: (i64, i64, i64, i64) = eval(
+        "local t = bridge.table({ 10, 20, name = 'x' })
+         bridge.table.close(t)
+         local n = 0
+         for _ in pairs(t) do n = n + 1 end
+         local sum = 0
+         for _, v in ipairs(t) do sum = sum + v end
+         return t[2], #t, n, sum",
+    );
+    assert_eq!(got, (20, 2, 3, 30));
+}
+
+#[test]
+fn a_write_to_a_closed_bridge_table_raises_and_changes_nothing() {
+    for (write, expected) in [
+        ("t.a = 2", "bridge.table: the Bridge table is closed"),
+        ("t.new = 1", "bridge.table: the Bridge table is closed"),
+        (
+            "table.insert(t, 3)",
+            "bridge.table: the Bridge table is closed",
+        ),
+        (
+            "bridge.table.insert(t, 3)",
+            "bridge.table.insert: the Bridge table is closed",
+        ),
+        (
+            "bridge.table.remove(t)",
+            "bridge.table.remove: the Bridge table is closed",
+        ),
+        (
+            "bridge.table.batch(t, function() end)",
+            "bridge.table.batch: the Bridge table is closed",
+        ),
+        (
+            "bridge.table.subscribe(t, print)",
+            "bridge.table.subscribe: the Bridge table is closed",
+        ),
+    ] {
+        let message = raises(&format!(
+            "local t = bridge.table({{ a = 1 }})
+             bridge.table.close(t)
+             local ok, err = pcall(function() {write} end)
+             assert(t.a == 1 and t.new == nil and #t == 0, 'the write changed it')
+             error(err, 0)"
+        ));
+        assert!(message.contains(expected), "{write}: {message}");
+    }
+}
+
+#[test]
+fn a_write_from_rust_to_a_closed_bridge_table_is_an_error_and_a_read_is_not() {
+    let host = Host::new();
+    host.eval::<()>(
+        "held = bridge.table({ a = 1 })
+         host.keep(held)
+         bridge.table.close(held)",
+    );
+    let message = host.kept().set("a", 2).unwrap_err().to_string();
+    assert!(message.contains("the Bridge table is closed"), "{message}");
+    assert_eq!(host.kept().get::<i64>("a").unwrap(), 1);
+}
+
+#[test]
+fn a_close_callback_that_unsubscribes_a_later_subscriber_keeps_it_from_being_told() {
+    let got: String = eval(
+        "local log = {}
+         local t = bridge.table()
+         local second
+         bridge.table.subscribe(t, print, function()
+             log[#log + 1] = 'first'
+             second:unsubscribe()
+         end)
+         second = bridge.table.subscribe(t, print, function() log[#log + 1] = 'second' end)
+         bridge.table.close(t)
+         return table.concat(log, ' ')",
+    );
+    assert_eq!(got, "first");
+}
+
+#[test]
+fn a_rust_close_callback_may_drop_its_own_subscription_and_another() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let log: Arc<Mutex<Vec<&str>>> = Arc::default();
+    let tangle = {
+        let log = Arc::clone(&log);
+        rt.lua()
+            .create_function(move |_, t: bridge::Table| {
+                let held: Arc<Mutex<Vec<bridge::Subscription>>> = Arc::default();
+                let (first_log, second_log) = (Arc::clone(&log), Arc::clone(&log));
+                let first_held = Arc::clone(&held);
+                let first = t.subscribe_with_close(
+                    |_, _| {},
+                    move || {
+                        first_log.lock().unwrap().push("first");
+                        // Its own and the second, each dropping under the module's locks.
+                        first_held.lock().unwrap().clear();
+                    },
+                );
+                let second = t.subscribe_with_close(
+                    |_, _| {},
+                    move || second_log.lock().unwrap().push("second"),
+                );
+                held.lock().unwrap().extend([first, second]);
+                Ok(())
+            })
+            .unwrap()
+    };
+    rt.lua().globals().set("tangle", tangle).unwrap();
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || {
+        eval_in::<()>(
+            &rt,
+            "local t = bridge.table()
+             tangle(t)
+             bridge.table.close(t)",
+        );
+        done.send(()).unwrap();
+    });
+    finished
+        .recv_timeout(Duration::from_secs(5))
+        .expect("closing deadlocked");
+    assert_eq!(log.lock().unwrap().join(" "), "first");
+}
+
+#[test]
+fn closing_inside_a_batch_tells_its_writes_before_the_close_and_ends_it() {
+    let host = Host::new();
+    let got: (String, String) = host.eval(&format!(
+        "{RECORD}
+         local t = bridge.table()
+         host.watch(t)
+         bridge.table.subscribe(t, record, function() log[#log + 1] = 'closed' end)
+         local ok, err = pcall(bridge.table.batch, t, function()
+             t.a = 1
+             t.b = 2
+             bridge.table.close(t)
+             t.c = 3
+         end)
+         assert(not ok)
+         return told(), tostring(err)"
+    ));
+    assert_eq!(got.0, "[a:nil>1,b:nil>2] closed");
+    assert!(got.1.contains("the Bridge table is closed"), "{}", got.1);
+    assert_eq!(host.told.get(), "[a:nil>1,b:nil>2] closed");
+}
+
+#[test]
+fn a_lua_close_callback_that_raises_does_not_fail_the_close_or_starve_the_rest() {
+    // Run again as a child of its own, as the test of a Lua subscriber that raises is, so that what
+    // it writes to standard error can be read.
+    const CHILD: &str = "AVARICE_BRIDGE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let host = Host::new();
+        let got: String = host.eval(
+            "local log = {}
+             local t = bridge.table()
+             bridge.table.subscribe(t, print, function() error('the close callback broke') end)
+             host.watch(t)
+             bridge.table.subscribe(t, print, function() log[#log + 1] = 'after' end)
+             bridge.table.close(t)
+             return table.concat(log, ' ')",
+        );
+        assert_eq!(got, "after");
+        assert_eq!(host.told.get(), "closed");
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_lua_close_callback_that_raises_does_not_fail_the_close_or_starve_the_rest",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("1 passed"),
+        "the child ran no test: {stdout}"
+    );
+    assert!(stderr.contains("the close callback broke"), "{stderr}");
+}
+
+#[test]
+fn a_cancel_inside_a_lua_close_callback_ends_the_close_but_still_tells_rust() {
+    let cancel = CancelHandle::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .check_interval(100)
+        .build()
+        .unwrap();
+    let stop = rt
+        .lua()
+        .create_function(move |_, ()| {
+            cancel.cancel();
+            Ok(())
+        })
+        .unwrap();
+    rt.lua().globals().set("stop", stop).unwrap();
+    let host = Host::on(rt);
+    let err = host
+        .rt
+        .block_on(host.rt.eval::<()>(
+            "local bridge = require('bridge')
+             local host = require('host')
+             later = false
+             held = bridge.table()
+             bridge.table.subscribe(held, print, function() stop() while true do end end)
+             host.watch(held)
+             bridge.table.subscribe(held, print, function() later = true end)
+             bridge.table.close(held)",
+            "=test",
+        ))
+        .unwrap_err();
+    let Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_cancelled(&err), "{err}");
+    assert_eq!(host.told.get(), "closed");
+    let later: bool = host.rt.lua().globals().get("later").unwrap();
+    assert!(!later, "a Lua close callback was called after the cancel");
+}
+
+#[test]
+fn subscribing_from_rust_to_a_closed_bridge_table_tells_the_close_at_once_and_nothing_else() {
+    let host = Host::new();
+    host.eval::<()>(
+        "local t = bridge.table()
+         bridge.table.close(t)
+         host.watch(t)",
+    );
+    assert_eq!(host.told.get(), "closed");
+}
+
+#[test]
+fn close_and_subscribe_check_their_arguments() {
+    for (call, expected) in [
+        (
+            "bridge.table.close({})",
+            "bridge.table.close: expected a bridge.table, got table",
+        ),
+        (
+            "bridge.table.close(bridge.table(), 1)",
+            "bridge.table.close: expected at most 1 argument, got 2",
+        ),
+        (
+            "bridge.table.subscribe(bridge.table(), print, 'x')",
+            "bridge.table.subscribe: expected a function for on_close, got string",
+        ),
+        (
+            "bridge.table.subscribe(bridge.table(), print, print, 1)",
+            "bridge.table.subscribe: expected at most 3 arguments, got 4",
+        ),
+    ] {
+        let message = raises(call);
+        assert!(message.contains(expected), "{call}: {message}");
+    }
+}
+
 // -- Collection --------------------------------------------------------------------------------
 
 #[test]
@@ -1389,6 +1732,116 @@ fn the_hosts_handle_and_subscription_do_not_keep_a_bridge_table_alive() {
     let message = host.kept().set("a", 2).unwrap_err().to_string();
     assert!(message.contains("collected"), "{message}");
     assert!(host.kept().get::<Value>("a").is_err());
+}
+
+#[test]
+fn collection_closes_a_bridge_table_telling_only_its_rust_close_callbacks() {
+    let host = Host::new();
+    let got: bool = host.eval(
+        "lua_told = false
+         local function make()
+             local t = bridge.table()
+             host.watch(t)
+             bridge.table.subscribe(t, print, function() lua_told = true end)
+         end
+         make()
+         collectgarbage()
+         collectgarbage()
+         return lua_told",
+    );
+    assert!(!got, "a Lua close callback was called by collection");
+    assert_eq!(host.told.get(), "closed");
+    host.kept().close().unwrap();
+    assert_eq!(host.told.get(), "closed", "closing it again told it again");
+}
+
+#[test]
+fn a_bridge_table_in_a_cycle_through_itself_or_its_subscriber_is_closed_when_collected() {
+    let host = Host::new();
+    host.eval::<()>(
+        "local function make()
+             local direct = bridge.table()
+             direct.self = direct
+             host.watch(direct)
+             local captured = bridge.table()
+             local handle
+             handle = bridge.table.subscribe(captured, function() return captured, handle end)
+             host.watch(captured)
+         end
+         make()
+         collectgarbage()
+         collectgarbage()",
+    );
+    assert_eq!(host.told.get(), "closed closed");
+}
+
+#[test]
+fn dropping_the_runtime_with_an_open_bridge_table_runs_its_rust_close_callbacks() {
+    let host = Host::new();
+    // A close callback that drops a subscription to its own table, and reaches for the table.
+    let reached: Arc<Mutex<Vec<String>>> = Arc::default();
+    let tidy = {
+        let reached = Arc::clone(&reached);
+        let subscriptions = Arc::clone(&host.subscriptions);
+        host.rt
+            .lua()
+            .create_function(move |_, t: bridge::Table| {
+                let other = t.subscribe(|_, _| {});
+                let reached = Arc::clone(&reached);
+                let handle = t.clone();
+                let subscription = t.subscribe_with_close(
+                    |_, _| {},
+                    move || {
+                        drop(other);
+                        let mut reached = reached.lock().unwrap();
+                        reached.push(format!("set: {}", handle.set("a", 2).is_err()));
+                        reached.push(format!("close: {:?}", handle.close().is_ok()));
+                    },
+                );
+                subscriptions.lock().unwrap().push(subscription);
+                Ok(())
+            })
+            .unwrap()
+    };
+    host.rt.lua().globals().set("tidy", tidy).unwrap();
+    host.eval::<()>(
+        "held = bridge.table({ a = 1 })
+         host.watch(held)
+         tidy(held)
+         bridge.table.subscribe(held, print, function() error('not to be called') end)",
+    );
+    let Host {
+        rt,
+        told,
+        subscriptions,
+        ..
+    } = host;
+    drop(rt);
+    assert_eq!(told.get(), "closed");
+    drop(subscriptions);
+    assert_eq!(reached.lock().unwrap().join(", "), "set: true, close: true");
+}
+
+#[test]
+fn a_close_callback_may_drop_the_runtime_it_was_closed_from() {
+    let rt: Arc<Mutex<Option<Runtime>>> =
+        Arc::new(Mutex::new(Some(Runtime::new(Profile::Trusted).unwrap())));
+    let (kept, subscription) = {
+        let guard = rt.lock().unwrap();
+        let runtime = guard.as_ref().unwrap();
+        let t: bridge::Table = eval_in(runtime, "held = bridge.table() return held");
+        let rt = Arc::clone(&rt);
+        let subscription =
+            t.subscribe_with_close(|_, _| {}, move || drop(rt.lock().unwrap().take()));
+        (t, subscription)
+    };
+    kept.close().unwrap();
+    assert!(
+        rt.lock().unwrap().is_none(),
+        "the close callback did not run"
+    );
+    drop(subscription);
+    assert!(kept.get::<Value>("a").is_err());
 }
 
 // -- Who has it --------------------------------------------------------------------------------

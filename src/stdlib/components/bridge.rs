@@ -23,6 +23,13 @@
 //! or unsubscribe. Nor is a subscriber dropped under one, since it may own a subscription whose
 //! drop takes it.
 //!
+//! A Bridge table ends by being closed: by `bridge.table.close`, by [`Table::close`], or by the
+//! userdata's `Drop`, when it is collected or the runtime is dropped. Each subscriber is taken out
+//! in turn and told by its close callback, outside any lock, so a close callback may drop a
+//! subscription. `Drop` has no `Lua`, and Lua may be tearing down, so it tells only the Rust close
+//! callbacks, which take none; a Lua one is collected with the table. The flag that it is closed
+//! is in [`TableState`], so that the host's handles find it without calling into Lua.
+//!
 //! A batch holds back the changes made inside it, and the outermost tells them as one list when
 //! it ends. They hold Lua values, so they are a user value too, for as long as the batch is open,
 //! which is as long as the call to `bridge.table.batch` is on the stack; the depth, which is not
@@ -33,7 +40,7 @@
 //! to `lua/bridge.lua`, which returns it.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use mlua::{
@@ -66,12 +73,13 @@ const HANDLES: &str = "avarice.bridge.handles";
 /// lock, as one call, even when the host makes it from another thread.
 const HOST_READ: &str = "avarice.bridge.read";
 const HOST_WRITE: &str = "avarice.bridge.write";
+const HOST_CLOSE: &str = "avarice.bridge.close";
 
 /// Where `rust_half` keeps the Lua function that copies a batch's list for a Lua subscriber.
 const COPY_CHANGES: &str = "avarice.bridge.copy";
 
-// User values, by index. Each userdata numbers its own from 1: `BACKING`, `LUA_SUBSCRIBERS` and
-// `PENDING` are a Bridge table's, and `SUBSCRIBED_TO` a subscription handle's.
+// User values, by index. Each userdata numbers its own from 1: `BACKING`, `LUA_SUBSCRIBERS`,
+// `PENDING` and `LUA_ON_CLOSE` are a Bridge table's, and `SUBSCRIBED_TO` a subscription handle's.
 
 /// The user value of a Bridge table's userdata that holds its backing table.
 const BACKING: usize = 1;
@@ -83,6 +91,10 @@ const LUA_SUBSCRIBERS: usize = 2;
 /// The user value of a Bridge table's userdata that holds, while a batch is open, the changes it
 /// will tell when it ends: a list of `{ key, old, new }` tables, in write order.
 const PENDING: usize = 3;
+
+/// The user value of a Bridge table's userdata that holds its Lua subscribers' close callbacks, by
+/// subscription id, once one has been given.
+const LUA_ON_CLOSE: usize = 4;
 
 /// The user value of a subscription handle's userdata that holds the Bridge table it is of.
 const SUBSCRIBED_TO: usize = 1;
@@ -117,6 +129,8 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
         self::write(lua, &handled(lua, id)?, key, value)
     })?;
     lua.set_named_registry_value(HOST_WRITE, write)?;
+    let host_close = lua.create_function(|lua, id: u64| close(lua, &handled(lua, id)?))?;
+    lua.set_named_registry_value(HOST_CLOSE, host_close)?;
 
     let table_fn = lua.create_table()?;
     let table_meta = lua.create_table()?;
@@ -134,15 +148,32 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
         "subscribe",
         lua.create_function(|lua, values: MultiValue| {
             const WHAT: &str = "bridge.table.subscribe";
-            let [this, subscriber] = args(values, WHAT)?;
-            let this = bridge_table(this, WHAT)?;
+            let [this, subscriber, on_close] = args(values, WHAT)?;
+            let this = open_table(this, WHAT)?;
             let Value::Function(subscriber) = subscriber else {
                 return Err(error(format!(
                     "{WHAT}: expected a function, got {}",
                     subscriber.type_name()
                 )));
             };
-            subscribe_lua(lua, this, subscriber)
+            let on_close = match on_close {
+                Value::Nil => None,
+                Value::Function(on_close) => Some(on_close),
+                other => {
+                    return Err(error(format!(
+                        "{WHAT}: expected a function for on_close, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
+            subscribe_lua(lua, this, subscriber, on_close)
+        })?,
+    )?;
+    table_fn.set(
+        "close",
+        lua.create_function(|lua, values: MultiValue| {
+            let [this] = args(values, "bridge.table.close")?;
+            close(lua, &bridge_table(this, "bridge.table.close")?)
         })?,
     )?;
 
@@ -153,7 +184,7 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
     let run = lua.create_function(move |lua, values: MultiValue| {
         const WHAT: &str = "bridge.table.batch";
         let [this, body] = args(values, WHAT)?;
-        let this = bridge_table(this, WHAT)?;
+        let this = open_table(this, WHAT)?;
         let Value::Function(body) = body else {
             return Err(error(format!(
                 "{WHAT}: expected a function, got {}",
@@ -182,7 +213,7 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
                 return Err(error(format!("{WHAT}: wrong number of arguments")));
             }
             let [this, pos, value] = args(values, WHAT)?;
-            let this = bridge_table(this, WHAT)?;
+            let this = open_table(this, WHAT)?;
             let (pos, value) = match given {
                 2 => (None, pos),
                 _ => (Some(position(lua, pos, WHAT)?), value),
@@ -195,7 +226,7 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
         lua.create_function(|lua, values: MultiValue| {
             const WHAT: &str = "bridge.table.remove";
             let [this, pos] = args(values, WHAT)?;
-            let this = bridge_table(this, WHAT)?;
+            let this = open_table(this, WHAT)?;
             let pos = match pos {
                 Value::Nil => None,
                 pos => Some(position(lua, pos, WHAT)?),
@@ -376,6 +407,7 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
         id: next_id(),
         subscribers: Mutex::new(Vec::new()),
         batch_depth: AtomicUsize::new(0),
+        closed: AtomicBool::new(false),
     };
     let this = lua.create_userdata(BridgeTable(Arc::new(state)))?;
     this.set_nth_user_value(BACKING, backing)?;
@@ -399,6 +431,15 @@ fn bridge_table(value: Value, what: &str) -> Result<AnyUserData> {
             other.type_name()
         ))
     })
+}
+
+/// `value` as a Bridge table's userdata that is not closed, or an error naming `what`.
+fn open_table(value: Value, what: &str) -> Result<AnyUserData> {
+    let this = bridge_table(value, what)?;
+    if state_of(&this)?.is_closed() {
+        return Err(is_closed(what));
+    }
+    Ok(this)
 }
 
 /// The backing table of `this`, a Bridge table's userdata from [`bridge_table`].
@@ -432,10 +473,14 @@ fn write(lua: &Lua, this: &AnyUserData, key: Value, value: Value) -> Result<()> 
         Value::Number(n) if n.is_nan() => return Err(error("index is NaN".to_owned())),
         _ => {}
     }
+    let state = state_of(this)?;
+    if state.is_closed() {
+        return Err(is_closed(TABLE_NAME));
+    }
     let backing = backing(this)?;
     let old: Value = backing.raw_get(&key)?;
     backing.raw_set(&key, &value)?;
-    if state_of(this)?.batch_depth.load(Ordering::Relaxed) > 0 {
+    if state.batch_depth.load(Ordering::Relaxed) > 0 {
         let pending = match this.nth_user_value::<Option<LuaTable>>(PENDING)? {
             Some(pending) => pending,
             None => {
@@ -488,7 +533,11 @@ fn is_limit(e: &mlua::Error) -> bool {
 /// a Lua subscriber's list is copied in Lua, whole.
 fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
     let state = state_of(this)?;
-    let subscribers = state.subscribers().clone();
+    let subscribers: Vec<(u64, Subscriber)> = state
+        .subscribers()
+        .iter()
+        .map(|each| (each.id, each.subscriber.clone()))
+        .collect();
     if subscribers.is_empty() {
         return Ok(());
     }
@@ -569,28 +618,124 @@ fn rust_changes(pending: &LuaTable, range: std::ops::RangeInclusive<usize>) -> R
         .collect()
 }
 
-/// `bridge.table.subscribe(t, fn)`: adds `subscriber`, kept in a user value of `this` so that the
-/// collector traces it, and gives back a handle whose `unsubscribe` removes it.
-fn subscribe_lua(lua: &Lua, this: AnyUserData, subscriber: Function) -> Result<AnyUserData> {
+/// `bridge.table.subscribe(t, fn, on_close?)`: adds `subscriber`, and `on_close` if it is given,
+/// kept in user values of `this` so that the collector traces them, and gives back a handle whose
+/// `unsubscribe` removes them.
+fn subscribe_lua(
+    lua: &Lua,
+    this: AnyUserData,
+    subscriber: Function,
+    on_close: Option<Function>,
+) -> Result<AnyUserData> {
     let state = state_of(&this)?;
-    let lua_subscribers = match this.nth_user_value::<Option<LuaTable>>(LUA_SUBSCRIBERS)? {
-        Some(table) => table,
-        None => {
-            let table = lua.create_table()?;
-            this.set_nth_user_value(LUA_SUBSCRIBERS, &table)?;
-            table
-        }
-    };
     let id = next_id();
-    lua_subscribers.raw_set(id, subscriber)?;
-    state.subscribers().push((id, Subscriber::Lua));
+    user_table(lua, &this, LUA_SUBSCRIBERS)?.raw_set(id, subscriber)?;
+    if let Some(on_close) = on_close {
+        user_table(lua, &this, LUA_ON_CLOSE)?.raw_set(id, on_close)?;
+    }
+    state.subscribers().push(Entry {
+        id,
+        subscriber: Subscriber::Lua,
+        on_close: None,
+    });
     let handle = lua.create_userdata(LuaSubscription { state, id })?;
     handle.set_nth_user_value(SUBSCRIBED_TO, this)?;
     Ok(handle)
 }
 
+/// The table in the user value `n` of `this`, made and set there if there is none yet.
+fn user_table(lua: &Lua, this: &AnyUserData, n: usize) -> Result<LuaTable> {
+    match this.nth_user_value::<Option<LuaTable>>(n)? {
+        Some(table) => Ok(table),
+        None => {
+            let table = lua.create_table()?;
+            this.set_nth_user_value(n, &table)?;
+            Ok(table)
+        }
+    }
+}
+
+/// `bridge.table.close(t)`, and [`Table::close`]: closes `this`, if it is not closed already, and
+/// tells every subscriber once, in the order they subscribed, by calling its close callback, Lua's
+/// and Rust's alike. Each is taken out before it is called, so one that unsubscribes another before
+/// its turn keeps it from being told.
+///
+/// Inside a batch, the changes the batch holds back are told first, so that every write made before
+/// the close is told before it; the batch then has nothing left to tell when it ends, and any write
+/// after the close raises.
+///
+/// A Lua close callback that raises is reported, as a subscriber is, and the next is told. A limit,
+/// the run cancelled or timed out or out of memory, ends the telling of Lua's; Rust's are still
+/// told, since this is the only time they can be, and the limit then goes on.
+fn close(lua: &Lua, this: &AnyUserData) -> Result<()> {
+    let state = state_of(this)?;
+    if !state.mark_closed() {
+        return Ok(());
+    }
+    let lua_half = (|| {
+        if state.batch_depth.load(Ordering::Relaxed) > 0 {
+            let pending = this.nth_user_value::<Option<LuaTable>>(PENDING)?;
+            this.set_nth_user_value(PENDING, Value::Nil)?;
+            if let Some(pending) = pending {
+                tell(lua, this, Changes::Batch(&pending))?;
+            }
+        }
+        let on_close: Option<LuaTable> = this.nth_user_value(LUA_ON_CLOSE)?;
+        this.set_nth_user_value(LUA_SUBSCRIBERS, Value::Nil)?;
+        this.set_nth_user_value(LUA_ON_CLOSE, Value::Nil)?;
+        Ok(on_close)
+    })();
+    let (mut on_close, mut failed) = match lua_half {
+        Ok(on_close) => (on_close, None),
+        Err(e) => (None, Some(e)),
+    };
+    while let Some(entry) = state.next_to_close() {
+        if let Some(lua_on_close) = &on_close {
+            let called = lua_on_close
+                .raw_get::<Option<Function>>(entry.id)
+                .and_then(|lua_on_close| lua_on_close.map_or(Ok(()), |f| f.call(())));
+            match called {
+                Ok(()) => {}
+                Err(e) if is_limit(&e) => {
+                    on_close = None;
+                    failed = Some(e);
+                }
+                Err(e) => eprintln!("Error running a {TABLE_NAME} close callback: {e}"),
+            }
+        }
+        entry.close_rust();
+    }
+    failed.map_or(Ok(()), Err)
+}
+
+/// The error an operation `what` raises on a Bridge table that is closed.
+fn is_closed(what: &str) -> mlua::Error {
+    error(format!("{what}: the Bridge table is closed"))
+}
+
 /// A Rust subscriber to a Bridge table.
 type RustSubscriber = dyn Fn(&Lua, &[Change]) + Send + Sync;
+
+/// What a Rust subscriber is told when the table closes, with no `Lua`, since collection and the
+/// dropping of the runtime are where it may be.
+type OnClose = Box<dyn FnOnce() + Send>;
+
+/// One subscription to a Bridge table. A Rust one's close callback is here, and taken out to be
+/// called; a Lua one's is a user value of the userdata, as its function is.
+struct Entry {
+    id: u64,
+    subscriber: Subscriber,
+    on_close: Option<OnClose>,
+}
+
+impl Entry {
+    /// Calls the Rust close callback, if this has one, and drops the rest.
+    fn close_rust(self) {
+        if let Some(on_close) = self.on_close {
+            on_close();
+        }
+    }
+}
 
 /// One of a Bridge table's subscribers. A Lua one's function is not here but in the userdata's
 /// user value, under the same id, for the reasons the module's header gives.
@@ -603,25 +748,50 @@ enum Subscriber {
 /// The part of a Bridge table that is not Lua's, shared between its userdata and the host's
 /// handles. It holds no Lua value, for the reasons the module's header gives: the backing table
 /// and the Lua subscribers' functions are user values of the userdata, and so are the changes a
-/// batch holds back. It will hold whether the table is closed.
+/// batch holds back, and the Lua subscribers' close callbacks.
 struct TableState {
     /// The key the host's handles find the userdata by, in the table at [`HANDLES`].
     id: u64,
-    /// Every subscriber, Lua's and Rust's, by subscription id, in the order they subscribed.
-    subscribers: Mutex<Vec<(u64, Subscriber)>>,
+    /// Every subscriber, Lua's and Rust's, in the order they subscribed.
+    subscribers: Mutex<Vec<Entry>>,
     /// How many batches of this table are open, one inside another. Only the Lua thread, under the
     /// Lua lock, reads or writes it.
     batch_depth: AtomicUsize,
+    /// Whether the table has been closed, from either side or by being collected.
+    closed: AtomicBool,
 }
 
 impl TableState {
     /// The subscribers, locked. Never held across a call to one.
-    fn subscribers(&self) -> MutexGuard<'_, Vec<(u64, Subscriber)>> {
+    fn subscribers(&self) -> MutexGuard<'_, Vec<Entry>> {
         lock(&self.subscribers)
     }
 
     fn is_subscribed(&self, id: u64) -> bool {
-        self.subscribers().iter().any(|(each, _)| *each == id)
+        self.subscribers().iter().any(|each| each.id == id)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    /// Marks the table closed, and gives whether it was open until now, so that only one close
+    /// tells the subscribers.
+    fn mark_closed(&self) -> bool {
+        !self.closed.swap(true, Ordering::SeqCst)
+    }
+
+    /// The first subscriber left, taken out, to be told of the close with the lock released.
+    fn next_to_close(&self) -> Option<Entry> {
+        let mut subscribers = self.subscribers();
+        (!subscribers.is_empty()).then(|| subscribers.remove(0))
+    }
+
+    /// Tells the Rust subscribers of the close, in the order they subscribed, and drops the rest.
+    fn close_rust(&self) {
+        while let Some(entry) = self.next_to_close() {
+            entry.close_rust();
+        }
     }
 
     /// Removes the subscriber `id`. It is dropped once the lock is released, since a Rust
@@ -629,7 +799,7 @@ impl TableState {
     fn unsubscribe(&self, id: u64) {
         let removed = {
             let mut subscribers = self.subscribers();
-            let at = subscribers.iter().position(|(each, _)| *each == id);
+            let at = subscribers.iter().position(|each| each.id == id);
             at.map(|at| subscribers.remove(at))
         };
         drop(removed);
@@ -637,8 +807,9 @@ impl TableState {
 }
 
 /// The userdata Lua holds a Bridge table as. Its first user value is the backing table, its
-/// second, once it has had a Lua subscriber, the Lua subscribers, and its third, while a batch is
-/// open and has been written to, the changes the batch holds back.
+/// second, once it has had a Lua subscriber, the Lua subscribers, its third, while a batch is open
+/// and has been written to, the changes the batch holds back, and its fourth, once a Lua subscriber
+/// has given one, the Lua close callbacks.
 struct BridgeTable(Arc<TableState>);
 
 impl UserData for BridgeTable {
@@ -674,6 +845,17 @@ impl UserData for BridgeTable {
     }
 }
 
+/// Collection closes a Bridge table nobody closed, and so does dropping the runtime, which collects
+/// everything. Only the Rust close callbacks are told: a Lua one is being collected with the table,
+/// and this has no `Lua` to call it with (ADR 0022).
+impl Drop for BridgeTable {
+    fn drop(&mut self) {
+        if self.0.mark_closed() {
+            self.0.close_rust();
+        }
+    }
+}
+
 /// The handle `bridge.table.subscribe` gives back. Its user value is the Bridge table, whose user
 /// value holds the subscriber's function.
 struct LuaSubscription {
@@ -706,10 +888,10 @@ impl UserData for LuaSubscription {
             };
             state.unsubscribe(id);
             let table: AnyUserData = handle.nth_user_value(SUBSCRIBED_TO)?;
-            if let Some(lua_subscribers) =
-                table.nth_user_value::<Option<LuaTable>>(LUA_SUBSCRIBERS)?
-            {
-                lua_subscribers.raw_set(id, Value::Nil)?;
+            for n in [LUA_SUBSCRIBERS, LUA_ON_CLOSE] {
+                if let Some(lua_table) = table.nth_user_value::<Option<LuaTable>>(n)? {
+                    lua_table.raw_set(id, Value::Nil)?;
+                }
             }
             Ok(())
         });
@@ -728,8 +910,9 @@ pub struct Change {
 /// The host's handle on a Bridge table, received from Lua through [`FromLua`].
 ///
 /// It holds the Bridge table weakly: Lua owns it, and collects it once no Lua value refers to it,
-/// whether or not the host still has a handle (ADR 0022). Reading or writing through a handle on
-/// one that has been collected, or whose `Lua` is gone, returns an error.
+/// whether or not the host still has a handle (ADR 0022), and so closes it. Writing through a
+/// handle on one that is closed returns an error, and so does reading or writing through one on
+/// one that has been collected, or whose `Lua` is gone.
 ///
 /// Even its hold on the part of the table that is not Lua's is weak, so that a subscriber may
 /// keep a handle on its own table without the two keeping each other alive.
@@ -749,8 +932,14 @@ impl Table {
     /// Writes `value` at `key`, as a script's `t[key] = value` does, and tells every subscriber,
     /// Lua's included, before it returns. The write and the telling are one call into Lua, so they
     /// hold the Lua lock throughout, from whichever thread this is called.
+    ///
+    /// Writing to one that is closed returns an error, without calling into Lua, so a close
+    /// callback may try it even while the table is being collected.
     pub fn set(&self, key: impl IntoLua, value: impl IntoLua) -> Result<()> {
-        self.call(HOST_WRITE, (self.id, key, value))
+        match self.state.upgrade() {
+            Some(state) if state.is_closed() => Err(is_closed(TABLE_NAME)),
+            _ => self.call(HOST_WRITE, (self.id, key, value)),
+        }
     }
 
     /// Calls `subscriber` with every change to the table from now on, until the returned
@@ -764,16 +953,64 @@ impl Table {
     /// A batch of more than 10,000 changes reaches it as several calls, in order, each of at most
     /// 10,000, so that mlua never holds the values of more than that many at once.
     ///
-    /// Subscribing to one that has been collected gives a subscription that is never told.
+    /// Subscribing to one that is closed, or has been collected, gives a subscription that is
+    /// never told.
     pub fn subscribe<F>(&self, subscriber: F) -> Subscription
     where
         F: Fn(&Lua, &[Change]) + Send + Sync + 'static,
     {
+        self.add(Arc::new(subscriber), None)
+    }
+
+    /// As [`subscribe`](Self::subscribe), and calls `on_close` once when the table closes: when
+    /// either side closes it, when it is collected, or when the runtime is dropped. It is given no
+    /// `Lua`, since in the last two there is none to give, and it runs with no lock of this
+    /// module's held, so it may drop a [`Subscription`]. It is not called once the subscription
+    /// is dropped.
+    ///
+    /// Subscribing to one that is closed, or has been collected, calls `on_close` at once, before
+    /// this returns.
+    pub fn subscribe_with_close<F, C>(&self, subscriber: F, on_close: C) -> Subscription
+    where
+        F: Fn(&Lua, &[Change]) + Send + Sync + 'static,
+        C: FnOnce() + Send + 'static,
+    {
+        self.add(Arc::new(subscriber), Some(Box::new(on_close)))
+    }
+
+    /// Closes the table, as `bridge.table.close` does, telling every subscriber, Lua's included,
+    /// before it returns: writes then fail, and reads still work. Closing one that is closed, or
+    /// has been collected, does nothing.
+    pub fn close(&self) -> Result<()> {
+        match self.state.upgrade() {
+            Some(state) if !state.is_closed() => self.call(HOST_CLOSE, self.id),
+            _ => Ok(()),
+        }
+    }
+
+    fn add(&self, subscriber: Arc<RustSubscriber>, on_close: Option<OnClose>) -> Subscription {
         let id = next_id();
-        if let Some(state) = self.state.upgrade() {
-            state
-                .subscribers()
-                .push((id, Subscriber::Rust(Arc::new(subscriber))));
+        let entry = Entry {
+            id,
+            subscriber: Subscriber::Rust(subscriber),
+            on_close,
+        };
+        // Whether it is closed is asked under the lock that a close takes each subscriber out
+        // under, so that the close is sure to find one added while it runs.
+        let refused = match self.state.upgrade() {
+            Some(state) => {
+                let mut subscribers = state.subscribers();
+                if state.is_closed() {
+                    Some(entry)
+                } else {
+                    subscribers.push(entry);
+                    None
+                }
+            }
+            None => Some(entry),
+        };
+        if let Some(on_close) = refused.and_then(|entry| entry.on_close) {
+            on_close();
         }
         Subscription {
             state: Weak::clone(&self.state),
@@ -819,9 +1056,10 @@ impl FromLua for Table {
     }
 }
 
-/// A Rust subscription to a Bridge table, from [`Table::subscribe`]. Dropping it unsubscribes, at
-/// once: a subscriber is not called again once its subscription is dropped, even by a write it is
-/// being told of.
+/// A Rust subscription to a Bridge table, from [`Table::subscribe`] or
+/// [`Table::subscribe_with_close`]. Dropping it unsubscribes, at once: a subscriber is not called
+/// again once its subscription is dropped, even by a write it is being told of, and its close
+/// callback is not called.
 #[must_use = "dropping a Subscription unsubscribes"]
 pub struct Subscription {
     state: Weak<TableState>,

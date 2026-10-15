@@ -31,12 +31,25 @@ local Subscription = {}
 function Subscription:unsubscribe() end
 
 ---Calls `fn` with the changes of every write to `t` from now on, inside the write, once it is in
----place. A subscriber that raises does not fail the write: its error goes to standard error, and
----the other subscribers are still told.
+---place, and `on_close`, if it is given, once when `t` is closed. A subscriber that raises does not
+---fail the write or the close: its error goes to standard error, and the other subscribers are
+---still told. Subscribing to a closed table raises.
+---
+---`on_close` is called only when `t` is closed by `bridge.table.close` or by the host. A table
+---collected unclosed takes `on_close` with it, uncalled.
 ---@param t bridge.Table
 ---@param fn fun(changes: bridge.Change[])
+---@param on_close fun()?
 ---@return bridge.Subscription
-function bridge.table.subscribe(t, fn) end
+function bridge.table.subscribe(t, fn, on_close) end
+
+---Closes `t`, calling every subscriber's `on_close`, Lua's and the host's, once, in the order they
+---subscribed. A closed table can be read and walked, but a write to it raises, and so do
+---`subscribe`, `batch`, `insert` and `remove`. Closing it again does nothing.
+---
+---Inside a batch of `t`, the batch's writes are told first, then the close.
+---@param t bridge.Table
+function bridge.table.close(t) end
 
 ---Calls `fn`, and tells every write it makes to `t`, however it makes it, as one list when it
 ---returns, in the order they were made; a key written twice is in the list twice. A batch inside
