@@ -53,9 +53,11 @@ its new one, with nil for a key that was not there or is no longer. In Rust that
 `{ key = k, old = o, new = n }`. One write is a list of one. `bridge.table.batch(t, fn)` gathers
 every write made to `t` during `fn`, however it is made, into one list in the order they were made,
 with no coalescing; batches inside it fold into the outermost; and if `fn` raises, the writes
-already made stay, are told, and the error is raised again. `bridge.table.insert(t, pos, value)`
-and `bridge.table.remove(t, pos)` are batches, so the shifting they do is one list. A Bridge
-cell subscriber is given `(old, new)`, since a cell has no keys to list.
+already made stay, are told, and the error is raised again. `fn` cannot yield: a suspended batch
+would hold back every other writer's changes to `t` until it resumed.
+`bridge.table.insert(t, pos, value)` and `bridge.table.remove(t, pos)` are batches, so the shifting
+they do is one list. A Bridge cell subscriber is given `(old, new)`, since a cell has no keys to
+list.
 
 **To everyone.** Every subscriber is told of every change, the writer's own included, from Lua or
 from Rust. A write from Rust tells Lua's subscribers inside that call, holding the Lua lock, as any

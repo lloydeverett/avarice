@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use avarice::mlua::{self, Value};
-use avarice::{CancelHandle, Error, Profile, Runtime, StdModules, bridge, was_cancelled};
+use avarice::{
+    CancelHandle, Error, Profile, Runtime, StdModules, bridge, was_cancelled, was_out_of_memory,
+};
 
 /// Runs `body` with `bridge` bound to the module, and returns what it returns.
 fn eval<R: mlua::FromLuaMulti>(body: &str) -> R {
@@ -1184,6 +1186,59 @@ fn bridge_insert_and_remove_check_their_arguments() {
         let message = raises(call);
         assert!(message.contains(expected), "{call}: {message}");
     }
+}
+
+#[test]
+fn a_batch_that_runs_out_of_memory_ends_as_out_of_memory() {
+    // With no subscriber, and with a Lua and a Rust one: each is told, or tries to be, before the
+    // batch's own error goes on.
+    for watched in [
+        "",
+        "host.watch(t) bridge.table.subscribe(t, function() end)",
+    ] {
+        let rt = Runtime::builder(Profile::Trusted)
+            .memory_limit(8 * 1024 * 1024)
+            .build()
+            .unwrap();
+        let host = Host::on(rt);
+        let err = host
+            .rt
+            .block_on(host.rt.exec(
+                format!(
+                    "local bridge = require('bridge')
+                     local host = require('host')
+                     local t = bridge.table()
+                     {watched}
+                     bridge.table.batch(t, function()
+                         local i = 0
+                         while true do i = i + 1 t[i] = {{}} end
+                     end)"
+                ),
+                "=test",
+            ))
+            .unwrap_err();
+        let Error::Lua(err) = err else {
+            panic!("expected a Lua error, got {err:?}");
+        };
+        assert!(
+            was_out_of_memory(&err),
+            "{watched}: expected OOM, got {err}"
+        );
+    }
+}
+
+#[test]
+fn a_batch_whose_fn_yields_raises_that_it_cannot() {
+    let got: String = eval(
+        "local t = bridge.table()
+         local inside = coroutine.wrap(function()
+             return pcall(bridge.table.batch, t, function() coroutine.yield() end)
+         end)
+         local ok, err = inside()
+         assert(not ok)
+         return tostring(err)",
+    );
+    assert_eq!(got, "bridge.table.batch: fn cannot yield");
 }
 
 #[test]

@@ -41,7 +41,10 @@ function bridge.table.subscribe(t, fn) end
 ---Calls `fn`, and tells every write it makes to `t`, however it makes it, as one list when it
 ---returns, in the order they were made; a key written twice is in the list twice. A batch inside
 ---a batch of the same table joins the outermost. If `fn` raises, its writes stay, are told, and
----the error is raised again.
+---the error is raised again. It gives back nothing.
+---
+---`fn` cannot yield: a suspended batch would hold back every other write to `t` until it resumed,
+---so a yield inside it raises `bridge.table.batch: fn cannot yield`.
 ---@param t bridge.Table
 ---@param fn fun()
 function bridge.table.batch(t, fn) end
@@ -56,6 +59,9 @@ function bridge.table.insert(t, pos, value) end
 
 ---As `table.remove`: takes out the item at `pos`, or the last, moving the items after it down one,
 ---and gives it back. Its writes are one batch, so subscribers are told them as one list.
+---
+---Its writes are the ones `table.remove` makes, so on an empty table, or at `#t + 1`, it tells
+---the write of nil over nil that `table.remove` makes there, at key 0 or `#t + 1`.
 ---@param t bridge.Table
 ---@param pos integer?
 ---@return any

@@ -67,6 +67,9 @@ const HANDLES: &str = "avarice.bridge.handles";
 const HOST_READ: &str = "avarice.bridge.read";
 const HOST_WRITE: &str = "avarice.bridge.write";
 
+/// Where `rust_half` keeps the Lua function that copies a batch's list for a Lua subscriber.
+const COPY_CHANGES: &str = "avarice.bridge.copy";
+
 // User values, by index. Each userdata numbers its own from 1: `BACKING`, `LUA_SUBSCRIBERS` and
 // `PENDING` are a Bridge table's, and `SUBSCRIBED_TO` a subscription handle's.
 
@@ -143,10 +146,10 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
         })?,
     )?;
 
-    // `pcall` as it was when the module was built, as with `next` above. `batch` runs `fn` under it
-    // from Rust, so that the error comes back as the value it was raised with, which an
-    // `mlua::Error` would make a string; and the Lua below raises it again, which Rust cannot.
-    let pcall: Function = lua.globals().raw_get("pcall")?;
+    // Built from Lua as it was when the module was built, as with `next` above. See [`HELPERS`].
+    let (protect, make_batch, copy): (Function, Function, Function) =
+        lua.load(HELPERS).set_name("=[bridge]").call(())?;
+    lua.set_named_registry_value(COPY_CHANGES, copy)?;
     let run = lua.create_function(move |lua, values: MultiValue| {
         const WHAT: &str = "bridge.table.batch";
         let [this, body] = args(values, WHAT)?;
@@ -157,14 +160,18 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
                 body.type_name()
             )));
         };
-        batched(lua, &this, || pcall.call::<MultiValue>(body))
+        batched(lua, &this, || {
+            let (ok, handled, raised): (bool, bool, Value) = protect.call(body)?;
+            match raised {
+                _ if ok => Ok((true, Value::Nil)),
+                // Lua calls no handler for a memory error, and gives only its message.
+                raised if !handled => Err(mlua::Error::MemoryError(raised.to_string()?)),
+                Value::Error(raised) if is_limit(&raised) => Err(*raised),
+                raised => Ok((false, raised)),
+            }
+        })
     })?;
-    table_fn.set(
-        "batch",
-        lua.load(BATCH)
-            .set_name("=[bridge]")
-            .call::<Function>(run)?,
-    )?;
+    table_fn.set("batch", make_batch.call::<Function>(run)?)?;
 
     table_fn.set(
         "insert",
@@ -202,22 +209,53 @@ pub fn rust_half(lua: &Lua) -> Result<Value> {
     Ok(Value::Table(module))
 }
 
-/// `bridge.table.batch(t, fn)`, given the Rust half that runs `fn` under `pcall` inside a batch and
-/// gives back what `pcall` did. Raises `fn`'s error again, with the value it was raised with, once
-/// the batch has been told.
-const BATCH: &str = "
-    local run = ...
-    local error = error
-    local function finish(ok, ...)
-        if not ok then error((...), 0) end
+/// The parts of `bridge.table.batch` that are Lua, since Rust can neither raise a Lua value as it
+/// is nor read the value a function raised without making it a string; and the copying of a
+/// batch's list for a Lua subscriber, which stays in Lua so that a long list never takes a Rust
+/// reference per value.
+///
+/// `protect(fn)` runs `fn` and gives back whether it returned, whether a handler saw it raise
+/// (Lua calls none for a memory error), and what it raised. A yield cannot reach past the Rust
+/// that calls it, and that is said plainly. `batch(run)` makes `bridge.table.batch` from the Rust
+/// half, raising again what `fn` raised. `copy(pending)` copies a list of changes.
+const HELPERS: &str = "
+    local xpcall, error = xpcall, error
+    local cannot_yield = {
+        ['attempt to yield across a C-call boundary'] = true,
+        ['attempt to yield from outside a coroutine'] = true,
+    }
+    local function protect(fn)
+        local handled = false
+        local function handler(raised)
+            handled = true
+            if cannot_yield[raised] then return 'bridge.table.batch: fn cannot yield' end
+            return raised
+        end
+        local function settle(ok, raised) return ok, handled, raised end
+        return settle(xpcall(fn, handler))
     end
-    return function(...) finish(run(...)) end
+    local function batch(run)
+        return function(...)
+            local ok, raised = run(...)
+            if not ok then error(raised, 0) end
+        end
+    end
+    local function copy(pending)
+        local list = {}
+        for i = 1, #pending do
+            local change = pending[i]
+            list[i] = { key = change.key, old = change.old, new = change.new }
+        end
+        return list
+    end
+    return protect, batch, copy
 ";
 
 /// Runs `body` inside a batch of `this`: every write to `this` until it returns, by any path, is
 /// held back, and the outermost batch tells them all as one list, in write order, when it ends,
 /// whether or not `body` failed. The list is taken before it is told, so a subscriber that writes
-/// is told of its write on its own, as a write outside a batch is.
+/// is told of its write on its own, as a write outside a batch is. A limit error from `body` is
+/// what goes on, whatever the telling does, and after a memory error nothing is told.
 fn batched<R>(lua: &Lua, this: &AnyUserData, body: impl FnOnce() -> Result<R>) -> Result<R> {
     let state = state_of(this)?;
     let (outermost, result) = {
@@ -228,25 +266,27 @@ fn batched<R>(lua: &Lua, this: &AnyUserData, body: impl FnOnce() -> Result<R>) -
         }
         (depth.outermost, body())
     };
-    if outermost {
-        let pending: Option<LuaTable> = this.nth_user_value(PENDING)?;
-        this.set_nth_user_value(PENDING, Value::Nil)?;
-        if let Some(pending) = pending {
-            let changes = pending
-                .sequence_values::<LuaTable>()
-                .map(|entry| {
-                    let entry = entry?;
-                    Ok(Change {
-                        key: entry.raw_get("key")?,
-                        old: entry.raw_get("old")?,
-                        new: entry.raw_get("new")?,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
-            tell(lua, this, &changes)?;
+    if !outermost {
+        return result;
+    }
+    let pending = this.nth_user_value::<Option<LuaTable>>(PENDING);
+    let cleared = this.set_nth_user_value(PENDING, Value::Nil);
+    match result {
+        // Nothing is told once memory has run out: there is none to tell with, and mlua panics
+        // rather than failing when it cannot make room for a Rust subscriber's values.
+        Err(e) if was_out_of_memory(&e) => Err(e),
+        result => {
+            let told = match (pending, cleared) {
+                (Ok(Some(pending)), Ok(())) => tell(lua, this, Changes::Batch(&pending)),
+                (Ok(None), Ok(())) => Ok(()),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            };
+            match result {
+                Err(e) if is_limit(&e) => Err(e),
+                result => told.and(result),
+            }
         }
     }
-    result
 }
 
 /// A batch's hold on its table's batch depth, given back when it is dropped, even by a panic.
@@ -404,18 +444,36 @@ fn write(lua: &Lua, this: &AnyUserData, key: Value, value: Value) -> Result<()> 
                 pending
             }
         };
-        let entry = lua.create_table_with_capacity(0, 3)?;
-        entry.raw_set("key", key)?;
-        entry.raw_set("old", old)?;
-        entry.raw_set("new", value)?;
-        return pending.raw_push(entry);
+        return pending.raw_push(change_entry(lua, &key, &old, &value)?);
     }
     let change = Change {
         key,
         old,
         new: value,
     };
-    tell(lua, this, std::slice::from_ref(&change))
+    tell(lua, this, Changes::One(&change))
+}
+
+/// One change as Lua is given it, and as a batch holds it back: `{ key = k, old = o, new = n }`.
+fn change_entry(lua: &Lua, key: &Value, old: &Value, new: &Value) -> Result<LuaTable> {
+    let entry = lua.create_table_with_capacity(0, 3)?;
+    entry.raw_set("key", key)?;
+    entry.raw_set("old", old)?;
+    entry.raw_set("new", new)?;
+    Ok(entry)
+}
+
+/// What [`tell`] tells: one write's change, or a batch's list of them, as Lua holds it.
+#[derive(Clone, Copy)]
+enum Changes<'a> {
+    One(&'a Change),
+    Batch(&'a LuaTable),
+}
+
+/// Whether `e` is not a failure but the runtime ending the run: a cancel, a timeout, or the memory
+/// limit.
+fn is_limit(e: &mlua::Error) -> bool {
+    was_cancelled(e) || was_timed_out(e) || was_out_of_memory(e)
 }
 
 /// Tells every subscriber of `this` of `changes`, in the order they subscribed.
@@ -424,18 +482,32 @@ fn write(lua: &Lua, this: &AnyUserData, key: Value, value: Value) -> Result<()> 
 /// the table, which nests, or subscribe or unsubscribe. One that subscribes while this runs is not
 /// in the copy, so it hears only later changes; one that unsubscribes is looked for again before
 /// it is called, so it stops at once.
-fn tell(lua: &Lua, this: &AnyUserData, changes: &[Change]) -> Result<()> {
+///
+/// A batch's list is made into [`Change`]s only for a Rust subscriber, since each value of one
+/// holds a slot of mlua's reference stack: a Lua subscriber's list is copied in Lua.
+fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
     let state = state_of(this)?;
     let subscribers = state.subscribers().clone();
     if subscribers.is_empty() {
         return Ok(());
     }
     let lua_subscribers: Option<LuaTable> = this.nth_user_value(LUA_SUBSCRIBERS)?;
+    let mut for_rust: Option<Vec<Change>> = None;
     for (id, subscriber) in subscribers {
         match subscriber {
             Subscriber::Rust(subscriber) => {
-                if state.is_subscribed(id) {
-                    subscriber(lua, changes);
+                if !state.is_subscribed(id) {
+                    continue;
+                }
+                match changes {
+                    Changes::One(change) => subscriber(lua, std::slice::from_ref(change)),
+                    Changes::Batch(pending) => {
+                        let list = match &mut for_rust {
+                            Some(list) => list,
+                            None => for_rust.insert(rust_changes(pending)?),
+                        };
+                        subscriber(lua, list);
+                    }
                 }
             }
             Subscriber::Lua => {
@@ -445,29 +517,44 @@ fn tell(lua: &Lua, this: &AnyUserData, changes: &[Change]) -> Result<()> {
                 let Some(subscriber) = lua_subscribers.raw_get::<Option<Function>>(id)? else {
                     continue;
                 };
-                let list = lua.create_table_with_capacity(changes.len(), 0)?;
-                for change in changes {
-                    let entry = lua.create_table_with_capacity(0, 3)?;
-                    entry.raw_set("key", &change.key)?;
-                    entry.raw_set("old", &change.old)?;
-                    entry.raw_set("new", &change.new)?;
-                    list.raw_push(entry)?;
-                }
+                let list = match changes {
+                    Changes::One(change) => {
+                        let list = lua.create_table_with_capacity(1, 0)?;
+                        list.raw_push(change_entry(lua, &change.key, &change.old, &change.new)?)?;
+                        list
+                    }
+                    Changes::Batch(pending) => lua
+                        .named_registry_value::<Function>(COPY_CHANGES)?
+                        .call(pending)?,
+                };
                 // ADR 0022: the write has succeeded whatever a subscriber does, and the others are
                 // still told. Reported as Astra reports a task's error, but on standard error. A
                 // limit is not the subscriber failing but the runtime ending the run, so it goes
                 // on out of the write.
                 match subscriber.call::<()>(list) {
                     Ok(()) => {}
-                    Err(e) if was_cancelled(&e) || was_timed_out(&e) || was_out_of_memory(&e) => {
-                        return Err(e);
-                    }
+                    Err(e) if is_limit(&e) => return Err(e),
                     Err(e) => eprintln!("Error running a {TABLE_NAME} subscriber: {e}"),
                 }
             }
         }
     }
     Ok(())
+}
+
+/// A batch's list, as Lua holds it, as [`Change`]s for a Rust subscriber.
+fn rust_changes(pending: &LuaTable) -> Result<Vec<Change>> {
+    pending
+        .sequence_values::<LuaTable>()
+        .map(|entry| {
+            let entry = entry?;
+            Ok(Change {
+                key: entry.raw_get("key")?,
+                old: entry.raw_get("old")?,
+                new: entry.raw_get("new")?,
+            })
+        })
+        .collect()
 }
 
 /// `bridge.table.subscribe(t, fn)`: adds `subscriber`, kept in a user value of `this` so that the
@@ -661,6 +748,11 @@ impl Table {
     /// place, and the script that wrote waits for it: one with slow work to do hands it off and
     /// returns. It may write to the table, which tells every subscriber of that write before it
     /// returns. An `mlua::Value` of the table that it keeps keeps the table alive.
+    ///
+    /// The list a batch tells holds an `mlua::Value` for each key, old value and new value that is
+    /// a string, table, function, userdata or thread, and mlua has room for about a million of
+    /// those at once: a batch past that, about 330,000 changes of such values, panics when it is
+    /// told to a Rust subscriber. A Lua subscriber has no such ceiling.
     ///
     /// Subscribing to one that has been collected gives a subscription that is never told.
     pub fn subscribe<F>(&self, subscriber: F) -> Subscription
