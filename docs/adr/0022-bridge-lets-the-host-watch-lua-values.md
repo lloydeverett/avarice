@@ -54,7 +54,9 @@ its new one, with nil for a key that was not there or is no longer. In Rust that
 every write made to `t` during `fn`, however it is made, into one list in the order they were made,
 with no coalescing; batches inside it fold into the outermost; and if `fn` raises, the writes
 already made stay, are told, and the error is raised again. `fn` cannot yield: a suspended batch
-would hold back every other writer's changes to `t` until it resumed.
+would hold back every other writer's changes to `t` until it resumed. A batch of more than 10,000
+changes reaches a Rust subscriber as several calls, in order, each of at most 10,000, since mlua
+panics when it holds too many Lua values at once; a Lua subscriber still gets one list.
 `bridge.table.insert(t, pos, value)` and `bridge.table.remove(t, pos)` are batches, so the shifting
 they do is one list. A Bridge cell subscriber is given `(old, new)`, since a cell has no keys to
 list.

@@ -1242,6 +1242,50 @@ fn a_batch_whose_fn_yields_raises_that_it_cannot() {
 }
 
 #[test]
+fn a_batch_past_ten_thousand_changes_reaches_a_rust_subscriber_in_order_as_several_calls() {
+    let rt = Runtime::new(Profile::Trusted).unwrap();
+    let calls: Arc<Mutex<Vec<Vec<i64>>>> = Arc::default();
+    let subscriptions: Arc<Mutex<Vec<bridge::Subscription>>> = Arc::default();
+    let watch = {
+        let (calls, subscriptions) = (Arc::clone(&calls), Arc::clone(&subscriptions));
+        rt.lua()
+            .create_function(move |_, t: bridge::Table| {
+                let calls = Arc::clone(&calls);
+                let subscription = t.subscribe(move |_, changes| {
+                    let keys = changes.iter().map(|c| c.key.as_i64().unwrap()).collect();
+                    calls.lock().unwrap().push(keys);
+                });
+                subscriptions.lock().unwrap().push(subscription);
+                Ok(())
+            })
+            .unwrap()
+    };
+    let module = rt.lua().create_table().unwrap();
+    module.set("watch", watch).unwrap();
+    rt.register_module("host", module).unwrap();
+    // Each value is a table, so that every change holds a value mlua must keep a reference to.
+    let lua_lists: String = eval_in(
+        &rt,
+        "local t = bridge.table()
+         require('host').watch(t)
+         local lists = {}
+         bridge.table.subscribe(t, function(changes) lists[#lists + 1] = #changes end)
+         for _, n in ipairs({ 10000, 10001 }) do
+             bridge.table.batch(t, function()
+                 for i = 1, n do t[i] = {} end
+             end)
+         end
+         return table.concat(lists, ' ')",
+    );
+    assert_eq!(lua_lists, "10000 10001");
+    let calls = calls.lock().unwrap();
+    let sizes: Vec<usize> = calls.iter().map(Vec::len).collect();
+    assert_eq!(sizes, [10_000, 10_000, 1]);
+    let second: Vec<i64> = calls[1..].concat();
+    assert_eq!(second, (1..=10_001).collect::<Vec<i64>>());
+}
+
+#[test]
 fn batch_checks_its_arguments() {
     for (call, expected) in [
         (

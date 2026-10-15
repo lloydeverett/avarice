@@ -484,7 +484,8 @@ fn is_limit(e: &mlua::Error) -> bool {
 /// it is called, so it stops at once.
 ///
 /// A batch's list is made into [`Change`]s only for a Rust subscriber, since each value of one
-/// holds a slot of mlua's reference stack: a Lua subscriber's list is copied in Lua.
+/// holds a slot of mlua's reference stack, and then a slice at a time, of at most [`RUST_SLICE`]:
+/// a Lua subscriber's list is copied in Lua, whole.
 fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
     let state = state_of(this)?;
     let subscribers = state.subscribers().clone();
@@ -492,7 +493,6 @@ fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
         return Ok(());
     }
     let lua_subscribers: Option<LuaTable> = this.nth_user_value(LUA_SUBSCRIBERS)?;
-    let mut for_rust: Option<Vec<Change>> = None;
     for (id, subscriber) in subscribers {
         match subscriber {
             Subscriber::Rust(subscriber) => {
@@ -502,11 +502,18 @@ fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
                 match changes {
                     Changes::One(change) => subscriber(lua, std::slice::from_ref(change)),
                     Changes::Batch(pending) => {
-                        let list = match &mut for_rust {
-                            Some(list) => list,
-                            None => for_rust.insert(rust_changes(pending)?),
-                        };
-                        subscriber(lua, list);
+                        let len = pending.raw_len();
+                        let mut from = 1;
+                        while from <= len {
+                            let to = len.min(from + RUST_SLICE - 1);
+                            let slice = rust_changes(pending, from..=to)?;
+                            subscriber(lua, &slice);
+                            drop(slice);
+                            from = to + 1;
+                            if from <= len && !state.is_subscribed(id) {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -542,12 +549,17 @@ fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
     Ok(())
 }
 
-/// A batch's list, as Lua holds it, as [`Change`]s for a Rust subscriber.
-fn rust_changes(pending: &LuaTable) -> Result<Vec<Change>> {
-    pending
-        .sequence_values::<LuaTable>()
-        .map(|entry| {
-            let entry = entry?;
+/// The most changes a Rust subscriber is given in one call. A batch's list longer than this
+/// reaches it as several calls, in order, each slice's values dropped before the next is made, so
+/// that mlua never holds more than a slice of them: it has room for about a million, and panics
+/// rather than failing past that.
+const RUST_SLICE: usize = 10_000;
+
+/// The entries `range` of a batch's list, as Lua holds it, as [`Change`]s for a Rust subscriber.
+fn rust_changes(pending: &LuaTable, range: std::ops::RangeInclusive<usize>) -> Result<Vec<Change>> {
+    range
+        .map(|i| {
+            let entry: LuaTable = pending.raw_get(i)?;
             Ok(Change {
                 key: entry.raw_get("key")?,
                 old: entry.raw_get("old")?,
@@ -749,10 +761,8 @@ impl Table {
     /// returns. It may write to the table, which tells every subscriber of that write before it
     /// returns. An `mlua::Value` of the table that it keeps keeps the table alive.
     ///
-    /// The list a batch tells holds an `mlua::Value` for each key, old value and new value that is
-    /// a string, table, function, userdata or thread, and mlua has room for about a million of
-    /// those at once: a batch past that, about 330,000 changes of such values, panics when it is
-    /// told to a Rust subscriber. A Lua subscriber has no such ceiling.
+    /// A batch of more than 10,000 changes reaches it as several calls, in order, each of at most
+    /// 10,000, so that mlua never holds the values of more than that many at once.
     ///
     /// Subscribing to one that has been collected gives a subscription that is never told.
     pub fn subscribe<F>(&self, subscriber: F) -> Subscription
