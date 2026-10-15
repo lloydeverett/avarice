@@ -8,7 +8,7 @@ Rust use, that Rust subscribers must return quickly, and that keeping an `mlua::
 table keeps it alive.
 
 A Bridge table's backing table is a user value of its userdata (see the header of
-`src/stdlib/components/bridge.rs`), and `Serialize` on the Rust state cannot reach a user value
+`src/stdlib/components/bridge/mod.rs`), and `Serialize` on the Rust state cannot reach a user value
 directly. Prototype getting at the backing table, for example through a `WeakLua` and the id lookup
 ticket 03 gives the host's handle, before committing to `create_ser_userdata`.
 

@@ -81,5 +81,5 @@ function bridge.table.insert(t, pos, value) end
 function bridge.table.remove(t, pos) end
 
 -- Everything above is for LuaLS. What runs is this: the Rust half hands the module over as a value
--- (see `components/bridge.rs`), and this file returns it.
+-- (see `components/bridge/mod.rs`), and this file returns it.
 return ...
