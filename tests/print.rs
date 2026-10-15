@@ -473,13 +473,28 @@ impl UserData for Unnamed {
     }
 }
 
+/// The same as [`Viewed`], made by `described(f)`, with a `__name` of `described` and a
+/// `__tostring` that says `described!`, as a Bridge table and a Bridge cell have both.
+struct Described;
+
+impl UserData for Described {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_meta_field(MetaMethod::Type, "described");
+    }
+
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_function("__view", view);
+        methods.add_meta_function(MetaMethod::ToString, |_, ()| Ok("described!"));
+    }
+}
+
 /// A `__view` that calls its userdata's user value with the userdata.
 fn view(_: &Lua, this: AnyUserData) -> mlua::Result<MultiValue> {
     this.user_value::<Function>()?.call(this)
 }
 
-/// A runtime with the globals `viewed` and `unnamed`, which make a [`Viewed`] and an
-/// [`Unnamed`], whose `print` writes to the returned buffer.
+/// A runtime with the globals `viewed`, `unnamed` and `described`, which make a [`Viewed`], an
+/// [`Unnamed`] and a [`Described`], whose `print` writes to the returned buffer.
 fn printing_views(profile: Profile) -> (Runtime, Buffer) {
     let (rt, buffer) = printing(profile);
     let lua = rt.lua();
@@ -499,7 +514,15 @@ fn printing_views(profile: Profile) -> (Runtime, Buffer) {
         })
         .unwrap();
     lua.globals().set("viewed", viewed).unwrap();
+    let described = lua
+        .create_function(|lua, view: Function| {
+            let described = lua.create_userdata(Described)?;
+            described.set_user_value(view)?;
+            Ok(described)
+        })
+        .unwrap();
     lua.globals().set("unnamed", unnamed).unwrap();
+    lua.globals().set("described", described).unwrap();
     (rt, buffer)
 }
 
@@ -590,6 +613,33 @@ fn a_view_that_raises_leaves_the_userdata_printed_as_it_was_and_print_does_not_r
         assert_eq!(lines[2], format!("  {},", lines[0]));
         assert_eq!(lines[3], "}");
     }
+}
+
+#[test]
+fn a_view_is_shown_rather_than_the_userdatas_own_string_form() {
+    assert_eq!(
+        printed_views(
+            Profile::Sandbox,
+            r#"
+            local thing = described(function() return { a = 1 } end)
+            print(thing)
+            print({ thing })
+            print(tostring(thing))
+            "#
+        ),
+        "described {\n  a = 1,\n}\n{\n  described {\n    a = 1,\n  },\n}\ndescribed!\n"
+    );
+}
+
+#[test]
+fn a_view_that_raises_falls_back_to_the_userdatas_own_string_form() {
+    assert_eq!(
+        printed_views(
+            Profile::Sandbox,
+            r#"print(described(function() error("no view") end))"#
+        ),
+        "described!\n"
+    );
 }
 
 #[test]

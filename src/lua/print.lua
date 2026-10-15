@@ -1,4 +1,4 @@
--- The runtime's `print`, written in Lua over two Rust functions (ADR 0005).
+-- The runtime's `print`, written in Lua over three Rust functions (ADR 0005).
 --
 -- It is Lua so that its limits are the ones a Lua program already has: recursion into a nested
 -- table is Lua recursion, which raises a catchable stack overflow rather than aborting the
@@ -146,6 +146,11 @@ local function index_marker(value)
   return nil
 end
 
+-- What is shown in place of a table, or a userdata shown through its view, that contains itself.
+local function cycle_marker(value)
+  return paint(DIM, "<cycle: " .. tostring(value) .. ">")
+end
+
 local render
 
 -- Appends `value` to `out` as its `__view` shows it, and returns true, if it is a userdata with a
@@ -159,7 +164,7 @@ local function render_view(value, depth, ancestors, out)
     return false
   end
   if ancestors[value] then
-    out[#out + 1] = paint(DIM, "<cycle: " .. tostring(value) .. ">")
+    out[#out + 1] = cycle_marker(value)
     return true
   end
   local ok, shown = pcall(view, value)
@@ -196,7 +201,7 @@ function render(value, depth, ancestors, out)
     return
   end
   if ancestors[value] then
-    out[#out + 1] = paint(DIM, "<cycle: " .. tostring(value) .. ">")
+    out[#out + 1] = cycle_marker(value)
     return
   end
 
