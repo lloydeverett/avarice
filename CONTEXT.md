@@ -80,7 +80,7 @@ has is decided in Rust at construction; Lua code never causes one to load.
 A **host module** that avarice ships, rather than one an embedder wrote or a
 **contributed module**.
 `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
-`dirs`, `process` and `tidings`.
+`dirs`, `process`, `tidings` and `bridge`.
 
 Stdlib modules are host modules like any other, and carry no privilege an
 embedder's own module lacks. What distinguishes them is only that a **profile**
@@ -154,6 +154,31 @@ Not the `stores` module, which is observables and pubsub and keeps nothing, and
 not a **Module store**, which is where a program's source comes from.
 
 _Avoid_: store (unqualified), database, `stores`.
+
+## Bridge table
+
+A value Lua makes with the `bridge` **stdlib module** that the host can subscribe to, so as to be
+told of each change to it as it happens rather than compare the whole of it to find out. Written
+and read as a Lua table is, keyed like one, and holding any Lua value.
+
+A change is to one key: its old value and its new one. Changing a table stored in a Bridge table is
+not a change to the Bridge table, which holds the table, not what is in it.
+
+Lua owns it. The host is told of its changes for as long as Lua keeps it, and is told once when it
+is closed, whether closed by either side or let go by Lua.
+
+_Avoid_: table (unqualified, which is Lua's own), ledger, observable.
+
+## Bridge cell
+
+A value Lua makes with the `bridge` **stdlib module** that holds one Lua value at a time, replaced
+whole, and that the host can subscribe to as it can to a **Bridge table**. Each replacement is a
+change, from the old value to the new, even when the two are the same.
+
+Not an Observable of the `stores` module, which is Lua alone, and which the host cannot subscribe
+to.
+
+_Avoid_: cell (unqualified), atom, observable.
 
 ## Program
 
