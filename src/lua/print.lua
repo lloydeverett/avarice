@@ -6,8 +6,9 @@
 --
 -- Loaded once as a chunk when a runtime is built. It receives `write`, which appends a string to
 -- the runtime's write sink, `parameters`, which says what parameters a function written in Lua
--- takes (`"a, b, ..."`) and returns nil for one that is not written in Lua, and `ansi`, the core
--- `ansi` module evaluated for this chunk alone. It returns the `print` function.
+-- takes (`"a, b, ..."`) and returns nil for one that is not written in Lua, `view_of`, which
+-- returns a userdata's `__name` and `__view` when its metatable has both and nil otherwise, and
+-- `ansi`, the core `ansi` module evaluated for this chunk alone. It returns the `print` function.
 -- Nothing here is a global, so a script can replace `print` but cannot reach the sink except
 -- through it.
 --
@@ -17,12 +18,12 @@
 --
 -- `string` and `table` are assumed. The runtime refuses to be built without them.
 
-local write, parameters, ansi = ...
+local write, parameters, view_of, ansi = ...
 
 -- Kept in locals so that a script redefining a global later does not change how `print` works,
 -- which is also true of stock `print`.
-local tostring, type, select, rawget, next, getmetatable =
-  tostring, type, select, rawget, next, getmetatable
+local tostring, type, select, rawget, next, getmetatable, pcall =
+  tostring, type, select, rawget, next, getmetatable, pcall
 local string, table = string, table
 
 local rep, gsub, find = string.rep, string.gsub, string.find
@@ -145,11 +146,48 @@ local function index_marker(value)
   return nil
 end
 
--- Appends the text of a value found inside a table to `out`. `ancestors` holds the tables between
--- here and the top, so that a table that contains itself is marked rather than followed.
-local function render(value, depth, ancestors, out)
+local render
+
+-- Appends `value` to `out` as its `__view` shows it, and returns true, if it is a userdata with a
+-- `__view` and a `__name` (ADR 0023): `name { ... }` for a view that is a table, `name(...)` for
+-- one that is not. Returns false, having appended nothing, for any other value and for a `__view`
+-- that raises, which leaves the value to be shown as it would be without one. A table's `__view`
+-- is never looked at: `view_of` finds it on userdata alone.
+local function render_view(value, depth, ancestors, out)
+  local name, view = view_of(value)
+  if not name then
+    return false
+  end
+  if ancestors[value] then
+    out[#out + 1] = paint(DIM, "<cycle: " .. tostring(value) .. ">")
+    return true
+  end
+  local ok, shown = pcall(view, value)
+  if not ok then
+    return false
+  end
+  ancestors[value] = true
+  if type(shown) == "table" then
+    out[#out + 1] = name .. " "
+    render(shown, depth, ancestors, out)
+  else
+    out[#out + 1] = name .. "("
+    render(shown, depth, ancestors, out)
+    out[#out + 1] = ")"
+  end
+  ancestors[value] = nil
+  return true
+end
+
+-- Appends the text of a value found inside a table to `out`. `ancestors` holds the tables, and the
+-- userdata shown through a view, between here and the top, so that one that contains itself is
+-- marked rather than followed.
+function render(value, depth, ancestors, out)
   if type(value) == "string" then
     out[#out + 1] = paint(GREEN, quote(value))
+    return
+  end
+  if render_view(value, depth, ancestors, out) then
     return
   end
   local text = line_text(value)
@@ -209,9 +247,9 @@ return function(...)
   local parts = {}
   for i = 1, n do
     local value = (select(i, ...))
-    local text = line_text(value)
-    if text then
-      parts[i] = text
+    -- A string is written as it is at the top level, and quoted only inside a table.
+    if type(value) == "string" then
+      parts[i] = value
     else
       local out = {}
       render(value, 0, {}, out)

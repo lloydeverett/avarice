@@ -15,7 +15,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use avarice::mlua::StdLib;
+use avarice::mlua::{
+    AnyUserData, Function, Lua, MetaMethod, MultiValue, StdLib, UserData, UserDataFields,
+    UserDataMethods, Value,
+};
 use avarice::{DEFAULT_SANDBOX_MEMORY_LIMIT, Error, Profile, Runtime, was_timed_out};
 use common::{Buffer, plain};
 
@@ -440,6 +443,221 @@ fn a_protected_metatables_index_marker_is_not_shown_either() {
         "#,
     );
     assert_eq!(text, "{\n  x = 1,\n}\n");
+}
+
+// -- Userdata with a view ----------------------------------------------------------------------
+
+/// A userdata of the kind a host module would make, whose metatable has a `__view` and a
+/// `__name` of `viewed`. What it views as is up to the script: `viewed(f)` makes one whose
+/// `__view` calls `f`, kept as its user value, with the userdata. Lua cannot give a userdata a
+/// metatable, so this is the only way a test can have one.
+struct Viewed;
+
+impl UserData for Viewed {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_meta_field(MetaMethod::Type, "viewed");
+    }
+
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_function("__view", view);
+    }
+}
+
+/// The same as [`Viewed`], made by `unnamed(f)`, with no `__name`. mlua names every userdata's
+/// metatable after its type, so `unnamed` takes the name out again.
+struct Unnamed;
+
+impl UserData for Unnamed {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_function("__view", view);
+    }
+}
+
+/// A `__view` that calls its userdata's user value with the userdata.
+fn view(_: &Lua, this: AnyUserData) -> mlua::Result<MultiValue> {
+    this.user_value::<Function>()?.call(this)
+}
+
+/// A runtime with the globals `viewed` and `unnamed`, which make a [`Viewed`] and an
+/// [`Unnamed`], whose `print` writes to the returned buffer.
+fn printing_views(profile: Profile) -> (Runtime, Buffer) {
+    let (rt, buffer) = printing(profile);
+    let lua = rt.lua();
+    let viewed = lua
+        .create_function(|lua, view: Function| {
+            let viewed = lua.create_userdata(Viewed)?;
+            viewed.set_user_value(view)?;
+            Ok(viewed)
+        })
+        .unwrap();
+    let unnamed = lua
+        .create_function(|lua, view: Function| {
+            let unnamed = lua.create_userdata(Unnamed)?;
+            unnamed.set_user_value(view)?;
+            unnamed.metatable()?.set(MetaMethod::Type, Value::Nil)?;
+            Ok(unnamed)
+        })
+        .unwrap();
+    lua.globals().set("viewed", viewed).unwrap();
+    lua.globals().set("unnamed", unnamed).unwrap();
+    (rt, buffer)
+}
+
+/// What `source` printed, without its colour, on a runtime that has `viewed` and `unnamed`.
+fn printed_views(profile: Profile, source: &str) -> String {
+    let (rt, buffer) = printing_views(profile);
+    rt.block_on(rt.exec(source, "=test")).unwrap();
+    plain(&buffer.contents())
+}
+
+#[test]
+fn a_userdata_whose_view_is_a_table_prints_as_its_name_then_the_table() {
+    for profile in BOTH {
+        assert_eq!(
+            printed_views(
+                profile,
+                "print(viewed(function() return { a = 1, list = { 2 } } end))"
+            ),
+            "viewed {\n  a = 1,\n  list = {\n    2,\n  },\n}\n"
+        );
+    }
+}
+
+#[test]
+fn a_userdata_whose_view_is_not_a_table_prints_it_in_parentheses() {
+    for profile in BOTH {
+        assert_eq!(
+            printed_views(
+                profile,
+                r#"
+                print(viewed(function() return 42 end))
+                print(viewed(function() return "text" end))
+                print(viewed(function() return nil end))
+                print(viewed(function() return true, "ignored" end))
+                "#
+            ),
+            "viewed(42)\nviewed(\"text\")\nviewed(nil)\nviewed(true)\n"
+        );
+    }
+}
+
+#[test]
+fn a_viewed_userdata_inside_a_table_is_laid_out_at_its_depth() {
+    assert_eq!(
+        printed_views(
+            Profile::Sandbox,
+            r#"
+            print({
+              cell = viewed(function() return 1 end),
+              table = viewed(function() return { a = 1 } end),
+              empty = viewed(function() return {} end),
+            })
+            "#
+        ),
+        "{\n  cell = viewed(1),\n  empty = viewed {},\n  table = viewed {\n    a = 1,\n  },\n}\n"
+    );
+}
+
+#[test]
+fn a_view_inside_a_view_is_shown_through_its_own_view() {
+    assert_eq!(
+        printed_views(
+            Profile::Sandbox,
+            r#"
+            local inner = viewed(function() return 7 end)
+            print(viewed(function() return { inner = inner } end))
+            "#
+        ),
+        "viewed {\n  inner = viewed(7),\n}\n"
+    );
+}
+
+#[test]
+fn a_view_that_raises_leaves_the_userdata_printed_as_it_was_and_print_does_not_raise() {
+    for profile in BOTH {
+        let text = printed_views(
+            profile,
+            r#"
+            local broken = viewed(function() error("no view") end)
+            print(broken)
+            print({ broken })
+            "#,
+        );
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 4, "{text}");
+        assert!(lines[0].starts_with("viewed: 0x"), "{text}");
+        assert_eq!(lines[1], "{");
+        assert_eq!(lines[2], format!("  {},", lines[0]));
+        assert_eq!(lines[3], "}");
+    }
+}
+
+#[test]
+fn a_userdata_with_a_view_and_no_name_prints_as_it_did() {
+    let text = printed_views(Profile::Sandbox, "print(unnamed(function() return 1 end))");
+    assert!(text.starts_with("userdata: 0x"), "{text}");
+}
+
+#[test]
+fn a_table_whose_metatable_has_a_view_prints_as_it_did() {
+    // A table's metatable is the script's, so `print` never runs its `__view` (ADR 0023).
+    let text = printed_views(
+        Profile::Sandbox,
+        r#"
+        local ran = false
+        local view = function() ran = true return 1 end
+        print(setmetatable({ x = 1 }, { __view = view }))
+        print(setmetatable({}, { __view = view, __name = "named" }))
+        print({ __view = view })
+        print(ran)
+        "#,
+    );
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(&lines[..3], ["{", "  x = 1,", "}"], "{text}");
+    assert!(lines[3].starts_with("named: 0x"), "{text}");
+    assert_eq!(lines[4], "{");
+    assert!(lines[5].starts_with("  __view = function () [0x"), "{text}");
+    assert_eq!(&lines[6..], ["}", "false"], "{text}");
+}
+
+#[test]
+fn a_view_that_leads_back_to_its_own_userdata_prints_as_a_cycle() {
+    let text = printed_views(
+        Profile::Sandbox,
+        r#"
+        local itself = viewed(function(self) return self end)
+        local holder = viewed(function(self) return { me = self } end)
+        local a, b
+        a = viewed(function() return b end)
+        b = viewed(function() return a end)
+        print(itself)
+        print(holder)
+        print(a)
+        "#,
+    );
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), 5, "{text}");
+    assert!(lines[0].starts_with("viewed(<cycle: viewed: 0x"), "{text}");
+    assert!(lines[0].ends_with(">)"), "{text}");
+    assert_eq!(lines[1], "viewed {");
+    assert!(lines[2].starts_with("  me = <cycle: viewed: 0x"), "{text}");
+    assert_eq!(lines[3], "}");
+    assert!(
+        lines[4].starts_with("viewed(viewed(<cycle: viewed: 0x"),
+        "{text}"
+    );
+    assert!(lines[4].ends_with(">))"), "{text}");
+}
+
+#[test]
+fn a_view_is_highlighted_as_what_it_shows() {
+    let (rt, buffer) = printing_views(Profile::Sandbox);
+    rt.block_on(rt.exec(r#"print(viewed(function() return "x" end))"#, "=test"))
+        .unwrap();
+    assert_eq!(
+        buffer.contents(),
+        format!("viewed({})\n", token(GREEN, "\"x\""))
+    );
 }
 
 // -- Limits ------------------------------------------------------------------------------------

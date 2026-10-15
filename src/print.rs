@@ -1,9 +1,10 @@
 //! `print`, and the write sink it writes to.
 //!
-//! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is a pair of
-//! functions it is given: one appends bytes to the runtime's write sink, and the other says what
-//! parameters a function takes, which Lua can only be asked through its C API. It is also given
-//! the `ansi` table it highlights with (ADR 0011).
+//! `print` itself is Lua (`print.lua`; the reasons are in ADR 0005). What is Rust is three
+//! functions it is given: one appends bytes to the runtime's write sink, one says what parameters
+//! a function takes, which Lua can only be asked through its C API, and one finds a userdata's
+//! `__view` (ADR 0023), which Lua cannot reach because mlua protects every userdata's metatable.
+//! It is also given the `ansi` table it highlights with (ADR 0011).
 
 use std::ffi::{CStr, c_int};
 use std::io::{self, Write};
@@ -11,7 +12,7 @@ use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use mlua::chunk::ChunkMode;
-use mlua::{Function, Lua, LuaString, ffi};
+use mlua::{Function, Lua, LuaString, Value, ffi};
 
 use crate::ansi;
 use crate::lock::lock;
@@ -110,6 +111,23 @@ fn parameter_list(lua: &Lua, function: &Function) -> mlua::Result<Option<String>
     Ok(Some(names.join(", ")))
 }
 
+/// The `__name` and `__view` of `value`'s metatable, if it is a userdata whose metatable has a
+/// string for one and a function for the other, read raw (ADR 0023).
+///
+/// Nothing for anything else, a table included: a table's metatable is the script's, and `print`
+/// does not run a script's code. A userdata's is the host's, since only Rust can give userdata a
+/// metatable, and mlua protects it with `__metatable`, so Lua's `getmetatable` cannot see it.
+fn view_of(value: Value) -> Option<(LuaString, Function)> {
+    let Value::UserData(userdata) = value else {
+        return None;
+    };
+    let metatable = userdata.metatable().ok()?;
+    match (metatable.get("__name").ok()?, metatable.get("__view").ok()?) {
+        (Value::String(name), Value::Function(view)) => Some((name, view)),
+        _ => None,
+    }
+}
+
 /// Replaces `print` with the one that writes to `sink`.
 ///
 /// Runs before the runtime's limits are installed, like the rest of setup, and needs the `string`
@@ -124,10 +142,11 @@ pub(crate) fn install(lua: &Lua, sink: Sink) -> mlua::Result<()> {
     })?;
     let parameters =
         lua.create_function(|lua, function: Function| parameter_list(lua, &function))?;
+    let view = lua.create_function(|_, value: Value| Ok(view_of(value).unzip()))?;
     let print: Function = lua
         .load(PRINT)
         .set_name("=[avarice print]")
         .set_mode(ChunkMode::Text)
-        .call((write, parameters, ansi::build(lua)?))?;
+        .call((write, parameters, view, ansi::build(lua)?))?;
     lua.globals().raw_set("print", print)
 }
