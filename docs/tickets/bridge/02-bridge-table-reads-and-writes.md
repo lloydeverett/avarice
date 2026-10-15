@@ -8,18 +8,18 @@ in every build, registered by trusted mode and not by sandbox mode. See ADR 0022
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `bridge.table` is callable, and makes a Bridge table; `bridge.table(init)` copies `init`, so
+- [x] `bridge.table` is callable, and makes a Bridge table; `bridge.table(init)` copies `init`, so
       later writes to `init` do not show through
-- [ ] Reads, writes, removal by nil, `#`, `pairs`, `ipairs` and `table.insert`/`remove`/`concat`/
+- [x] Reads, writes, removal by nil, `#`, `pairs`, `ipairs` and `table.insert`/`remove`/`concat`/
       `sort`/`unpack` behave as on a plain table
-- [ ] Keys named `close`, `subscribe`, `batch`, `insert`, `remove` and `snapshot` read and write
+- [x] Keys named `close`, `subscribe`, `batch`, `insert`, `remove` and `snapshot` read and write
       like any other key
-- [ ] Any Lua value can be stored; a stored table is stored by reference
-- [ ] `__tostring` gives `bridge.table: 0x...`
-- [ ] Trusted mode registers it when compiled in; sandbox mode does not; `with_std_modules` can add
+- [x] Any Lua value can be stored; a stored table is stored by reference
+- [x] `__tostring` gives `bridge.table: 0x...`
+- [x] Trusted mode registers it when compiled in; sandbox mode does not; `with_std_modules` can add
       it to a sandbox
-- [ ] The compiled-in, features and sandbox suites and the feature-matrix script know `bridge`, and
+- [x] The compiled-in, features and sandbox suites and the feature-matrix script know `bridge`, and
       the matrix passes with `bridge` alone
-- [ ] A new `bridge` test suite, shaped like the `tidings` one
+- [x] A new `bridge` test suite, shaped like the `tidings` one

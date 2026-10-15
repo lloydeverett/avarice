@@ -8,7 +8,7 @@
 use avarice::{StdModule, StdModules};
 
 /// Each module's name, and whether the feature that compiles it in is on in this build.
-const EXPECTED: [(&str, bool); 11] = [
+const EXPECTED: [(&str, bool); 12] = [
     ("http", cfg!(feature = "stdlib-http")),
     ("fs", cfg!(feature = "stdlib-fs")),
     ("crypto", cfg!(feature = "stdlib-crypto")),
@@ -20,9 +20,10 @@ const EXPECTED: [(&str, bool); 11] = [
     ("dirs", cfg!(feature = "stdlib-dirs")),
     ("process", cfg!(feature = "stdlib-process")),
     ("tidings", cfg!(feature = "stdlib-tidings")),
+    ("bridge", cfg!(feature = "stdlib-bridge")),
 ];
 
-/// Every module, whether or not it is compiled in: the type has all eleven variants in every build.
+/// Every module, whether or not it is compiled in: the type has all twelve variants in every build.
 fn every_module() -> Vec<StdModule> {
     StdModules::all().modules().collect()
 }

@@ -43,22 +43,22 @@
 //! `os`, `package` and `debug`, caps memory, and refuses binary chunks; [`Profile::Trusted`]
 //! opens everything a safe Lua state can have and registers every stdlib module that is compiled
 //! in (`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`, `dirs`,
-//! `process` and `tidings`; see [`StdModules`]); [`Profile::Sandbox`] registers only the pure one,
-//! `stores`, which is Lua with no Rust behind it. Both register `ansi`, a core module that no build
-//! can leave out, because `print` uses it. [`RuntimeBuilder`] can override anything either one
-//! sets, and doing so never affects the profile another runtime is built from.
+//! `process`, `tidings` and `bridge`; see [`StdModules`]); [`Profile::Sandbox`] registers only the
+//! pure one, `stores`, which is Lua with no Rust behind it. Both register `ansi`, a core module
+//! that no build can leave out, because `print` uses it. [`RuntimeBuilder`] can override anything
+//! either one sets, and doing so never affects the profile another runtime is built from.
 //!
 //! # Features
 //!
 //! Each stdlib module is behind a Cargo feature of its own, `stdlib-http`, `stdlib-fs`,
 //! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-stores`,
-//! `stdlib-validation`, `stdlib-dirs`, `stdlib-process` and `stdlib-tidings`, and `stdlib` turns
-//! all eleven on. `default` has `stdlib` and `cli`, so an embedder wanting a smaller build depends
-//! on avarice with `default-features = false` and names the modules it wants. A feature decides
-//! whether a module is *compiled in*, which is a matter of build size and time and not of
-//! confinement: a profile still decides what a runtime *registers*. [`StdModules::ALL`] is the set
-//! that is compiled in, and [`RuntimeBuilder::build`] refuses a selection that includes a module
-//! that is not.
+//! `stdlib-validation`, `stdlib-dirs`, `stdlib-process`, `stdlib-tidings` and `stdlib-bridge`, and
+//! `stdlib` turns all twelve on. `default` has `stdlib` and `cli`, so an embedder wanting a smaller
+//! build depends on avarice with `default-features = false` and names the modules it wants. A
+//! feature decides whether a module is *compiled in*, which is a matter of build size and time and
+//! not of confinement: a profile still decides what a runtime *registers*. [`StdModules::ALL`] is
+//! the set that is compiled in, and [`RuntimeBuilder::build`] refuses a selection that includes a
+//! module that is not.
 //!
 //! # Modules
 //!

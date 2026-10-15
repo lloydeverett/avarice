@@ -53,6 +53,7 @@ stdlib = [
   "stdlib-dirs",
   "stdlib-process",
   "stdlib-tidings",
+  "stdlib-bridge",
 ]
 # `net` is the tokio driver reqwest needs, so it follows `http`.
 stdlib-http = [
@@ -93,6 +94,9 @@ stdlib-process = [
 # and memory backends. Its times are `datetime`'s Timestamps, so it compiles `datetime`'s types,
 # and `macros` waits on a change feed, its closing and an abort at once.
 stdlib-tidings = ["dep:tidings", "_datetime_types", "tokio/macros"]
+# `bridge` is original to avarice too (ADR 0022): values the host can watch. It is built on mlua
+# alone, so there is nothing for it to pull in.
+stdlib-bridge = []
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
 # another's Rust takes the whole file, and these compile the file without adding the module: `http`

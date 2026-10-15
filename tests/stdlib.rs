@@ -17,7 +17,7 @@ use avarice::{Profile, Runtime, StdModules};
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
-const NAMES: [&str; 11] = [
+const NAMES: [&str; 12] = [
     "http",
     "fs",
     "crypto",
@@ -29,6 +29,7 @@ const NAMES: [&str; 11] = [
     "dirs",
     "process",
     "tidings",
+    "bridge",
 ];
 
 /// The names of the pure modules that are compiled in: what a sandbox registers (ADR 0007).

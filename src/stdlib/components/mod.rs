@@ -66,6 +66,8 @@
 //     Added `pub mod tidings;`, behind `stdlib-tidings`, for another module that owes Astra
 //     nothing. Nothing Astra does is altered: these are additions, and changes to the attributes on
 //     a module that is no longer Astra's.
+//   - Added `pub mod bridge;`, behind `stdlib-bridge`, for another module that owes Astra nothing
+//     (ADR 0022). Nothing Astra does is altered: this is an addition.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
@@ -76,6 +78,9 @@ use mlua::{ExternalError, FromLua, LuaSerdeExt};
 #[cfg(feature = "_astra_serde")]
 #[cfg_attr(not(feature = "stdlib-serde"), allow(dead_code))]
 pub mod astra_serde;
+// Original to avarice, not Astra's; see its own header and ADR 0022.
+#[cfg(feature = "stdlib-bridge")]
+pub mod bridge;
 #[cfg(feature = "stdlib-crypto")]
 pub mod crypto;
 // Original to avarice since ADR 0019, and no longer Astra's; see its own header. Compiled for
