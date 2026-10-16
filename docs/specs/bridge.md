@@ -96,8 +96,9 @@ whether a side closed it or Lua let it go.
 32. As a script author, I want `c:close()` and the same closing rules as a Bridge table, so that the
     two behave alike.
 33. As a script author, I want `print(t)` to show a Bridge table's contents marked
-    `bridge.table { ... }`, and `print(c)` to show `bridge.cell(...)`, so that I can see what it
-    holds and that it is not a plain value.
+    `bridge.table { ... }`, and `print(c)` to show a cell's value marked `bridge.cell(...)`, or
+    `bridge.cell { ... }` when the value is a table, so that I can see what it holds and that it is
+    not a plain value.
 34. As a script author, I want `serde` to encode a Bridge table as its contents and a Bridge cell as
     its value, so that I can write one out as JSON or another format.
 35. As a script author, I want nested Bridge tables to encode all the way down, so that what is

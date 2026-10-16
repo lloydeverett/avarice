@@ -647,6 +647,12 @@ impl Drop for Encoding {
 /// the same thread. A Bridge object nested in what it holds is encoded through here in turn, so one
 /// that contains itself, through any number of others, is found here, and is an error rather than
 /// a walk that never ends.
+///
+/// Every error here reaches the encoder as a message, through `ser::Error::custom`, so a memory
+/// error while encoding is no longer one that `was_out_of_memory` knows. mlua's own walk of a table
+/// does the same, so nothing here could keep it. Nor do the options of the encoding that reached
+/// this object, such as which types it refuses, reach what it holds: mlua gives a userdata's
+/// `Serialize` none, so what it holds is encoded with mlua's defaults.
 pub(super) fn serialize<F: ?Sized, S: Serializer>(
     core: &Core<F>,
     serializer: S,

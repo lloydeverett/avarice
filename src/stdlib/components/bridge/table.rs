@@ -298,7 +298,7 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
         batch_depth: AtomicUsize::new(0),
     };
     let this = lua.create_ser_userdata(BridgeTable(Arc::new(state)))?;
-    shared::enter(lua, &this, &this.borrow::<BridgeTable>()?.0.core)?;
+    shared::enter(lua, &this, &state_of(&this)?.core)?;
     this.set_nth_user_value(BACKING, backing)?;
     Ok(this)
 }

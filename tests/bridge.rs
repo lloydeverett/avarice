@@ -3085,6 +3085,41 @@ fn json_encoding_a_bridge_table_that_contains_itself_raises() {
     }
 }
 
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_encoding_works_again_after_an_encoding_that_raised_part_way() {
+    let got: (bool, String) = eval(
+        "local json = require('serde').json
+         local t = bridge.table({ a = bridge.table({ n = 1 }) })
+         t.a.back = t
+         local ok = pcall(json.encode, t)
+         t.a.back = nil
+         return ok, json.encode(t)",
+    );
+    assert_eq!(got, (false, r#"{"a":{"n":1}}"#.into()));
+}
+
+/// Astra's `serde`, unchanged (ADR 0022), drops userdata found directly in the plain table it is
+/// given, Bridge objects included, as the README's `bridge` section warns. This pins it, so that
+/// a change to it is noticed and the README with it.
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_drops_a_bridge_object_directly_in_the_plain_table_it_is_given() {
+    let got: (String, String, String) = eval(
+        "local json = require('serde').json
+         local t = bridge.table({ a = 1 })
+         return json.encode({ t = t }), json.encode({ t }), json.encode({ inner = { t = t } })",
+    );
+    assert_eq!(
+        got,
+        (
+            "{}".into(),
+            "{}".into(),
+            r#"{"inner":{"t":{"a":1}}}"#.into()
+        )
+    );
+}
+
 // -- Who has it --------------------------------------------------------------------------------
 
 #[test]

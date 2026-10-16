@@ -270,24 +270,20 @@ open it again.
 ### `bridge`
 
 Values a script writes and the host watches. A Bridge table is written and read as a table, and a
-Bridge cell holds one value, replaced whole. Whoever subscribes, Lua or the host, is told of each
+Bridge cell holds one value, replaced whole. Every subscriber, Lua's or the host's, is told of each
 change as it is made, so nothing has to diff a table to find out what moved.
 
 ```lua
 local bridge = require("bridge")
-local bt = bridge.table
+local bt = bridge.table                 -- every key is the script's, so operations live here
 
 local settings = bt({ theme = "dark" })
 local sub = bt.subscribe(settings, function(changes)
   for _, c in ipairs(changes) do print(c.key, c.old, c.new) end
 end)
 settings.theme = "light"                -- prints: theme  dark  light
-for k, v in pairs(settings) do print(k, v) end
-
--- Every key is the script's, so the operations are functions of `bridge.table`.
 bt.batch(settings, function()           -- told as one list once `fn` returns
-  settings.width = 80
-  settings.height = 24
+  settings.width, settings.height = 80, 24
 end)
 bt.insert(settings, 1, "first")         -- one list, not one change per shifted slot
 local plain = bt.snapshot(settings)     -- a plain shallow copy; writing to it tells no one
@@ -302,8 +298,7 @@ print(settings)                         -- bridge.table { ... }
 print(require("serde").json.encode(bt({ n = count })))   -- {"n":1}
 ```
 
-The host receives one through a function of its own, as a `bridge::Table` or `bridge::Cell`, and
-subscribes to it:
+The host receives one through a function of its own, as a `bridge::Table` or a `bridge::Cell`:
 
 ```rust
 use std::sync::{Arc, Mutex, mpsc};
@@ -333,37 +328,24 @@ rt.register_module("host", host)?;
 // Lua: require("host").watch(bridge.table())
 ```
 
-- **Subscribers run synchronously**, on the Lua thread, inside the write that made the change, once
-  it is in place, and the script waits for them. A Rust subscriber must return quickly: one with
-  slow work sends it to a task or a channel of its own. A write from Rust, on any thread, tells
-  Lua's subscribers inside that call.
-- **The host's hold is weak.** Lua owns every Bridge object. A `bridge::Table`, a `bridge::Cell`
-  or a subscription does not keep one alive, and once Lua drops it, it is collected and closed, and
-  each Rust close callback is called. A Rust subscriber that keeps an `mlua::Value` of its own
-  Bridge table keeps it alive, and so undoes the weak hold. A close callback run by collection, or
-  by dropping the runtime, cannot call into Lua.
-- **A subscriber's errors are its own.** A Lua subscriber that raises has its error written to
-  standard error, and the next is told; the write still succeeds. A Rust subscriber returns
-  nothing, and its panic panics.
-- **Tracking is shallow.** A plain table stored in a Bridge table is stored by reference, and a
-  write into it is not a change; nest Bridge tables to track every level.
-- **Batches.** A batch of more than 10,000 changes reaches a Rust subscriber as several calls, in
-  order, each of at most 10,000; a Lua subscriber still gets one list. The `fn` given to `batch`,
-  or to a cell's `update`, cannot yield.
-- **It is not a table.** `type(t)` is `"userdata"`, so code that checks for a table refuses one,
-  and `next`, `rawget` and `rawset` see none of its contents. `table.insert(t, 1, v)` outside a
-  batch tells one change for every slot it shifts; `table.remove` and `table.sort` do the like, and
-  `bridge.table.insert` and `bridge.table.remove` exist for this. A subscriber that writes sees
-  changes out of order: its own is told to it before the one it was told of reaches the
-  subscribers after it.
-- **`serde`** encodes a Bridge table as what it holds and a cell as its value, nested ones
-  included; one that contains itself raises. `serde` drops any userdata found directly in the plain
-  table it is given, a Bridge object included, so encode the Bridge table itself, or a table that
-  holds it one level down. A function in a Bridge table raises, as one in a nested plain table
-  does.
-- **When one nobody closed is closed by collection** is up to the garbage collector: a producer
-  that is finished closes it. `bridge` is not registered in the sandbox; an embedder that wants it
-  there adds `StdModules::BRIDGE`.
+Subscribers run on the Lua thread, inside the write, once it is in place, and the script waits for
+them, so a Rust subscriber hands slow work to a task or channel of its own and returns. A write from
+Rust, on any thread, tells Lua's subscribers inside that call. A Lua subscriber that raises has its
+error written to standard error, and the write still succeeds. A batch of more than 10,000 changes
+reaches a Rust subscriber as several calls of at most 10,000 each, and the `fn` given to `batch` or
+`update` cannot yield.
+
+Lua owns every Bridge object: a `bridge::Table`, `bridge::Cell` or subscription does not keep one
+alive, and once Lua drops it, it is collected and closed, at a time the collector picks, so a
+producer that is finished closes it. A Rust subscriber that keeps an `mlua::Value` of its own
+Bridge table keeps it alive. A close callback run by collection cannot call into Lua.
+
+Tracking is shallow: a write into a plain table stored in a Bridge table is not a change. A Bridge
+table is userdata, so `type`, `next` and `rawget` do not see a table, and `table.insert(t, 1, v)`
+tells a change for every slot it shifts, as `table.remove` and `table.sort` do; use
+`bridge.table.insert` and `bridge.table.remove`. `serde` drops any userdata directly in the plain
+table it is given, so `json.encode({ t = bt })` and `json.encode({ bt })` give `{}`: encode the
+Bridge table itself, or nest it a level deeper. One that contains itself raises.
 
 ### `ansi`
 
