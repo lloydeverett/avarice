@@ -14,10 +14,10 @@ ticket 03 gives the host's handle, before committing to `create_ser_userdata`.
 
 **Blocked by:** 01, 04, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `snapshot` returns a plain table; writing to it tells no one
-- [ ] JSON encoding of a Bridge table, a nested one and a cell gives the plain data (tests gated on
+- [x] `snapshot` returns a plain table; writing to it tells no one
+- [x] JSON encoding of a Bridge table, a nested one and a cell gives the plain data (tests gated on
       `stdlib-serde` too)
-- [ ] `print` shows both with their markers (in the `print` suite, gated on `stdlib-bridge`)
-- [ ] README `bridge` section, and `bridge` in the Stdlib module list
+- [x] `print` shows both with their markers (in the `print` suite, gated on `stdlib-bridge`)
+- [x] README `bridge` section, and `bridge` in the Stdlib module list

@@ -710,6 +710,76 @@ fn a_view_is_highlighted_as_what_it_shows() {
     );
 }
 
+#[cfg(feature = "stdlib-bridge")]
+#[test]
+fn a_bridge_table_prints_as_its_contents_after_its_marker() {
+    assert_eq!(
+        printed(
+            Profile::Trusted,
+            r#"
+            local bridge = require("bridge")
+            print(bridge.table({ 1, name = "x" }))
+            print(bridge.table())
+            "#
+        ),
+        "bridge.table {\n  1,\n  name = \"x\",\n}\nbridge.table {}\n"
+    );
+}
+
+#[cfg(feature = "stdlib-bridge")]
+#[test]
+fn a_bridge_cell_prints_as_its_value_after_its_marker_laid_out_as_a_table_when_it_is_one() {
+    assert_eq!(
+        printed(
+            Profile::Trusted,
+            r#"
+            local bridge = require("bridge")
+            print(bridge.cell(42))
+            print(bridge.cell())
+            print(bridge.cell({ a = 1 }))
+            "#
+        ),
+        "bridge.cell(42)\nbridge.cell(nil)\nbridge.cell {\n  a = 1,\n}\n"
+    );
+}
+
+#[cfg(feature = "stdlib-bridge")]
+#[test]
+fn bridge_objects_inside_one_another_print_with_their_markers() {
+    assert_eq!(
+        printed(
+            Profile::Trusted,
+            r#"
+            local bridge = require("bridge")
+            print(bridge.table({ inner = bridge.table({ 1 }), cell = bridge.cell("c") }))
+            "#
+        ),
+        "bridge.table {\n  cell = bridge.cell(\"c\"),\n  inner = bridge.table {\n    1,\n  },\n}\n"
+    );
+}
+
+#[cfg(feature = "stdlib-bridge")]
+#[test]
+fn a_bridge_table_that_contains_itself_prints_as_a_cycle() {
+    let text = printed(
+        Profile::Trusted,
+        r#"
+        local bridge = require("bridge")
+        local t = bridge.table()
+        t.me = t
+        print(t)
+        "#,
+    );
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    assert_eq!(lines[0], "bridge.table {");
+    assert!(
+        lines[1].starts_with("  me = <cycle: bridge.table: 0x"),
+        "{text}"
+    );
+    assert_eq!(lines[2], "}");
+}
+
 // -- Limits ------------------------------------------------------------------------------------
 
 #[test]

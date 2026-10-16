@@ -4,8 +4,8 @@ An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates
 command-line interpreter, `avarice`, built on the runtime.
 
 - **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
-  `dirs`, `process` and `tidings`, each behind its own Cargo feature. Most are adapted from
-  [Astra](https://github.com/ArkForgeLabs/Astra).
+  `dirs`, `process`, `tidings` and `bridge`, each behind its own Cargo feature. Most are adapted
+  from [Astra](https://github.com/ArkForgeLabs/Astra).
 - **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
   one makes can be overridden. The sandbox has no `io`, no `os`, no binary chunks and no `__gc` in
   a metatable, and caps memory at 128 MiB. The trusted profile adds all four, and every stdlib
@@ -267,6 +267,104 @@ before exiting, and at the REPL a line that leaves one open waits too: close it,
 Store's tasks, the Store raises from then on and its feed gives one Resync and ends: close it and
 open it again.
 
+### `bridge`
+
+Values a script writes and the host watches. A Bridge table is written and read as a table, and a
+Bridge cell holds one value, replaced whole. Whoever subscribes, Lua or the host, is told of each
+change as it is made, so nothing has to diff a table to find out what moved.
+
+```lua
+local bridge = require("bridge")
+local bt = bridge.table
+
+local settings = bt({ theme = "dark" })
+local sub = bt.subscribe(settings, function(changes)
+  for _, c in ipairs(changes) do print(c.key, c.old, c.new) end
+end)
+settings.theme = "light"                -- prints: theme  dark  light
+for k, v in pairs(settings) do print(k, v) end
+
+-- Every key is the script's, so the operations are functions of `bridge.table`.
+bt.batch(settings, function()           -- told as one list once `fn` returns
+  settings.width = 80
+  settings.height = 24
+end)
+bt.insert(settings, 1, "first")         -- one list, not one change per shifted slot
+local plain = bt.snapshot(settings)     -- a plain shallow copy; writing to it tells no one
+sub:unsubscribe()
+bt.close(settings)                      -- reads still work; writes raise
+
+local count = bridge.cell(0)
+count:subscribe(function(old, new) print(old, "->", new) end)
+count:update(function(n) return n + 1 end)   -- prints: 0  ->  1
+
+print(settings)                         -- bridge.table { ... }
+print(require("serde").json.encode(bt({ n = count })))   -- {"n":1}
+```
+
+The host receives one through a function of its own, as a `bridge::Table` or `bridge::Cell`, and
+subscribes to it:
+
+```rust
+use std::sync::{Arc, Mutex, mpsc};
+
+use avarice::bridge;
+
+let (tx, rx) = mpsc::channel::<String>();
+let subscriptions = Arc::new(Mutex::new(Vec::<bridge::Subscription>::new()));
+let held = Arc::clone(&subscriptions);
+let watch = rt.lua().create_function(move |_, t: bridge::Table| {
+    let tx = tx.clone();
+    let subscription = t.subscribe_with_close(
+        move |_, changes: &[bridge::Change]| {
+            for change in changes {
+                // Hand the work off and return: the script that wrote waits for this.
+                let _ = tx.send(change.key.to_string().unwrap_or_default());
+            }
+        },
+        || println!("closed"),
+    );
+    held.lock().unwrap().push(subscription);   // dropping it unsubscribes
+    t.set("seen", true)                        // tells every subscriber before it returns
+})?;
+let host = rt.lua().create_table()?;
+host.set("watch", watch)?;
+rt.register_module("host", host)?;
+// Lua: require("host").watch(bridge.table())
+```
+
+- **Subscribers run synchronously**, on the Lua thread, inside the write that made the change, once
+  it is in place, and the script waits for them. A Rust subscriber must return quickly: one with
+  slow work sends it to a task or a channel of its own. A write from Rust, on any thread, tells
+  Lua's subscribers inside that call.
+- **The host's hold is weak.** Lua owns every Bridge object. A `bridge::Table`, a `bridge::Cell`
+  or a subscription does not keep one alive, and once Lua drops it, it is collected and closed, and
+  each Rust close callback is called. A Rust subscriber that keeps an `mlua::Value` of its own
+  Bridge table keeps it alive, and so undoes the weak hold. A close callback run by collection, or
+  by dropping the runtime, cannot call into Lua.
+- **A subscriber's errors are its own.** A Lua subscriber that raises has its error written to
+  standard error, and the next is told; the write still succeeds. A Rust subscriber returns
+  nothing, and its panic panics.
+- **Tracking is shallow.** A plain table stored in a Bridge table is stored by reference, and a
+  write into it is not a change; nest Bridge tables to track every level.
+- **Batches.** A batch of more than 10,000 changes reaches a Rust subscriber as several calls, in
+  order, each of at most 10,000; a Lua subscriber still gets one list. The `fn` given to `batch`,
+  or to a cell's `update`, cannot yield.
+- **It is not a table.** `type(t)` is `"userdata"`, so code that checks for a table refuses one,
+  and `next`, `rawget` and `rawset` see none of its contents. `table.insert(t, 1, v)` outside a
+  batch tells one change for every slot it shifts; `table.remove` and `table.sort` do the like, and
+  `bridge.table.insert` and `bridge.table.remove` exist for this. A subscriber that writes sees
+  changes out of order: its own is told to it before the one it was told of reaches the
+  subscribers after it.
+- **`serde`** encodes a Bridge table as what it holds and a cell as its value, nested ones
+  included; one that contains itself raises. `serde` drops any userdata found directly in the plain
+  table it is given, a Bridge object included, so encode the Bridge table itself, or a table that
+  holds it one level down. A function in a Bridge table raises, as one in a nested plain table
+  does.
+- **When one nobody closed is closed by collection** is up to the garbage collector: a producer
+  that is finished closes it. `bridge` is not registered in the sandbox; an embedder that wants it
+  there adds `StdModules::BRIDGE`.
+
 ### `ansi`
 
 A core module: always present, in every profile and build.
@@ -417,4 +515,4 @@ See [`examples/greeting`](examples/greeting) for a module with a Rust half and a
 
 Apache License 2.0; see [LICENSE](LICENSE). The stdlib files taken from Astra are under the same
 licence, and each has a header saying where it came from and what changed. `datetime`, `dirs`,
-`process` and `tidings` are original to avarice, and their files say so instead.
+`process`, `tidings` and `bridge` are original to avarice, and their files say so instead.

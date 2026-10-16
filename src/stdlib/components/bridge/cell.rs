@@ -12,6 +12,8 @@ use mlua::{
     Table as LuaTable, UserData, Value,
 };
 
+use serde::{Serialize, Serializer};
+
 use super::shared::{self, Core, Handle, Kind, OnClose, Subscription};
 use super::{Helpers, Result, args, error};
 
@@ -108,7 +110,8 @@ pub(super) fn build(lua: &Lua, helpers: &Helpers) -> Result<Function> {
 
     lua.create_function(|lua, values: MultiValue| {
         let [value] = args(values, CELL.name)?;
-        let this = lua.create_userdata(BridgeCell(Arc::new(Core::new(&CELL))))?;
+        let this = lua.create_ser_userdata(BridgeCell(Arc::new(Core::new(lua, &CELL))))?;
+        shared::enter(lua, &this, &*state_of(&this)?)?;
         this.set_nth_user_value(VALUE, value)?;
         Ok(this)
     })
@@ -193,6 +196,10 @@ impl UserData for BridgeCell {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        // What `print` shows (ADR 0023): the value, which `get` gives anyone already.
+        methods.add_meta_function("__view", |_, this: Value| {
+            bridge_cell(this, CELL.name)?.nth_user_value::<Value>(VALUE)
+        });
         methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
             Ok(format!(
                 "{}: {:p}",
@@ -200,6 +207,13 @@ impl UserData for BridgeCell {
                 Value::UserData(this).to_pointer()
             ))
         });
+    }
+}
+
+/// `serde` encodes a Bridge cell as its value.
+impl Serialize for BridgeCell {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        shared::serialize(&self.0, serializer, |this| this.nth_user_value(VALUE))
     }
 }
 
@@ -304,7 +318,7 @@ impl fmt::Debug for Cell {
 }
 
 impl FromLua for Cell {
-    fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
+    fn from_lua(value: Value, _: &Lua) -> Result<Self> {
         let this = as_bridge_cell(value).map_err(|other| mlua::Error::FromLuaConversionError {
             from: other.type_name(),
             to: "bridge::Cell".to_owned(),
@@ -312,7 +326,7 @@ impl FromLua for Cell {
         })?;
         let state = state_of(&this)?;
         Ok(Cell {
-            handle: Handle::new(lua, &this, &state)?,
+            handle: Handle::new(&state),
             state: Arc::downgrade(&state),
         })
     }

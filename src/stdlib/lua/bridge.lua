@@ -3,7 +3,9 @@
 -- Values a script writes and reads that the host can watch. A Bridge table is written and read as
 -- a Lua table is: `t.k = v`, `t[k]`, `#t`, `pairs`, `ipairs` and the `table` library all work on
 -- it, and every key is the script's. `type`, `next`, `rawget` and `rawset` see a userdata. A Bridge
--- cell holds one value, replaced whole, and has methods.
+-- cell holds one value, replaced whole, and has methods. `serde` encodes a Bridge table as what it
+-- holds and a Bridge cell as its value, nested ones included, and `print` shows them as
+-- `bridge.table { ... }` and `bridge.cell(...)`.
 
 ---@meta
 
@@ -80,6 +82,12 @@ function bridge.table.insert(t, pos, value) end
 ---@param pos integer?
 ---@return any
 function bridge.table.remove(t, pos) end
+
+---A plain table holding what `t` holds, copied shallowly, for code that wants a real table. Writing
+---to it tells no one and leaves `t` as it was. A closed table can still be snapshot.
+---@param t bridge.Table
+---@return table
+function bridge.table.snapshot(t) end
 
 ---A Bridge cell: one value, replaced whole.
 ---@class bridge.Cell

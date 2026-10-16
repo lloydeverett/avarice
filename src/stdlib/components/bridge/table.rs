@@ -6,7 +6,8 @@
 //! the script's: whatever is done to one besides reading and writing it is a function of
 //! `bridge.table`, taking it first. `__pairs` and `__len` make `pairs`, `ipairs`, `#` and the
 //! `table` library work on it as on a table, and the backing table itself never reaches a script,
-//! which could otherwise write past the Bridge table.
+//! which could otherwise write past the Bridge table: `snapshot` and `__view`, which `print` shows
+//! (ADR 0023), give a copy of it, and `serde` encodes it through [`shared::serialize`].
 //!
 //! The backing table is the userdata's user value [`BACKING`]; the part that is not Lua's is in
 //! [`TableState`].
@@ -25,6 +26,8 @@ use mlua::{
     AnyUserData, FromLua, Function, IntoLua, IntoLuaMulti, Lua, MetaMethod, MultiValue,
     Table as LuaTable, UserData, Value,
 };
+
+use serde::{Serialize, Serializer};
 
 use super::shared::{self, Core, Handle, Kind, OnClose, Subscribed, Subscription};
 use super::{Depth, Helpers, Result, args, error, is_limit};
@@ -118,6 +121,13 @@ pub(super) fn build(lua: &Lua, helpers: &Helpers) -> Result<LuaTable> {
             let subscriber = shared::subscriber_args(subscriber, on_close, WHAT)?;
             let state = state_of(&this)?;
             shared::subscribe_lua(lua, this, state, |state| &state.core, subscriber, WHAT)
+        })?,
+    )?;
+    table_fn.set(
+        "snapshot",
+        lua.create_function(|lua, values: MultiValue| {
+            let [this] = args(values, "bridge.table.snapshot")?;
+            snapshot(lua, &bridge_table(this, "bridge.table.snapshot")?)
         })?,
     )?;
     table_fn.set(
@@ -284,12 +294,22 @@ fn make_table(lua: &Lua, init: Value) -> Result<AnyUserData> {
         }
     }
     let state = TableState {
-        core: Core::new(&TABLE),
+        core: Core::new(lua, &TABLE),
         batch_depth: AtomicUsize::new(0),
     };
-    let this = lua.create_userdata(BridgeTable(Arc::new(state)))?;
+    let this = lua.create_ser_userdata(BridgeTable(Arc::new(state)))?;
+    shared::enter(lua, &this, &this.borrow::<BridgeTable>()?.0.core)?;
     this.set_nth_user_value(BACKING, backing)?;
     Ok(this)
+}
+
+/// `bridge.table.snapshot(t)`: a plain table holding what the Bridge table `this` holds, copied
+/// shallowly, so that writing to it writes past no subscriber.
+fn snapshot(lua: &Lua, this: &AnyUserData) -> Result<LuaTable> {
+    let backing = backing(this)?;
+    let copy = lua.create_table_with_capacity(backing.raw_len(), 0)?;
+    backing.for_each(|k: Value, v: Value| copy.raw_set(k, v))?;
+    Ok(copy)
 }
 
 /// `value` as a Bridge table's userdata, or `value` back if it is not one. Everything that takes
@@ -522,6 +542,12 @@ impl UserData for BridgeTable {
             let iterator: Function = lua.named_registry_value(PAIRS_ITERATOR)?;
             Ok((iterator, bridge_table(this, TABLE.name)?, Value::Nil))
         });
+        // What `print` shows (ADR 0023): a copy, not the backing table, which whatever holds the
+        // backing table could write past the subscribers. `print` would not, but anything that
+        // can reach the metatable can call this, and the copy costs no more than `print`'s walk.
+        methods.add_meta_function("__view", |lua, this: Value| {
+            snapshot(lua, &bridge_table(this, TABLE.name)?)
+        });
         methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
             Ok(format!(
                 "{}: {:p}",
@@ -529,6 +555,15 @@ impl UserData for BridgeTable {
                 Value::UserData(this).to_pointer()
             ))
         });
+    }
+}
+
+/// `serde` encodes a Bridge table as its backing table.
+impl Serialize for BridgeTable {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        shared::serialize(&self.0.core, serializer, |this| {
+            backing(this).map(Value::Table)
+        })
     }
 }
 
@@ -649,7 +684,7 @@ impl fmt::Debug for Table {
 }
 
 impl FromLua for Table {
-    fn from_lua(value: Value, lua: &Lua) -> Result<Self> {
+    fn from_lua(value: Value, _: &Lua) -> Result<Self> {
         let this = as_bridge_table(value).map_err(|other| mlua::Error::FromLuaConversionError {
             from: other.type_name(),
             to: "bridge::Table".to_owned(),
@@ -657,7 +692,7 @@ impl FromLua for Table {
         })?;
         let state = state_of(&this)?;
         Ok(Table {
-            handle: Handle::new(lua, &this, &state.core)?,
+            handle: Handle::new(&state.core),
             state: Arc::downgrade(&state),
         })
     }

@@ -1,14 +1,14 @@
 //! What every Bridge object has, whatever it holds: its subscribers, Lua's and Rust's, in a
 //! [`Core`]; the telling of a change to them, in [`tell`]; its closing, in [`close`] and
-//! [`Core::close_by_collection`]; the handle `subscribe` gives Lua; and the host's weak handle,
-//! [`Handle`], and [`Subscription`]. What a change is, and how a subscriber is called with one, is
-//! each object's own, and given to these by it.
+//! [`Core::close_by_collection`]; the handle `subscribe` gives Lua; the host's weak handle,
+//! [`Handle`], and [`Subscription`]; and its encoding by `serde`, in [`serialize`]. What a change
+//! is, and how a subscriber is called with one, is each object's own, and given to these by it.
 //!
 //! An object's userdata keeps its Lua subscribers in the user value [`LUA_SUBSCRIBERS`], and their
 //! close callbacks in [`LUA_ON_CLOSE`], by subscription id, for the reasons the module's header
 //! gives. The rest of its user values are its own.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -18,6 +18,7 @@ use mlua::{
     AnyUserData, FromLuaMulti, Function, IntoLuaMulti, Lua, MetaMethod, MultiValue,
     Table as LuaTable, UserData, Value, WeakLua,
 };
+use serde::{Serialize, Serializer, ser};
 
 use super::{Depth, Result, args, error, is_limit};
 use crate::lock::lock;
@@ -42,8 +43,9 @@ const SUBSCRIBED_TO: usize = 1;
 /// The name of the handle `subscribe` gives back.
 const SUBSCRIPTION_NAME: &str = "bridge.subscription";
 
-/// Where [`register`] keeps the weak-valued table through which a [`Handle`] finds its userdata:
-/// by the id in its [`Core`], so that the host's hold does not keep a Bridge object alive.
+/// Where [`register`] keeps the weak-valued table through which a [`Handle`], and [`serialize`],
+/// find an object's userdata: by the id in its [`Core`], so that neither keeps a Bridge object
+/// alive. Every object is entered in it when it is made, by [`enter`].
 const HANDLES: &str = "avarice.bridge.handles";
 
 /// Gives out the ids of Bridge objects and of subscriptions, which are never reused.
@@ -60,6 +62,12 @@ pub(super) fn register(lua: &Lua) -> Result<()> {
     weak_values.set("__mode", "v")?;
     handles.set_metatable(Some(weak_values))?;
     lua.set_named_registry_value(HANDLES, handles)
+}
+
+/// Enters `this`, a Bridge object just made whose [`Core`] is `core`, in the table at [`HANDLES`].
+pub(super) fn enter<F: ?Sized>(lua: &Lua, this: &AnyUserData, core: &Core<F>) -> Result<()> {
+    let handles: LuaTable = lua.named_registry_value(HANDLES)?;
+    handles.raw_set(core.id, this)
 }
 
 /// What a Rust subscriber is told when the object closes, with no `Lua`, since collection and the
@@ -105,8 +113,11 @@ impl<F: ?Sized> Clone for Subscriber<F> {
 /// gives. Its Rust subscribers are each an `F`.
 pub(super) struct Core<F: ?Sized> {
     pub kind: &'static Kind,
-    /// The key the host's handles find the userdata by, in the table at [`HANDLES`].
+    /// The key the host's handles, and [`serialize`], find the userdata by, in the table at
+    /// [`HANDLES`].
     pub id: u64,
+    /// The `Lua` the object is in, held weakly, through which [`serialize`] finds the userdata.
+    lua: WeakLua,
     /// Every subscriber, Lua's and Rust's, in the order they subscribed.
     subscribers: Mutex<Vec<Entry<F>>>,
     /// Whether the object has been closed, from either side or by being collected.
@@ -119,10 +130,11 @@ pub(super) struct Core<F: ?Sized> {
 }
 
 impl<F: ?Sized> Core<F> {
-    pub fn new(kind: &'static Kind) -> Self {
+    pub fn new(lua: &Lua, kind: &'static Kind) -> Self {
         Core {
             kind,
             id: next_id(),
+            lua: lua.weak(),
             subscribers: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
             telling: AtomicUsize::new(0),
@@ -563,15 +575,13 @@ pub(super) struct Handle {
 }
 
 impl Handle {
-    /// A handle on `this`, whose [`Core`] is `core`, entered in the table at [`HANDLES`].
-    pub fn new<F: ?Sized>(lua: &Lua, this: &AnyUserData, core: &Core<F>) -> Result<Self> {
-        let handles: LuaTable = lua.named_registry_value(HANDLES)?;
-        handles.raw_set(core.id, this)?;
-        Ok(Handle {
+    /// A handle on the object whose [`Core`] is `core`.
+    pub fn new<F: ?Sized>(core: &Core<F>) -> Self {
+        Handle {
             id: core.id,
             kind: core.kind,
-            lua: lua.weak(),
-        })
+            lua: core.lua.clone(),
+        }
     }
 
     /// Calls the function its kind kept in the registry at `name`, giving back its own error
@@ -599,6 +609,63 @@ pub(super) fn handled(lua: &Lua, id: u64, kind: &Kind) -> Result<AnyUserData> {
     handles
         .raw_get::<Option<AnyUserData>>(id)?
         .ok_or_else(|| collected(kind))
+}
+
+thread_local! {
+    /// The ids of the Bridge objects whose encoding by [`serialize`] is running on this thread, one
+    /// inside another.
+    static ENCODING: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An encoding's mark on its object's id, taken off when it is dropped, even by a panic.
+struct Encoding;
+
+impl Encoding {
+    /// Marks `id` as being encoded, or gives back `None` if it already is: the object contains
+    /// itself.
+    fn enter(id: u64) -> Option<Self> {
+        ENCODING.with_borrow_mut(|encoding| {
+            (!encoding.contains(&id)).then(|| {
+                encoding.push(id);
+                Encoding
+            })
+        })
+    }
+}
+
+impl Drop for Encoding {
+    fn drop(&mut self) {
+        ENCODING.with_borrow_mut(|encoding| encoding.pop());
+    }
+}
+
+/// Encodes the Bridge object whose [`Core`] is `core` as the value `contents` finds in its
+/// userdata: what `serde` sees of it, since the userdata is made serializable (ADR 0022).
+///
+/// mlua asks the userdata's Rust value, which holds no Lua value, so this finds the userdata by its
+/// id, as a [`Handle`] does. mlua holds the Lua lock while it encodes, and takes it again here, on
+/// the same thread. A Bridge object nested in what it holds is encoded through here in turn, so one
+/// that contains itself, through any number of others, is found here, and is an error rather than
+/// a walk that never ends.
+pub(super) fn serialize<F: ?Sized, S: Serializer>(
+    core: &Core<F>,
+    serializer: S,
+    contents: impl FnOnce(&AnyUserData) -> Result<Value>,
+) -> std::result::Result<S::Ok, S::Error> {
+    let Kind { name, noun } = core.kind;
+    let Some(_encoding) = Encoding::enter(core.id) else {
+        return Err(ser::Error::custom(format!(
+            "{name}: cannot encode a {noun} that contains itself"
+        )));
+    };
+    let lua = core
+        .lua
+        .try_upgrade()
+        .ok_or_else(|| ser::Error::custom(collected(core.kind)))?;
+    let value = handled(&lua, core.id, core.kind)
+        .and_then(|this| contents(&this))
+        .map_err(ser::Error::custom)?;
+    value.serialize(serializer)
 }
 
 fn collected(kind: &Kind) -> mlua::Error {

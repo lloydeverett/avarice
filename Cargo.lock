@@ -115,6 +115,7 @@ dependencies = [
  "reedline",
  "regex",
  "reqwest",
+ "serde",
  "serde-value",
  "serde_ini",
  "serde_json",

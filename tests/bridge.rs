@@ -2938,6 +2938,153 @@ fn dropping_the_runtime_with_an_open_bridge_cell_runs_its_rust_close_callbacks()
     drop(subscriptions);
 }
 
+// -- Seeing what one holds ---------------------------------------------------------------------
+
+#[test]
+fn snapshot_gives_a_plain_table_with_the_contents() {
+    let got: (String, i64, String, i64, bool) = eval(
+        "local inner = {}
+         local t = bridge.table({ 10, 20, name = 'x', inner = inner })
+         local copy = bridge.table.snapshot(t)
+         return type(copy), copy[2], copy.name, #copy, copy.inner == inner",
+    );
+    assert_eq!(got, ("table".into(), 20, "x".into(), 2, true));
+}
+
+#[test]
+fn writing_to_a_snapshot_tells_no_one_and_leaves_the_bridge_table_alone() {
+    let got: (i64, Option<i64>, i64) = eval(
+        "local t = bridge.table({ a = 1 })
+         local told = 0
+         local _ = bridge.table.subscribe(t, function() told = told + 1 end)
+         local copy = bridge.table.snapshot(t)
+         copy.a = 2
+         copy.b = 3
+         return t.a, t.b, told",
+    );
+    assert_eq!(got, (1, None, 0));
+}
+
+#[test]
+fn a_snapshot_is_taken_when_asked_and_does_not_follow_later_writes() {
+    let got: (i64, i64) = eval(
+        "local t = bridge.table({ a = 1 })
+         local copy = bridge.table.snapshot(t)
+         t.a = 2
+         return copy.a, t.a",
+    );
+    assert_eq!(got, (1, 2));
+}
+
+#[test]
+fn a_closed_bridge_table_can_still_be_snapshot() {
+    let got: i64 = eval(
+        "local t = bridge.table({ a = 1 })
+         bridge.table.close(t)
+         return bridge.table.snapshot(t).a",
+    );
+    assert_eq!(got, 1);
+}
+
+#[test]
+fn snapshot_refuses_what_is_not_a_bridge_table() {
+    let message = raises("bridge.table.snapshot({})");
+    assert!(
+        message.contains("bridge.table.snapshot: expected a bridge.table, got table"),
+        "{message}"
+    );
+    let message = raises("bridge.table.snapshot(bridge.cell(1))");
+    assert!(
+        message.contains("bridge.table.snapshot: expected a bridge.table, got userdata"),
+        "{message}"
+    );
+    let message = raises("bridge.table.snapshot(bridge.table(), 1)");
+    assert!(
+        message.contains("bridge.table.snapshot: expected at most 1 argument, got 2"),
+        "{message}"
+    );
+}
+
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_encodes_a_bridge_table_as_its_contents() {
+    let got: (String, String) = eval(
+        "local json = require('serde').json
+         return json.encode(bridge.table({ 1, 2, 3 })), json.encode(bridge.table({ a = 'x' }))",
+    );
+    assert_eq!(got, ("[1,2,3]".into(), r#"{"a":"x"}"#.into()));
+}
+
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_encodes_nested_bridge_tables_all_the_way_down() {
+    let got: String = eval(
+        "local json = require('serde').json
+         local t = bridge.table({
+             list = bridge.table({ 1, bridge.table({ deep = true }) }),
+             plain = { cell = bridge.cell('c') },
+         })
+         local back = json.decode(json.encode(t))
+         return table.concat({
+             tostring(back.list[1]), tostring(back.list[2].deep), back.plain.cell,
+         }, ',')",
+    );
+    assert_eq!(got, "1,true,c");
+}
+
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_encodes_a_bridge_cell_as_its_value() {
+    let got: (String, String, String) = eval(
+        "local json = require('serde').json
+         return json.encode(bridge.cell(42)), json.encode(bridge.cell({ 'a', 'b' })),
+             json.encode(bridge.cell(bridge.table({ n = 1 })))",
+    );
+    assert_eq!(
+        got,
+        ("42".into(), r#"["a","b"]"#.into(), r#"{"n":1}"#.into())
+    );
+}
+
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_encodes_a_closed_bridge_table_as_what_it_held() {
+    let got: String = eval(
+        "local json = require('serde').json
+         local t = bridge.table({ a = 1 })
+         bridge.table.close(t)
+         return json.encode(t)",
+    );
+    assert_eq!(got, r#"{"a":1}"#);
+}
+
+#[cfg(feature = "stdlib-serde")]
+#[test]
+fn json_encoding_a_bridge_table_that_contains_itself_raises() {
+    for (what, body) in [
+        ("directly", "local t = bridge.table() t.me = t return t"),
+        (
+            "through another",
+            "local a, b = bridge.table(), bridge.table() a.b = b b.a = a return a",
+        ),
+        (
+            "through a plain table",
+            "local t = bridge.table() t.plain = { back = t } return t",
+        ),
+        (
+            "through a cell",
+            "local t = bridge.table() t.cell = bridge.cell(t) return t",
+        ),
+    ] {
+        let message = raises(&format!(
+            "local json = require('serde').json
+             local t = (function() {body} end)()
+             json.encode(t)"
+        ));
+        assert!(message.contains("contains itself"), "{what}: {message}");
+    }
+}
+
 // -- Who has it --------------------------------------------------------------------------------
 
 #[test]
