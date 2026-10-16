@@ -52,21 +52,17 @@ avarice 0.1.0 — Lua 5.4 (trusted profile). Ctrl-D to exit.
 $ avarice script.lua arg1 arg2
 $ avarice -e 'print(_VERSION)'
 $ echo 'print(1 + 1)' | avarice
-$ avarice --sandbox --timeout 5 untrusted.lua
-$ avarice --path ./src --path ./vendor main.lua
+$ avarice --sandbox --timeout 5 untrusted.lua   # trusted profile unless --sandbox
+$ avarice --path ./src --path ./vendor main.lua  # require: these dirs, else the script's dir
+$ avarice --help
 ```
-
-`avarice` uses the trusted profile unless you pass `--sandbox`. `require` looks in the script's
-directory, or in the `--path` directories. Run `avarice --help` for all options.
 
 ## Stdlib
 
 ```lua
 print(stdlib())   -- the stdlib modules this runtime has
+-- sandbox: only `stores` and `ansi` (pure Lua); the rest need the trusted profile
 ```
-
-The sandbox only registers `stores` and the core module `ansi`, which are pure Lua. The other
-modules need the trusted profile.
 
 ### `http`
 
@@ -146,6 +142,7 @@ local utils = require("utils")
 
 print(utils.uuid(), utils.env.get("HOME"))
 
+-- `avarice` waits for outstanding tasks before exiting; Ctrl-C aborts them
 local task = utils.spawn_task(function() print("in the background") end)
 task:await()
 
@@ -153,8 +150,6 @@ utils.spawn_timeout(function() print("later") end, 500)
 local ticker = utils.spawn_interval(function() print("tick") end, 100)
 utils.spawn_timeout(function() ticker:abort() end, 1000)
 ```
-
-`avarice` waits for outstanding tasks before exiting. Ctrl-C aborts them.
 
 ### `stores`
 
@@ -200,15 +195,16 @@ print(app:state(), app:runtime())              -- nil where the platform has non
 ```lua
 local process = require("process")
 
--- No shell: the program and each argument are entries of their own, passed as they are.
+-- no shell: program and each argument passed as-is
 local output = process.run({ "git", "log", "--oneline", "-5", cwd = "some/repo" })
 print(output.ok, output.code, output.stdout:bytes(), output.stderr:bytes())
 
--- Raise on failure, or on taking too long; the error carries what was captured.
+-- raise on failure or timeout; the error carries what was captured
 local ok, err = pcall(process.run, { "make", "test", check = true, timeout = 60000 })
 if not ok then print(err, err.kind, err.output and err.output.stderr:bytes()) end
 
--- Talk to a Child while it runs.
+-- a running Child is a task: `avarice` waits for it, Ctrl-C kills it (not its own children)
+-- `--timeout` doesn't cut a wait on a Child short; a Command's `timeout` does
 local child = process.spawn({ "sort" })
 child.stdin:write("pear\napple\n")
 child.stdin:close()
@@ -216,37 +212,35 @@ for line in child.stdout:lines() do print(line) end
 print(child:wait().code)
 ```
 
-A running Child counts as a task: `avarice` waits for it before exiting, and Ctrl-C kills it. Only
-the Child is killed, not programs it started. `--timeout` does not cut a wait for a Child short; a
-Command's own `timeout` does.
-
 ### `tidings`
 
-Files that outlast the program, in Stores on [tidings](https://github.com/lloydeverett/tidings):
-each Store is a directory, held by the filesystem, SQLite or memory. Files are written only by
-committing a Staging, all or nothing, and every change is reported on the Store's feed.
+Persistent file Stores on [tidings](https://github.com/lloydeverett/tidings).
 
 ```lua
 local tidings = require("tidings")
 local utils = require("utils")
 
+-- a Store is a directory, backed by the filesystem, SQLite or memory
+-- fs/SQLite Stores are tasks while open: `avarice` (and a REPL line) waits for them to close
 local dir = require("dirs").app("myapp", "Example", "com"):data()
-local store <close>, feed = tidings.open_sqlite(dir)
+local store <close>, feed = tidings.open_sqlite(dir)   -- or tidings.open_memory()
 
+-- writes happen only by committing a Staging, all or nothing
 local s = tidings.staging()
 s:write("notes/first.md", "# First\n", { if_absent = true })
-local committed, conflict = store:commit(s)
+local committed, conflict = store:commit(s)   -- Conflict is returned; all else raises
 if not committed then print("already there:", table.concat(conflict.paths, ", ")) end
+-- a Pending commit has happened: returned like a finished one, with committed.pending set
 
 local file = store:read("notes/first.md")
 print(file:text(), file.revision, file.modified)   -- modified is a datetime Timestamp
 
--- Write it back only if nobody changed it since it was read.
+-- write back only if unchanged since read
 s = tidings.staging()
 s:write(file.path, file:text() .. "more\n", { if_revision = file.revision })
 store:commit(s)
 
--- Follow the feed in a task of its own, so the script carries on meanwhile.
+-- every change is reported on the feed; follow it in its own task
 utils.spawn_task(function()
   while true do
     local item = feed:next()
@@ -257,21 +251,14 @@ utils.spawn_task(function()
     end
   end
 end)
-```
 
-A Conflict is returned rather than raised, and everything else raises. A Pending commit has
-happened, so it is returned like a finished one, with `committed.pending` set. A Store on the
-filesystem or SQLite counts as a task while it is open, so `avarice` waits for it to be closed
-before exiting, and at the REPL a line that leaves one open waits too: close it, open it with
-`<close>`, or use `tidings.open_memory()` to try things out. If `abort_tasks` (Ctrl-C) ends a
-Store's tasks, the Store raises from then on and its feed gives one Resync and ends: close it and
-open it again.
+-- after `abort_tasks` (Ctrl-C) the Store raises and its feed gives one Resync then ends:
+-- close it and open it again
+```
 
 ### `bridge`
 
-Values a script writes and the host watches. A Bridge table is written and read as a table, and a
-Bridge cell holds one value, replaced whole. Every subscriber, Lua's or the host's, is told of each
-change as it is made, so nothing has to diff a table to find out what moved.
+Values a script writes and the host watches, with per-change notifications (no diffing).
 
 ```lua
 local bridge = require("bridge")
@@ -282,23 +269,28 @@ local sub = bt.subscribe(settings, function(changes)
   for _, c in ipairs(changes) do print(c.key, c.old, c.new) end
 end)
 settings.theme = "light"                -- prints: theme  dark  light
-bt.batch(settings, function()           -- told as one list once `fn` returns
+bt.batch(settings, function()           -- told as one list once `fn` returns; `fn` can't yield
   settings.width, settings.height = 80, 24
 end)
-bt.insert(settings, 1, "first")         -- one list, not one change per shifted slot
+bt.insert(settings, 1, "first")         -- one list; table.insert/remove/sort tell one per slot
 local plain = bt.snapshot(settings)     -- a plain shallow copy; writing to it tells no one
+settings.opts = { a = 1 }
+settings.opts.a = 2                     -- shallow: not a change
 sub:unsubscribe()
 bt.close(settings)                      -- reads still work; writes raise
 
-local count = bridge.cell(0)
+-- a subscriber that raises: error goes to stderr, the write still succeeds
+local count = bridge.cell(0)            -- one value, replaced whole
 count:subscribe(function(old, new) print(old, "->", new) end)
-count:update(function(n) return n + 1 end)   -- prints: 0  ->  1
+count:update(function(n) return n + 1 end)   -- prints: 0  ->  1; `fn` can't yield
 
 print(settings)                         -- bridge.table { ... }
-print(require("serde").json.encode(bt({ n = count })))   -- {"n":1}
+print(type(settings))                   -- "userdata": next/rawget don't see a table either
+local json = require("serde").json
+print(json.encode(bt({ n = count })))   -- {"n":1}
+print(json.encode({ t = settings }))    -- {}: userdata directly in a plain table is dropped
+-- a Bridge table that contains itself raises
 ```
-
-The host receives one through a function of its own, as a `bridge::Table` or a `bridge::Cell`:
 
 ```rust
 use std::sync::{Arc, Mutex, mpsc};
@@ -308,51 +300,36 @@ use avarice::bridge;
 let (tx, rx) = mpsc::channel::<String>();
 let subscriptions = Arc::new(Mutex::new(Vec::<bridge::Subscription>::new()));
 let held = Arc::clone(&subscriptions);
+// receive one as a `bridge::Table` (or `bridge::Cell`)
 let watch = rt.lua().create_function(move |_, t: bridge::Table| {
     let tx = tx.clone();
     let subscription = t.subscribe_with_close(
+        // runs on the Lua thread, inside the write; the script waits, so hand off and return
+        // batches over 10,000 changes arrive as several calls
         move |_, changes: &[bridge::Change]| {
             for change in changes {
-                // Hand the work off and return: the script that wrote waits for this.
                 let _ = tx.send(change.key.to_string().unwrap_or_default());
             }
         },
-        || println!("closed"),
+        || println!("closed"),   // when run by collection, can't call into Lua
     );
     held.lock().unwrap().push(subscription);   // dropping it unsubscribes
-    t.set("seen", true)                        // tells every subscriber before it returns
+    t.set("seen", true)   // from any thread; tells every subscriber before it returns
 })?;
 let host = rt.lua().create_table()?;
 host.set("watch", watch)?;
 rt.register_module("host", host)?;
 // Lua: require("host").watch(bridge.table())
+
+// Lua owns every Bridge object: Table/Cell/Subscription don't keep it alive, and once Lua
+// drops it it's collected and closed whenever the GC runs (so close it when done).
+// A Rust subscriber holding an `mlua::Value` of its own table does keep it alive.
 ```
-
-Subscribers run on the Lua thread, inside the write, once it is in place, and the script waits for
-them, so a Rust subscriber hands slow work to a task or channel of its own and returns. A write from
-Rust, on any thread, tells Lua's subscribers inside that call. A Lua subscriber that raises has its
-error written to standard error, and the write still succeeds. A batch of more than 10,000 changes
-reaches a Rust subscriber as several calls of at most 10,000 each, and the `fn` given to `batch` or
-`update` cannot yield.
-
-Lua owns every Bridge object: a `bridge::Table`, `bridge::Cell` or subscription does not keep one
-alive, and once Lua drops it, it is collected and closed, at a time the collector picks, so a
-producer that is finished closes it. A Rust subscriber that keeps an `mlua::Value` of its own
-Bridge table keeps it alive. A close callback run by collection cannot call into Lua.
-
-Tracking is shallow: a write into a plain table stored in a Bridge table is not a change. A Bridge
-table is userdata, so `type`, `next` and `rawget` do not see a table, and `table.insert(t, 1, v)`
-tells a change for every slot it shifts, as `table.remove` and `table.sort` do; use
-`bridge.table.insert` and `bridge.table.remove`. `serde` drops any userdata directly in the plain
-table it is given, so `json.encode({ t = bt })` and `json.encode({ bt })` give `{}`: encode the
-Bridge table itself, or nest it a level deeper. One that contains itself raises.
 
 ### `ansi`
 
-A core module: always present, in every profile and build.
-
 ```lua
-local ansi = require("ansi")
+local ansi = require("ansi")   -- core module: every profile and build
 
 print(ansi.bold .. ansi.fg.red .. "error" .. ansi.reset)
 print(ansi.fg.hex("#ff8800") .. ansi.bg.color256(236) .. "orange" .. ansi.reset)
