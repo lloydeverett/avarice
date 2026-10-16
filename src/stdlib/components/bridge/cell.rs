@@ -12,10 +12,8 @@ use mlua::{
     Table as LuaTable, UserData, Value,
 };
 
-use super::Helpers;
-use super::shared::{
-    self, Core, Handle, Kind, LUA_SUBSCRIBERS, OnClose, Result, Subscription, args, error,
-};
+use super::shared::{self, Core, Handle, Kind, OnClose, Subscription};
+use super::{Helpers, Result, args, error};
 
 /// What a Bridge cell is called, as its `__name` and in `tostring`, and in prose.
 static CELL: Kind = Kind {
@@ -71,7 +69,7 @@ pub(super) fn build(lua: &Lua, helpers: &Helpers) -> Result<Function> {
     let protecting = helpers.clone();
     let update = lua.create_function(move |lua, mut values: MultiValue| {
         const WHAT: &str = "bridge.cell.update";
-        let this = bridge_cell(values.pop_front().unwrap_or(Value::Nil), WHAT)?;
+        let this = open_cell(values.pop_front().unwrap_or(Value::Nil), WHAT)?;
         let [body] = args(values, WHAT)?;
         let Value::Function(body) = body else {
             return Err(error(format!(
@@ -79,9 +77,6 @@ pub(super) fn build(lua: &Lua, helpers: &Helpers) -> Result<Function> {
                 body.type_name()
             )));
         };
-        if state_of(&this)?.is_closed() {
-            return Err(shared::is_closed(&CELL, WHAT));
-        }
         let old: Value = this.nth_user_value(VALUE)?;
         match protecting.protect(lua, WHAT, body, old)? {
             Ok(new) => set(lua, &this, new, WHAT).map(|()| (true, Value::Nil)),
@@ -95,12 +90,9 @@ pub(super) fn build(lua: &Lua, helpers: &Helpers) -> Result<Function> {
             const WHAT: &str = "bridge.cell.subscribe";
             let this = bridge_cell(values.pop_front().unwrap_or(Value::Nil), WHAT)?;
             let [subscriber, on_close] = args(values, WHAT)?;
-            let (subscriber, on_close) = shared::subscriber_args(subscriber, on_close, WHAT)?;
+            let subscriber = shared::subscriber_args(subscriber, on_close, WHAT)?;
             let state = state_of(&this)?;
-            if state.is_closed() {
-                return Err(shared::is_closed(&CELL, WHAT));
-            }
-            shared::subscribe_lua(lua, this, state.clone(), &state, subscriber, on_close)
+            shared::subscribe_lua(lua, this, state, |state| state, subscriber, WHAT)
         })?,
     )?;
     methods.set(
@@ -142,6 +134,15 @@ fn bridge_cell(value: Value, what: &str) -> Result<AnyUserData> {
     })
 }
 
+/// `value` as a Bridge cell's userdata that is not closed, or an error naming `what`.
+fn open_cell(value: Value, what: &str) -> Result<AnyUserData> {
+    let this = bridge_cell(value, what)?;
+    if state_of(&this)?.is_closed() {
+        return Err(shared::is_closed(&CELL, what));
+    }
+    Ok(this)
+}
+
 fn state_of(this: &AnyUserData) -> Result<Arc<CellState>> {
     Ok(Arc::clone(&this.borrow::<BridgeCell>()?.0))
 }
@@ -161,13 +162,7 @@ fn set(lua: &Lua, this: &AnyUserData, new: Value, what: &str) -> Result<()> {
         Ok(())
     };
     let lua_args = || (&old, &new).into_lua_multi(lua);
-    shared::tell(
-        this,
-        &state,
-        this.nth_user_value(LUA_SUBSCRIBERS)?,
-        rust,
-        lua_args,
-    )
+    shared::tell(this, &state, rust, lua_args)
 }
 
 /// `c:close()`, and [`Cell::close`]: closes `this`, as [`shared::close`] does. A cell holds

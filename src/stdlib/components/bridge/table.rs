@@ -26,11 +26,8 @@ use mlua::{
     Table as LuaTable, UserData, Value,
 };
 
-use super::Helpers;
-use super::shared::{
-    self, Core, Depth, Handle, Kind, LUA_SUBSCRIBERS, OnClose, Result, Subscribed, Subscription,
-    args, error, is_limit,
-};
+use super::shared::{self, Core, Handle, Kind, OnClose, Subscribed, Subscription};
+use super::{Depth, Helpers, Result, args, error, is_limit};
 use crate::error::was_out_of_memory;
 
 /// What a Bridge table is called, as its `__name` and in `tostring`, and in prose.
@@ -117,10 +114,10 @@ pub(super) fn build(lua: &Lua, helpers: &Helpers) -> Result<LuaTable> {
         lua.create_function(|lua, values: MultiValue| {
             const WHAT: &str = "bridge.table.subscribe";
             let [this, subscriber, on_close] = args(values, WHAT)?;
-            let this = open_table(this, WHAT)?;
-            let (subscriber, on_close) = shared::subscriber_args(subscriber, on_close, WHAT)?;
+            let this = bridge_table(this, WHAT)?;
+            let subscriber = shared::subscriber_args(subscriber, on_close, WHAT)?;
             let state = state_of(&this)?;
-            shared::subscribe_lua(lua, this, state.clone(), &state.core, subscriber, on_close)
+            shared::subscribe_lua(lua, this, state, |state| &state.core, subscriber, WHAT)
         })?,
     )?;
     table_fn.set(
@@ -380,10 +377,11 @@ enum Changes<'a> {
 
 /// Tells every subscriber of `this` of `changes`, as [`shared::tell`] does.
 fn tell(lua: &Lua, this: &AnyUserData, changes: Changes<'_>) -> Result<()> {
-    tell_to(lua, this, changes, this.nth_user_value(LUA_SUBSCRIBERS)?)
+    tell_to(lua, this, changes, None)
 }
 
-/// [`tell`], with the Lua subscribers given, as [`close`] gives them once it has taken them.
+/// [`tell`], or, when `taken` is given, [`shared::tell_taken`] to the Lua subscribers [`close`]
+/// took out.
 ///
 /// A batch's list is made into [`Change`]s only for a Rust subscriber, since each value of one
 /// holds a slot of mlua's reference stack, and then a slice at a time, of at most [`RUST_SLICE`]:
@@ -392,7 +390,7 @@ fn tell_to(
     lua: &Lua,
     this: &AnyUserData,
     changes: Changes<'_>,
-    lua_subscribers: Option<LuaTable>,
+    taken: Option<Option<LuaTable>>,
 ) -> Result<()> {
     let state = state_of(this)?;
     let core = &state.core;
@@ -429,7 +427,10 @@ fn tell_to(
         };
         list.into_lua_multi(lua)
     };
-    shared::tell(this, core, lua_subscribers, rust, lua_args)
+    match taken {
+        None => shared::tell(this, core, rust, lua_args),
+        Some(lua_subscribers) => shared::tell_taken(this, core, lua_subscribers, rust, lua_args),
+    }
 }
 
 /// The most changes a Rust subscriber is given in one call. A batch's list longer than this
@@ -465,7 +466,7 @@ fn close(lua: &Lua, this: &AnyUserData) -> Result<()> {
             false => None,
         };
         match pending {
-            Some(pending) => tell_to(lua, this, Changes::Batch(&pending), lua_subscribers),
+            Some(pending) => tell_to(lua, this, Changes::Batch(&pending), Some(lua_subscribers)),
             None => Ok(()),
         }
     })

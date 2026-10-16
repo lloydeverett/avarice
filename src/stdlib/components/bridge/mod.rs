@@ -36,13 +36,17 @@ mod cell;
 mod shared;
 mod table;
 
-use mlua::{Function, IntoLua, IntoLuaMulti, Lua, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use mlua::{Function, IntoLua, IntoLuaMulti, Lua, MultiValue, Value};
+
+use crate::error::{was_cancelled, was_out_of_memory, was_timed_out};
 
 pub use cell::Cell;
 pub use shared::Subscription;
 pub use table::{Change, Table};
 
-use shared::Result;
+type Result<T> = mlua::Result<T>;
 
 /// Builds the module's table: `bridge.table`, a table whose `__call` makes a Bridge table and
 /// whose fields are the operations on one, and `bridge.cell`, which makes a Bridge cell.
@@ -120,8 +124,56 @@ impl Helpers {
             raised if ok => Ok(Ok(raised)),
             // Lua calls no handler for a memory error, and gives only its message.
             raised if !handled => Err(mlua::Error::MemoryError(raised.to_string()?)),
-            Value::Error(raised) if shared::is_limit(&raised) => Err(*raised),
+            Value::Error(raised) if is_limit(&raised) => Err(*raised),
             raised => Ok(Err(raised)),
         }
     }
+}
+
+/// Whether `e` is not a failure but the runtime ending the run: a cancel, a timeout, or the memory
+/// limit.
+fn is_limit(e: &mlua::Error) -> bool {
+    was_cancelled(e) || was_timed_out(e) || was_out_of_memory(e)
+}
+
+/// A batch's hold on its table's batch depth, or a telling's on its telling depth, given back when
+/// it is dropped, even by a panic.
+struct Depth<'a> {
+    depth: &'a AtomicUsize,
+    pub outermost: bool,
+}
+
+impl<'a> Depth<'a> {
+    pub fn enter(depth: &'a AtomicUsize) -> Self {
+        let outermost = depth.fetch_add(1, Ordering::Relaxed) == 0;
+        Depth { depth, outermost }
+    }
+}
+
+impl Drop for Depth<'_> {
+    fn drop(&mut self) {
+        self.depth.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// The values a function was called with, as exactly `N`, nil standing for one not given. More
+/// than `N` raises, where Lua would drop the extra ones, as in `tidings` and `datetime`.
+fn args<const N: usize>(values: MultiValue, what: &str) -> Result<[Value; N]> {
+    if values.len() > N {
+        let expected = match N {
+            0 => "no arguments".to_owned(),
+            1 => "at most 1 argument".to_owned(),
+            n => format!("at most {n} arguments"),
+        };
+        return Err(error(format!(
+            "{what}: expected {expected}, got {}",
+            values.len()
+        )));
+    }
+    let mut values = values.into_iter();
+    Ok(std::array::from_fn(|_| values.next().unwrap_or(Value::Nil)))
+}
+
+fn error(message: String) -> mlua::Error {
+    mlua::Error::runtime(message)
 }

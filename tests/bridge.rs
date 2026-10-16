@@ -2243,6 +2243,110 @@ fn a_cancel_inside_update_ends_it_as_a_cancel_and_sets_nothing() {
     assert_eq!(eval_in::<i64>(&rt, "return held:get()"), 1);
 }
 
+/// A trusted runtime with a global `stop()` that cancels it, and the handle that resets it.
+fn stoppable() -> (Runtime, CancelHandle) {
+    let cancel = CancelHandle::new();
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .check_interval(100)
+        .build()
+        .unwrap();
+    let stop = {
+        let cancel = cancel.clone();
+        rt.lua()
+            .create_function(move |_, ()| {
+                cancel.cancel();
+                Ok(())
+            })
+            .unwrap()
+    };
+    rt.lua().globals().set("stop", stop).unwrap();
+    (rt, cancel)
+}
+
+#[test]
+fn a_cancel_inside_a_lua_cell_subscriber_ends_the_set_and_tells_no_one_else() {
+    let (rt, _cancel) = stoppable();
+    let err = rt
+        .block_on(rt.eval::<()>(
+            "local bridge = require('bridge')
+             held = bridge.cell(1)
+             later = false
+             held:subscribe(function() stop() while true do end end)
+             held:subscribe(function() later = true end)
+             held:set(2)",
+            "=test",
+        ))
+        .unwrap_err();
+    let Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_cancelled(&err), "{err}");
+    let later: bool = rt.lua().globals().get("later").unwrap();
+    assert!(!later, "a subscriber was told after the cancel");
+}
+
+#[test]
+fn a_cancel_inside_a_cell_close_callback_ends_the_close_but_still_tells_rust() {
+    let (rt, _cancel) = stoppable();
+    let told = Told::default();
+    let held: Held = Arc::default();
+    let watch = {
+        let (told, held) = (told.clone(), Arc::clone(&held));
+        rt.lua()
+            .create_function(move |_, c: bridge::Cell| {
+                let told = told.clone();
+                let subscription = c.subscribe_with_close(|_, _, _| {}, move || told.closed());
+                held.lock().unwrap().push(subscription);
+                Ok(())
+            })
+            .unwrap()
+    };
+    rt.lua().globals().set("watch", watch).unwrap();
+    let err = rt
+        .block_on(rt.eval::<()>(
+            "local bridge = require('bridge')
+             later = false
+             held = bridge.cell()
+             held:subscribe(print, function() stop() while true do end end)
+             watch(held)
+             held:subscribe(print, function() later = true end)
+             held:close()",
+            "=test",
+        ))
+        .unwrap_err();
+    let Error::Lua(err) = err else {
+        panic!("expected a Lua error, got {err:?}");
+    };
+    assert!(was_cancelled(&err), "{err}");
+    assert_eq!(told.get(), "closed");
+    let later: bool = rt.lua().globals().get("later").unwrap();
+    assert!(!later, "a Lua close callback was called after the cancel");
+}
+
+#[test]
+fn update_whose_fn_closes_the_cell_raises_and_sets_nothing() {
+    let got: (String, i64, String) = eval(&format!(
+        "{RECORD_CELL}
+         local cell = bridge.cell(1)
+         cell:subscribe(record, function() record('closed', '') end)
+         local ok, err = pcall(cell.update, cell, function(old)
+             cell:close()
+             return old + 1
+         end)
+         return tostring(err):match('bridge.cell.update: the Bridge cell is closed') or
+             tostring(ok), cell:get(), told()"
+    ));
+    assert_eq!(
+        got,
+        (
+            "bridge.cell.update: the Bridge cell is closed".into(),
+            1,
+            "closed>".into()
+        )
+    );
+}
+
 #[test]
 fn update_whose_fn_yields_raises_that_it_cannot() {
     let got: (bool, String) = eval(

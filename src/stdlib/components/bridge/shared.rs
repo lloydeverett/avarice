@@ -19,10 +19,8 @@ use mlua::{
     Table as LuaTable, UserData, Value, WeakLua,
 };
 
-use crate::error::{was_cancelled, was_out_of_memory, was_timed_out};
+use super::{Depth, Result, args, error, is_limit};
 use crate::lock::lock;
-
-pub(super) type Result<T> = mlua::Result<T>;
 
 /// What a kind of Bridge object is called: its `__name`, and its name in prose.
 pub(super) struct Kind {
@@ -243,36 +241,9 @@ impl<F: ?Sized + Send + Sync> Subscribed for Core<F> {
     }
 }
 
-/// Whether `e` is not a failure but the runtime ending the run: a cancel, a timeout, or the memory
-/// limit.
-pub(super) fn is_limit(e: &mlua::Error) -> bool {
-    was_cancelled(e) || was_timed_out(e) || was_out_of_memory(e)
-}
-
-/// A batch's hold on its table's batch depth, or a telling's on its telling depth, given back when
-/// it is dropped, even by a panic.
-pub(super) struct Depth<'a> {
-    depth: &'a AtomicUsize,
-    pub outermost: bool,
-}
-
-impl<'a> Depth<'a> {
-    pub fn enter(depth: &'a AtomicUsize) -> Self {
-        let outermost = depth.fetch_add(1, Ordering::Relaxed) == 0;
-        Depth { depth, outermost }
-    }
-}
-
-impl Drop for Depth<'_> {
-    fn drop(&mut self) {
-        self.depth.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
 /// Tells every subscriber of `this`, whose [`Core`] is `core`, of a change, in the order they
 /// subscribed: a Rust one by `rust`, given its id and itself, and a Lua one by calling it with what
-/// `lua_args` gives. `lua_subscribers` are the Lua ones, as the user value [`LUA_SUBSCRIBERS`]
-/// holds them, given since [`close`] takes them out before it tells.
+/// `lua_args` gives.
 ///
 /// The list is copied first, and no lock is held while a subscriber runs, since one may write to
 /// the object, which nests, or subscribe or unsubscribe. One that subscribes while this runs is not
@@ -282,6 +253,18 @@ impl Drop for Depth<'_> {
 /// A close made while this runs, by a subscriber or by a write nested in one, waits for it: the
 /// outermost telling of the object tells the close once every subscriber has heard the change.
 pub(super) fn tell<F: ?Sized>(
+    this: &AnyUserData,
+    core: &Core<F>,
+    rust: impl FnMut(u64, &F) -> Result<()>,
+    lua_args: impl FnMut() -> Result<MultiValue>,
+) -> Result<()> {
+    let lua_subscribers = this.nth_user_value(LUA_SUBSCRIBERS)?;
+    tell_taken(this, core, lua_subscribers, rust, lua_args)
+}
+
+/// [`tell`], to the Lua subscribers `lua_subscribers`, which [`close`] took out of the user value
+/// [`LUA_SUBSCRIBERS`] before it gave them to its `flush`.
+pub(super) fn tell_taken<F: ?Sized>(
     this: &AnyUserData,
     core: &Core<F>,
     lua_subscribers: Option<LuaTable>,
@@ -305,7 +288,7 @@ pub(super) fn tell<F: ?Sized>(
     told
 }
 
-/// The body of [`tell`], with no close waiting on it.
+/// The body of [`tell_taken`], with no close waiting on it.
 fn tell_each<F: ?Sized>(
     core: &Core<F>,
     lua_subscribers: Option<LuaTable>,
@@ -371,17 +354,26 @@ pub(super) fn subscriber_args(
     Ok((subscriber, on_close))
 }
 
-/// Subscribes from Lua: adds `subscriber`, and `on_close` if it is given, kept in user values of
-/// `this`, whose [`Core`] is `core` and is held by `state`, so that the collector traces them, and
-/// gives back a handle whose `unsubscribe` removes them.
-pub(super) fn subscribe_lua<F: ?Sized>(
+/// Subscribes from Lua, as of `what`: adds `subscriber`, and `on_close` if it is given, kept in
+/// user values of `this`, whose state is `state`, so that the collector traces them, and gives
+/// back a handle whose `unsubscribe` removes them. `core` finds its [`Core`] in the state. On an
+/// object that is closed it is an error.
+pub(super) fn subscribe_lua<S, F>(
     lua: &Lua,
     this: AnyUserData,
-    state: Arc<dyn Subscribed>,
-    core: &Core<F>,
-    subscriber: Function,
-    on_close: Option<Function>,
-) -> Result<AnyUserData> {
+    state: Arc<S>,
+    core: impl FnOnce(&S) -> &Core<F>,
+    (subscriber, on_close): (Function, Option<Function>),
+    what: &str,
+) -> Result<AnyUserData>
+where
+    S: Subscribed + 'static,
+    F: ?Sized,
+{
+    let core = core(&state);
+    if core.is_closed() {
+        return Err(is_closed(core.kind, what));
+    }
     let id = next_id();
     user_table(lua, &this, LUA_SUBSCRIBERS)?.raw_set(id, subscriber)?;
     if let Some(on_close) = on_close {
@@ -665,26 +657,4 @@ impl Drop for Subscription {
             state.unsubscribe(self.id);
         }
     }
-}
-
-/// The values a function was called with, as exactly `N`, nil standing for one not given. More
-/// than `N` raises, where Lua would drop the extra ones, as in `tidings` and `datetime`.
-pub(super) fn args<const N: usize>(values: MultiValue, what: &str) -> Result<[Value; N]> {
-    if values.len() > N {
-        let expected = match N {
-            0 => "no arguments".to_owned(),
-            1 => "at most 1 argument".to_owned(),
-            n => format!("at most {n} arguments"),
-        };
-        return Err(error(format!(
-            "{what}: expected {expected}, got {}",
-            values.len()
-        )));
-    }
-    let mut values = values.into_iter();
-    Ok(std::array::from_fn(|_| values.next().unwrap_or(Value::Nil)))
-}
-
-pub(super) fn error(message: String) -> mlua::Error {
-    mlua::Error::runtime(message)
 }
