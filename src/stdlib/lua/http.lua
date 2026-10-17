@@ -363,6 +363,26 @@ local function removable(headers, what)
   return headers
 end
 
+-- How to check each option that a request and a Client share, giving what to keep of it.
+local SHARED = {
+  headers = function(value, what) return removable(strings(value, what, true, true), what) end,
+  query = function(value, what) return strings(value, what, true) end,
+  check = boolean,
+  retry = retry_option,
+  idle_timeout = timeout,
+  timeout = timeout,
+}
+
+-- The options in `options` that a request and a Client share, checked and copied. `whose` is
+-- `a request's` or `a Client's`, for messages.
+local function shared(options, whose)
+  local kept = {}
+  for key, check in pairs(SHARED) do
+    if options[key] ~= nil then kept[key] = check(options[key], whose .. " " .. key) end
+  end
+  return kept
+end
+
 -- `fields` without the keys set to `false`, which remove what they would have replaced.
 local function without_false(fields)
   local result = {}
@@ -401,10 +421,11 @@ local function form_encoded(fields)
   local names = {}
   for name in pairs(fields) do names[#names + 1] = name end
   table.sort(names)
+  local pairs_encoded = {}
   for i, name in ipairs(names) do
-    names[i] = form_component(name) .. "=" .. form_component(fields[name])
+    pairs_encoded[i] = form_component(name) .. "=" .. form_component(fields[name])
   end
-  return table.concat(names, "&")
+  return table.concat(pairs_encoded, "&")
 end
 
 -- `url` joined to `base_url`: appended to it, with one `/` between them, unless it has a scheme
@@ -425,25 +446,22 @@ local function prepared(request, defaults)
   if type(request.url) ~= "string" then refuse("a request needs a string url") end
   local method = request.method or "GET"
   if type(method) ~= "string" then refuse("a request's method is a string") end
-  boolean(request.check, "a request's check")
-  retry_option(request.retry, "a request's retry")
-  timeout(request.idle_timeout, "a request's idle_timeout")
-  timeout(request.timeout, "a request's timeout")
+  local given = shared(request, "a request's")
 
-  local headers = merged(defaults.headers, removable(request.headers and strings(request.headers, "a request's headers", true, true), "a request's headers"))
-  local query = without_false(merged(defaults.query, request.query and strings(request.query, "a request's query", true)))
+  local headers = merged(defaults.headers, given.headers)
+  local query = without_false(merged(defaults.query, given.query))
 
   local url = joined(defaults.base_url, request.url)
   if next(query) ~= nil then
     url = url .. (url:find("?", 1, true) and "&" or "?") .. form_encoded(query)
   end
 
-  local given = {}
+  local bodies = {}
   for _, key in ipairs({ "body", "json", "form" }) do
-    if request[key] ~= nil then given[#given + 1] = key end
+    if request[key] ~= nil then bodies[#bodies + 1] = key end
   end
-  if #given > 1 then
-    refuse(("a request has one body, but was given %s"):format(table.concat(given, " and ")))
+  if #bodies > 1 then
+    refuse(("a request has one body, but was given %s"):format(table.concat(bodies, " and ")))
   end
 
   local body, content_type = request.body, nil
@@ -462,10 +480,10 @@ local function prepared(request, defaults)
 
   return {
     url = url, method = method:upper(), headers = headers, body = body, json = request.json,
-    check = resolved("check", request, defaults) == true,
-    retry = resolved_retry(request, defaults),
-    idle_timeout = resolved("idle_timeout", request, defaults) or nil,
-    timeout = resolved("timeout", request, defaults) or nil,
+    check = resolved("check", given, defaults) == true,
+    retry = resolved_retry(given, defaults),
+    idle_timeout = resolved("idle_timeout", given, defaults) or nil,
+    timeout = resolved("timeout", given, defaults) or nil,
   }
 end
 
@@ -490,15 +508,8 @@ function http.client(options)
   if connect_timeout == nil then connect_timeout = DEFAULT.connect_timeout end
 
   local client = setmetatable({}, Client)
-  settings[client] = {
-    base_url = options.base_url,
-    headers = removable(options.headers and strings(options.headers, "a Client's headers", true, true), "a Client's headers"),
-    query = options.query and strings(options.query, "a Client's query", true),
-    check = boolean(options.check, "a Client's check"),
-    retry = retry_option(options.retry, "a Client's retry"),
-    idle_timeout = timeout(options.idle_timeout, "a Client's idle_timeout"),
-    timeout = timeout(options.timeout, "a Client's timeout"),
-  }
+  settings[client] = shared(options, "a Client's")
+  settings[client].base_url = options.base_url
   raw[client] = new_client(connect_timeout or nil)
   shown[client] = ("Client(%s)"):format(options.base_url and redacted(options.base_url) or "")
   return client
