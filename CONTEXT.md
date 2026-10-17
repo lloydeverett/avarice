@@ -284,11 +284,38 @@ _Avoid_: result.
 ## Buffer
 
 A sequence of bytes the host holds on Lua's behalf, outside the Lua state, until
-Lua asks for them. What an HTTP response's body and a **Child**'s captured
-output are.
+Lua asks for them. What a **Child**'s captured output is, and what the rest of a
+**Reader** is read into.
 
 Bytes, not text: nothing about a Buffer says its contents are UTF-8, or
 characters of any encoding. Asked for, it gives them to Lua as a string holding
 exactly those bytes, since a Lua string is a sequence of bytes too.
 
 _Avoid_: body (HTTP's word for what a response carries, not for the holder).
+
+## Reader
+
+Bytes arriving from outside the Lua state, which Lua takes in order, a piece at
+a time, as they come: a chunk, a line, or all that is left. One of a **Child**'s
+output streams is a Reader, and so is an HTTP response's body.
+
+A Reader is read once. What has been taken is gone from it, and it has an end,
+after which it gives nothing. Lua asks for each piece and waits for it; nothing
+arrives unasked.
+
+Not a **Buffer**, which holds bytes that have all arrived.
+
+_Avoid_: stream (unqualified), body.
+
+## Client
+
+What the `http` **stdlib module** sends requests through: settings that apply to
+every request sent through it, and the connections it keeps open to reuse.
+
+A runtime has a default Client, which `http`'s own functions send through, and
+Lua can make others. Two runtimes never share a Client.
+
+Not an **embedder**, which is the Rust program running Lua, nor anything that
+connects to avarice: avarice is the client of the servers it talks to.
+
+_Avoid_: session, agent, connection pool.
