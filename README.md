@@ -66,20 +66,8 @@ print(stdlib())   -- the stdlib modules this runtime has
 
 ### `http`
 
-```lua
-local http = require("http")
-
-local res = http.request("https://httpbin.org/get"):execute()
-print(res:status_code(), res:headers(), res:body():json())
-
-local res = http.request({
-  url = "https://httpbin.org/post",
-  method = "POST",
-  headers = { ["x-token"] = "abc" },
-  body = { hello = "world" },   -- tables are sent as JSON
-}):execute()
-print(res:status_code() == http.status_codes.OK)
-```
+Being rewritten ([ADR 0025](docs/adr/0025-http-is-ours-and-reads-responses-as-they-arrive.md),
+[spec](docs/specs/http.md)); for now `require("http")` gives an empty table.
 
 ### `fs`
 
@@ -454,7 +442,7 @@ See [`examples/greeting`](examples/greeting) for a module with a Rust half and a
 
 > - PATHEXT lookup. a_program_is_found_on_the_path_the_command_gives runs avarice-copy by bare name, which should find avarice-copy.exe.
 > - Windows-only code in process.rs: the reader for merged stdout and stderr, the host-stdout handle used when stderr goes to stdout, and the non-Unix branches for arguments and terminate.
-> - Older Windows-only branches: env_value in utils.rs and upload_path in http/client/request.rs.
+> - Older Windows-only branch: env_value in utils.rs.
 > - :kill(), :terminate(), and Ctrl-C with a Child running. The Ctrl-C tests are Unix-only, so try that one by hand.
 
 ## Licence

@@ -54,15 +54,8 @@ stdlib = [
   "stdlib-tidings",
   "stdlib-bridge",
 ]
-# `net` is the tokio driver reqwest needs, so it follows `http`.
-stdlib-http = [
-  "dep:reqwest",
-  "dep:futures",
-  "dep:tracing",
-  "tokio/net",
-  "_astra_serde",
-  "_astra_buffers",
-]
+# `http` is original to avarice (ADR 0025), and is being rewritten: for now it is empty.
+stdlib-http = []
 stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
 stdlib-crypto = ["dep:sha2", "dep:sha3", "dep:base64"]
 stdlib-serde = ["_astra_serde"]
@@ -96,10 +89,10 @@ stdlib-tidings = ["dep:tidings", "_datetime_types", "tokio/macros"]
 stdlib-bridge = ["dep:serde"]
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
-# another's Rust takes the whole file, and these compile the file without adding the module: `http`
-# calls `sanetize_lua_input` from `astra_serde.rs` and `validation` builds `AstraRegex` from
-# `utils.rs`, and neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and
-# JSON helpers that `src/stdlib/components/mod.rs` holds for `http`, `fs` and `process`.
+# another's Rust takes the whole file, and these compile the file without adding the module:
+# `validation` builds `AstraRegex` from `utils.rs`, and does not register `utils`.
+# `_astra_buffers` is the buffer types and helpers that `src/stdlib/components/mod.rs` holds for
+# `fs` and `process`.
 # `_datetime_types` is `datetime`'s Rust types, which `tidings` gives its times as (ADR 0021).
 _astra_serde = [
   "dep:serde-value",
@@ -149,16 +142,6 @@ nu-ansi-term = { version = "0.50.3", optional = true }
 # The stdlib's own dependencies (src/stdlib), all optional, behind the feature that needs them.
 # They are Astra's, at the version requirement Astra's Cargo.toml gives, because the sources are
 # Astra's.
-# http
-reqwest = { version = "0.13.4", features = [
-  "charset",
-  "form",
-  "http2",
-  "json",
-  "multipart",
-  "rustls",
-  "stream",
-], default-features = false, optional = true }
 glob = { version = "0.3.3", optional = true }
 
 # data formats
@@ -183,8 +166,6 @@ base64 = { version = "0.22.1", optional = true }
 bytes = { version = "1.12.0", features = ["serde"], optional = true }
 
 # runtime
-futures = { version = "0.3.32", optional = true }
-tracing = { version = "0.1.44", optional = true }
 regex = { version = "1.12.4", optional = true }
 pastey = { version = "0.2.3", optional = true }
 

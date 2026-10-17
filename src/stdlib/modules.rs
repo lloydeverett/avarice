@@ -31,7 +31,7 @@ use mlua::{Lua, Table, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum StdModule {
-    /// An HTTP client (Astra's server is not taken).
+    /// An HTTP client.
     Http,
     /// Files and directories.
     Fs,
@@ -402,10 +402,7 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
     let _ = lua;
     match module {
         #[cfg(feature = "stdlib-http")]
-        StdModule::Http => {
-            super::components::http::client::HTTPClientRequest::register_to_lua(lua)?;
-            Ok(include_str!("lua/http.lua").into())
-        }
+        StdModule::Http => Ok(include_str!("lua/http.lua").into()),
         #[cfg(feature = "stdlib-fs")]
         StdModule::Fs => {
             super::components::file_system::register_to_lua(lua)?;

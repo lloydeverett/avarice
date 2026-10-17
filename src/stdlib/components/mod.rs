@@ -68,13 +68,20 @@
 //     a module that is no longer Astra's.
 //   - Added `pub mod bridge;`, behind `stdlib-bridge`, for another module that owes Astra nothing
 //     (ADR 0022). Nothing Astra does is altered: this is an addition.
+//   - Removed `pub mod http;`, `is_table_json` and what only they needed: Astra's HTTP client is
+//     replaced by a module original to avarice (ADR 0025). `stdlib-http` no longer turns on
+//     `_astra_serde` or `_astra_buffers`, so the `dead_code` allowances above that named
+//     `stdlib-http` now name the modules left: on `astra_buffer_types!`'s struct unless
+//     `stdlib-process` is on (which uses both buffers, where `fs` uses only `AstraBufferMut`), on
+//     its `new` unless both `stdlib-process` and `stdlib-fs` are on (each makes only one of the
+//     two), and on `is_table_byte_array` unless `stdlib-fs` is on. The items above that say what was done
+//     for `http` describe the file before this change.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
 use mlua::{ExternalError, FromLua, LuaSerdeExt};
 
-// `astra_serde` is compiled for `http` as well as for `serde`, and `utils` for `validation` as well
-// as for `utils`; see the header.
+// `utils` is compiled for `validation` as well as for `utils`; see the header.
 #[cfg(feature = "_astra_serde")]
 #[cfg_attr(not(feature = "stdlib-serde"), allow(dead_code))]
 pub mod astra_serde;
@@ -94,8 +101,6 @@ pub mod datetime;
 pub mod dirs;
 #[cfg(feature = "stdlib-fs")]
 pub mod file_system;
-#[cfg(feature = "stdlib-http")]
-pub mod http;
 #[cfg(feature = "stdlib-process")]
 pub mod process;
 // Original to avarice, not Astra's; see its own header and ADR 0021.
@@ -108,18 +113,16 @@ pub mod utils;
 #[cfg(feature = "_astra_buffers")]
 macro_rules! astra_buffer_types {
     ($name:ident, $buffer_type:ty) => {
-        // `http` uses `AstraBuffer` and `fs` uses `AstraBufferMut`, so a build with one of the two
-        // leaves the other unused.
-        #[cfg_attr(
-            not(all(feature = "stdlib-http", feature = "stdlib-fs")),
-            allow(dead_code)
-        )]
+        // `fs` uses only `AstraBufferMut`, so a build without `process`, which uses both, leaves
+        // `AstraBuffer` unused. Only `process` makes an `AstraBuffer` and only `fs` an
+        // `AstraBufferMut`, so `new` is unused in one of the two unless both are on.
+        #[cfg_attr(not(feature = "stdlib-process"), allow(dead_code))]
         #[derive(Debug, Clone, FromLua)]
         pub struct $name(std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         macros::impl_deref!($name, std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         impl $name {
             #[cfg_attr(
-                not(all(feature = "stdlib-http", feature = "stdlib-fs")),
+                not(all(feature = "stdlib-process", feature = "stdlib-fs")),
                 allow(dead_code)
             )]
             pub fn new(bytes: $buffer_type) -> Self {
@@ -206,34 +209,7 @@ pub mod macros {
 }
 
 #[cfg(feature = "_astra_buffers")]
-#[cfg_attr(not(feature = "stdlib-http"), allow(dead_code))]
-fn is_table_json(table: &mlua::Table) -> mlua::Result<bool> {
-    let mut has_string_key = false;
-    let mut has_non_sequential_integer_key = false;
-    let mut max_int_key = 0;
-
-    for pair in table.pairs::<mlua::Value, mlua::Value>() {
-        let (key, _) = pair?;
-        match key {
-            mlua::Value::String(_) => has_string_key = true,
-            mlua::Value::Integer(i) => {
-                if i <= 0 || i > max_int_key + 1 {
-                    has_non_sequential_integer_key = true;
-                }
-                max_int_key = max_int_key.max(i);
-            }
-            _ => return Ok(true), // Other key types (e.g., floats, booleans) are JSON-like
-        }
-    }
-
-    Ok(has_string_key || has_non_sequential_integer_key)
-}
-
-#[cfg(feature = "_astra_buffers")]
-#[cfg_attr(
-    not(any(feature = "stdlib-http", feature = "stdlib-fs")),
-    allow(dead_code)
-)]
+#[cfg_attr(not(feature = "stdlib-fs"), allow(dead_code))]
 pub(crate) fn is_table_byte_array(table: &mlua::Table) -> mlua::Result<bool> {
     let mut i = 1;
     for pair in table.pairs::<i64, i64>() {

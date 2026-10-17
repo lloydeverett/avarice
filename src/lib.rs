@@ -105,12 +105,6 @@ mod profile;
 mod runtime;
 mod stdlib;
 
-// Astra's `http` files name their neighbours as `crate::components`, and they are kept exactly as
-// Astra wrote them (ADR 0006), so the name has to resolve from the root. Nothing else uses it;
-// the stdlib is otherwise reached only through `StdModule`, `StdModules` and `stdlib::loader`.
-#[cfg(feature = "stdlib-http")]
-use crate::stdlib::components;
-
 pub use crate::error::{
     Cancelled, Error, InvalidModuleName, Result, StoreError, TimedOut, was_cancelled,
     was_out_of_memory, was_timed_out,
