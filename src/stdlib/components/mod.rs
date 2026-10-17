@@ -80,8 +80,9 @@
 //     is altered by that: it is an addition. Added `pub mod reader;`, behind `_reader`, for what
 //     `process` and `http` read a stream with, which owes Astra nothing either. The new `http`
 //     turns `_astra_serde` and `_astra_buffers` back on, for `serde.json`'s encoder and for
-//     Buffers; the comment above `astra_serde` says so again, and the allowances stay as they are,
-//     since it uses `AstraBuffer` and `astra_serde` keeps its own.
+//     Buffers; the comment above `astra_serde` says so again. Since it makes `AstraBuffer`s, the
+//     allowances inside `astra_buffer_types!` count it beside `process`: on the struct unless
+//     either is on, and on `new` unless `stdlib-fs` and one of them are.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
@@ -126,16 +127,22 @@ pub mod utils;
 #[cfg(feature = "_astra_buffers")]
 macro_rules! astra_buffer_types {
     ($name:ident, $buffer_type:ty) => {
-        // `fs` uses only `AstraBufferMut`, so a build without `process`, which uses both, leaves
-        // `AstraBuffer` unused. Only `process` makes an `AstraBuffer` and only `fs` an
-        // `AstraBufferMut`, so `new` is unused in one of the two unless both are on.
-        #[cfg_attr(not(feature = "stdlib-process"), allow(dead_code))]
+        // `fs` uses only `AstraBufferMut`, so a build with neither `process` nor `http`, which use
+        // `AstraBuffer`, leaves it unused. Only they make an `AstraBuffer` and only `fs` an
+        // `AstraBufferMut`, so `new` is unused in one of the two unless `fs` and one of them are on.
+        #[cfg_attr(
+            not(any(feature = "stdlib-process", feature = "stdlib-http")),
+            allow(dead_code)
+        )]
         #[derive(Debug, Clone, FromLua)]
         pub struct $name(std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         macros::impl_deref!($name, std::sync::Arc<tokio::sync::Mutex<$buffer_type>>);
         impl $name {
             #[cfg_attr(
-                not(all(feature = "stdlib-process", feature = "stdlib-fs")),
+                not(all(
+                    any(feature = "stdlib-process", feature = "stdlib-http"),
+                    feature = "stdlib-fs"
+                )),
                 allow(dead_code)
             )]
             pub fn new(bytes: $buffer_type) -> Self {

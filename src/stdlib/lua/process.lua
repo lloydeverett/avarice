@@ -55,7 +55,8 @@ local process = {}
 ---@field message string? `"start"` only: the operating system's own words.
 ---@field output Output? `"exit"` and `"timeout"`: what was captured, up to the kill for a timeout.
 
----One of a Child's output streams. One task reads it at a time; a second is an error.
+---Bytes arriving from outside the Lua state, read in order as they come: one of a Child's output
+---streams, or an HTTP response's body. One task reads it at a time; a second is an error.
 ---@class Reader
 ---@field read fun(self: Reader): string? The next chunk, up to 8 KiB; `nil` at the end.
 ---The next line, without its `\n` or `\r\n`; `nil` at the end.

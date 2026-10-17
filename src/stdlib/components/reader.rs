@@ -58,8 +58,9 @@ impl Reader {
         Ok(Taken(guard))
     }
 
-    /// Closes it, dropping the stream, unless a task is reading it, which then finds it closed
-    /// when it next asks. Closing one already closed does nothing.
+    /// Closes it, dropping the stream, once any task reading it has its piece. Closing one
+    /// already closed does nothing. Only `http` closes a Reader: a Child's streams end with it.
+    #[cfg_attr(not(feature = "stdlib-http"), allow(dead_code))]
     pub async fn close(&self) {
         self.stream.lock().await.take();
     }

@@ -937,3 +937,804 @@ fn a_request_is_not_a_task_even_while_its_connection_waits_to_be_reused() {
     eval::<()>(&rt, &format!(r#"http.get("{}"):bytes()"#, server.url));
     assert_eq!(rt.outstanding_tasks(), 0);
 }
+
+// Errors.
+
+/// The `kind`, `url` and message of the error `source` raises, which must be a table.
+fn failure_of(rt: &Runtime, source: &str) -> (String, String, String) {
+    eval(
+        rt,
+        &format!(
+            r#"local ok, e = pcall(function() {source} end)
+               assert(not ok, "no error was raised")
+               assert(type(e) == "table", "not a table: " .. tostring(e))
+               return e.kind, e.url, tostring(e)"#
+        ),
+    )
+}
+
+/// A port nothing listens on.
+fn closed_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
+#[test]
+fn nothing_listening_is_a_connect_error() {
+    let rt = runtime();
+    let port = closed_port();
+    let (kind, url, message) =
+        failure_of(&rt, &format!(r#"http.get("http://127.0.0.1:{port}/x")"#));
+    assert_eq!(kind, "connect");
+    assert_eq!(url, format!("http://127.0.0.1:{port}/x"));
+    assert!(message.starts_with("http: "), "{message}");
+    assert!(message.contains(&url), "{message}");
+}
+
+#[test]
+fn an_error_never_shows_a_urls_query_or_userinfo() {
+    let rt = runtime();
+    let port = closed_port();
+    let (_, url, message) = failure_of(
+        &rt,
+        &format!(r#"http.get("http://user:PASSWORD@127.0.0.1:{port}/x?key=SECRET#frag")"#),
+    );
+    assert_eq!(url, format!("http://127.0.0.1:{port}/x"));
+    for secret in ["PASSWORD", "SECRET", "user"] {
+        assert!(!message.contains(secret), "{message}");
+    }
+}
+
+#[test]
+fn a_body_cut_short_is_a_body_error_where_it_is_read() {
+    let server = Server::new(|mut c| {
+        if c.request().is_some() {
+            c.send("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc");
+        }
+    });
+    let rt = runtime();
+    let (kind, _, message) = failure_of(
+        &rt,
+        &format!(
+            r#"local res = http.get("{}")
+               res:bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!(kind, "body", "{message}");
+}
+
+#[test]
+fn something_that_is_not_tls_where_tls_should_be_is_a_tls_error() {
+    let server = Server::new(|mut c| {
+        c.send("this is not a TLS handshake\r\n\r\n");
+        c.closed_within(Duration::from_secs(2));
+    });
+    let rt = runtime();
+    let url = server.url.replace("http://", "https://");
+    let (kind, _, message) = failure_of(&rt, &format!(r#"http.get("{url}")"#));
+    assert_eq!(kind, "tls", "{message}");
+}
+
+#[test]
+fn a_redirect_loop_is_a_redirect_error() {
+    let server = Server::new(|mut c| {
+        while c.request().is_some() {
+            c.respond("302 Found", &[("Location", "/again")], "");
+        }
+    });
+    let rt = runtime();
+    let (kind, _, message) = failure_of(&rt, &format!(r#"http.get("{}/start")"#, server.url));
+    assert_eq!(kind, "redirect", "{message}");
+}
+
+#[test]
+fn redirects_are_followed_and_the_url_is_where_they_led() {
+    let server = Server::new(|mut c| {
+        while let Some(request) = c.request() {
+            if request.target() == "/start" {
+                c.respond("302 Found", &[("Location", "/end")], "");
+            } else {
+                c.respond("200 OK", &[], "here");
+            }
+        }
+    });
+    let rt = runtime();
+    let (url, body): (String, String) = eval(
+        &rt,
+        &format!(
+            r#"local res = http.get("{}/start")
+               return res.url, res:bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!(
+        (url, body.as_str()),
+        (format!("{}/end", server.url), "here")
+    );
+}
+
+#[test]
+fn a_response_prints_its_status_and_url_without_its_query_or_headers() {
+    let server = Server::answering("200 OK", &[("Set-Cookie", "session=COOKIE")], b"");
+    let rt = runtime();
+    let shown: String = eval(
+        &rt,
+        &format!(
+            r#"return tostring(http.get("{}/x?key=SECRET"))"#,
+            server.url
+        ),
+    );
+    assert_eq!(shown, format!("Response(200 {}/x)", server.url));
+}
+
+// Timeouts.
+
+/// The `kind` and `phase` of the error `source` raises, which must be a table.
+fn timeout_of(rt: &Runtime, source: &str) -> (String, Option<String>, String) {
+    eval(
+        rt,
+        &format!(
+            r#"local ok, e = pcall(function() {source} end)
+               assert(not ok, "no error was raised")
+               assert(type(e) == "table", "not a table: " .. tostring(e))
+               return e.kind, e.phase, tostring(e)"#
+        ),
+    )
+}
+
+/// A server that reads a request and then sends nothing, for as long as the client waits.
+fn silent() -> Server {
+    Server::new(|mut c| {
+        if c.request().is_some() {
+            c.closed_within(Duration::from_secs(10));
+        }
+    })
+}
+
+#[test]
+fn waiting_too_long_for_the_headers_is_an_idle_timeout() {
+    let server = silent();
+    let rt = runtime();
+    let (kind, phase, message) = timeout_of(
+        &rt,
+        &format!(r#"http.get("{}", {{ idle_timeout = 100 }})"#, server.url),
+    );
+    assert_eq!(
+        (kind.as_str(), phase.as_deref()),
+        ("timeout", Some("idle")),
+        "{message}"
+    );
+    assert!(message.contains("100"), "{message}");
+}
+
+#[test]
+fn waiting_too_long_for_more_of_the_body_is_an_idle_timeout_where_it_is_read() {
+    let (server, _) = streaming(&["one\n"]);
+    let rt = runtime();
+    let (kind, phase, message) = timeout_of(
+        &rt,
+        &format!(
+            r#"local res = http.get("{}", {{ idle_timeout = 100 }})
+               assert(res.body:line() == "one")
+               res.body:line()"#,
+            server.url
+        ),
+    );
+    assert_eq!(
+        (kind.as_str(), phase.as_deref()),
+        ("timeout", Some("idle")),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_request_sets_its_own_idle_timeout_over_its_clients() {
+    let server = Server::new(|mut c| {
+        while c.request().is_some() {
+            std::thread::sleep(Duration::from_millis(300));
+            c.respond("200 OK", &[], "late");
+        }
+    });
+    let rt = runtime();
+    let bodies: Vec<String> = eval(
+        &rt,
+        &format!(
+            r#"local client = http.client({{ idle_timeout = 50 }})
+               return {{
+                 client:get("{0}", {{ idle_timeout = 2000 }}):bytes(),
+                 client:get("{0}", {{ idle_timeout = false }}):bytes(),
+               }}"#,
+            server.url
+        ),
+    );
+    assert_eq!(bodies, ["late", "late"]);
+}
+
+#[test]
+fn a_body_that_trickles_past_the_total_timeout_is_a_total_timeout() {
+    let server = Server::new(|mut c| {
+        if c.request().is_none() {
+            return;
+        }
+        c.start_chunked(&[]);
+        for _ in 0..100 {
+            c.chunk("x");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let rt = runtime();
+    let (kind, phase, message) = timeout_of(
+        &rt,
+        &format!(
+            r#"http.get("{}", {{ timeout = 300, idle_timeout = 200 }}):bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!(
+        (kind.as_str(), phase.as_deref()),
+        ("timeout", Some("total")),
+        "{message}"
+    );
+}
+
+#[test]
+fn connect_timeout_is_set_on_a_client_and_refused_on_a_request() {
+    let rt = runtime();
+    eval::<()>(&rt, r#"http.client({ connect_timeout = 1000 })"#);
+    let message = error_of(
+        &rt,
+        r#"http.get("http://127.0.0.1:9/", { connect_timeout = 1000 })"#,
+    );
+    assert!(message.contains("connect_timeout"), "{message}");
+}
+
+#[test]
+fn a_timeout_that_is_not_a_positive_number_or_false_is_refused() {
+    let rt = runtime();
+    for timeout in ["0", "-5", "'10'", "true"] {
+        let message = error_of(
+            &rt,
+            &format!(r#"http.get("http://127.0.0.1:9/", {{ timeout = {timeout} }})"#),
+        );
+        assert!(message.contains("timeout"), "{timeout}: {message}");
+    }
+}
+
+// Error statuses.
+
+#[test]
+fn an_error_status_is_returned_unless_check_is_set() {
+    let server = Server::answering("404 Not Found", &[], b"nothing here");
+    let rt = runtime();
+    let (status, body): (u16, String) = eval(
+        &rt,
+        &format!(
+            r#"local res = http.get("{}") return res.status, res:bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!((status, body.as_str()), (404, "nothing here"));
+}
+
+#[test]
+fn check_raises_a_status_error_carrying_the_response() {
+    let server = Server::answering(
+        "400 Bad Request",
+        &[("Retry-After", "3")],
+        br#"{"error": {"message": "model not found"}}"#,
+    );
+    let rt = runtime();
+    let (kind, status, retry_after, body, message): (String, u16, String, String, String) = eval(
+        &rt,
+        &format!(
+            r#"local ok, e = pcall(http.post, "{}/v1/chat?key=SECRET", {{ json = {{}}, check = true }})
+               assert(not ok)
+               return e.kind, e.status, e.headers["retry-after"], e.body:bytes(), tostring(e)"#,
+            server.url
+        ),
+    );
+    assert_eq!(
+        (kind.as_str(), status, retry_after.as_str()),
+        ("status", 400, "3")
+    );
+    assert_eq!(body, r#"{"error": {"message": "model not found"}}"#);
+    assert!(message.contains("400"), "{message}");
+    assert!(message.contains("model not found"), "{message}");
+    assert!(
+        message.contains(&format!("{}/v1/chat", server.url)),
+        "{message}"
+    );
+    assert!(!message.contains("SECRET"), "{message}");
+}
+
+#[test]
+fn check_on_a_client_applies_to_its_requests_and_is_quiet_about_success() {
+    let server = Server::new(|mut c| {
+        while let Some(request) = c.request() {
+            match request.target() {
+                "/ok" => c.respond("200 OK", &[], "fine"),
+                _ => c.respond("503 Service Unavailable", &[], "busy"),
+            }
+        }
+    });
+    let rt = runtime();
+    let (fine, kind): (String, String) = eval(
+        &rt,
+        &format!(
+            r#"local client = http.client({{ base_url = "{}", check = true }})
+               local fine = client:get("/ok"):bytes()
+               local ok, e = pcall(client.get, client, "/busy")
+               return fine, e.kind"#,
+            server.url
+        ),
+    );
+    assert_eq!((fine.as_str(), kind.as_str()), ("fine", "status"));
+}
+
+#[test]
+fn a_status_errors_body_stops_at_64_kib() {
+    let server = Server::answering("500 Internal Server Error", &[], &[b'x'; 100 * 1024]);
+    let rt = runtime();
+    let (length, message_length): (i64, i64) = eval(
+        &rt,
+        &format!(
+            r#"local ok, e = pcall(http.get, "{}", {{ check = true }})
+               return #e.body, #tostring(e)"#,
+            server.url
+        ),
+    );
+    assert_eq!(length, 64 * 1024);
+    assert!(message_length < 1024, "a message of {message_length} bytes");
+}
+
+// Retrying.
+
+/// A server whose `n`th request (from 1) is answered by `answer(n, connection)`.
+fn counting(answer: impl Fn(usize, &mut Connection) + Send + Sync + 'static) -> Server {
+    let count = Arc::new(AtomicUsize::new(0));
+    Server::new(move |mut c| {
+        while c.request().is_some() {
+            let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+            answer(n, &mut c);
+        }
+    })
+}
+
+#[test]
+fn nothing_is_retried_unless_asked() {
+    let server = counting(|_, c| c.respond("503 Service Unavailable", &[], "busy"));
+    let rt = runtime();
+    let status: u16 = eval(&rt, &format!(r#"return http.get("{}").status"#, server.url));
+    assert_eq!((status, server.requests().len()), (503, 1));
+}
+
+#[test]
+fn a_listed_status_is_retried_until_it_is_not() {
+    let server = counting(|n, c| match n {
+        1 => c.respond("503 Service Unavailable", &[], "busy"),
+        2 => c.respond("429 Too Many Requests", &[], "slow down"),
+        _ => c.respond("200 OK", &[], "done"),
+    });
+    let rt = runtime();
+    let body: String = eval(
+        &rt,
+        &format!(
+            r#"return http.get("{}", {{ retry = {{ base_delay = 10 }} }}):bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!((body.as_str(), server.requests().len()), ("done", 3));
+}
+
+#[test]
+fn when_attempts_run_out_the_last_response_is_what_comes_back() {
+    let server = counting(|n, c| c.respond("502 Bad Gateway", &[], format!("attempt {n}")));
+    let rt = runtime();
+    let (status, body): (u16, String) = eval(
+        &rt,
+        &format!(
+            r#"local res = http.get("{}", {{ retry = {{ attempts = 2, base_delay = 10 }} }})
+               return res.status, res:bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!((status, body.as_str()), (502, "attempt 2"));
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[test]
+fn with_check_the_last_failure_is_raised_when_attempts_run_out() {
+    let server = counting(|n, c| c.respond("502 Bad Gateway", &[], format!("attempt {n}")));
+    let rt = runtime();
+    let (kind, body): (String, String) = eval(
+        &rt,
+        &format!(
+            r#"local ok, e = pcall(http.get, "{}", {{ check = true, retry = {{ attempts = 3, base_delay = 10 }} }})
+               return e.kind, e.body:bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!((kind.as_str(), body.as_str()), ("status", "attempt 3"));
+}
+
+#[test]
+fn a_connection_dropped_before_a_response_is_retried() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let server = Server::new(move |mut c| {
+        if c.request().is_none() {
+            return;
+        }
+        if count.fetch_add(1, Ordering::SeqCst) == 0 {
+            return; // drops the connection without answering
+        }
+        c.respond("200 OK", &[("Connection", "close")], "second time");
+    });
+    let rt = runtime();
+    let body: String = eval(
+        &rt,
+        &format!(
+            r#"return http.get("{}", {{ retry = {{ base_delay = 10 }} }}):bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!(body, "second time");
+}
+
+#[test]
+fn retry_after_in_seconds_is_waited_for_up_to_max_delay() {
+    let server = counting(|n, c| match n {
+        1 => c.respond("429 Too Many Requests", &[("Retry-After", "1")], ""),
+        _ => c.respond("200 OK", &[], "ok"),
+    });
+    let rt = runtime();
+    let started = std::time::Instant::now();
+    eval::<()>(
+        &rt,
+        &format!(
+            r#"http.get("{}", {{ retry = {{ base_delay = 10 }} }})"#,
+            server.url
+        ),
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(950),
+        "{:?}",
+        started.elapsed()
+    );
+
+    let started = std::time::Instant::now();
+    eval::<()>(
+        &rt,
+        &format!(
+            r#"http.get("{}", {{ retry = {{ base_delay = 10, max_delay = 50 }} }})"#,
+            server.url.clone() + "/again"
+        ),
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn retry_after_as_a_date_is_waited_for() {
+    let later = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(2));
+    let server = counting(move |n, c| match n {
+        1 => c.respond("503 Service Unavailable", &[("Retry-After", &later)], ""),
+        _ => c.respond("200 OK", &[], "ok"),
+    });
+    let rt = runtime();
+    let started = std::time::Instant::now();
+    eval::<()>(
+        &rt,
+        &format!(
+            r#"http.get("{}", {{ retry = {{ base_delay = 10 }} }})"#,
+            server.url
+        ),
+    );
+    // A date has whole seconds, so it can be anything from one second to two away.
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_stream_cut_after_its_response_is_raised_not_retried() {
+    let server = Server::new(|mut c| {
+        if c.request().is_some() {
+            c.send("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc");
+        }
+    });
+    let rt = runtime();
+    let kind: String = eval(
+        &rt,
+        &format!(
+            r#"local ok, e = pcall(function() return http.get("{}", {{ retry = true }}):bytes() end)
+               return e.kind"#,
+            server.url
+        ),
+    );
+    assert_eq!((kind.as_str(), server.requests().len()), ("body", 1));
+}
+
+#[test]
+fn a_client_retries_every_request_and_a_request_can_say_not_to() {
+    let server = counting(|n, c| match n {
+        1 | 3 => c.respond("503 Service Unavailable", &[], ""),
+        _ => c.respond("200 OK", &[], ""),
+    });
+    let rt = runtime();
+    let statuses: Vec<u16> = eval(
+        &rt,
+        &format!(
+            r#"local client = http.client({{ retry = {{ base_delay = 10 }} }})
+               return {{ client:get("{0}").status, client:get("{0}", {{ retry = false }}).status }}"#,
+            server.url
+        ),
+    );
+    assert_eq!(statuses, [200, 503]);
+}
+
+#[test]
+fn a_retry_option_it_does_not_have_is_refused() {
+    let rt = runtime();
+    let message = error_of(
+        &rt,
+        r#"http.get("http://127.0.0.1:9/", { retry = { tries = 2 } })"#,
+    );
+    assert!(message.contains("tries"), "{message}");
+}
+
+// Compression.
+
+/// `hello, compressed world`, gzipped.
+const GZIPPED: &[u8] = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff\xcb\x48\xcd\xc9\xc9\xd7\x51\x48\xce\xcf\x2d\x28\x4a\x2d\x2e\x4e\x4d\x51\x28\xcf\x2f\xca\x49\x01\x00\x08\x9e\x34\x35\x17\x00\x00\x00";
+
+#[test]
+fn a_compressed_body_is_decompressed_and_compression_is_asked_for() {
+    let server = Server::answering("200 OK", &[("Content-Encoding", "gzip")], GZIPPED);
+    let rt = runtime();
+    let body: String = eval(
+        &rt,
+        &format!(r#"return http.get("{}"):bytes()"#, server.url),
+    );
+    assert_eq!(body, "hello, compressed world");
+    let accepted = server
+        .request()
+        .header("accept-encoding")
+        .unwrap_or_default();
+    for encoding in ["gzip", "br", "zstd"] {
+        assert!(accepted.contains(encoding), "{accepted}");
+    }
+}
+
+#[test]
+fn accept_encoding_can_be_removed_and_then_nothing_is_decompressed() {
+    let server = Server::answering("200 OK", &[("Content-Encoding", "gzip")], GZIPPED);
+    let rt = runtime();
+    let length: i64 = eval(
+        &rt,
+        &format!(
+            r#"return #http.get("{}", {{ headers = {{ ["accept-encoding"] = false }} }}):bytes()"#,
+            server.url
+        ),
+    );
+    assert_eq!(length, GZIPPED.len() as i64);
+    assert_eq!(server.request().header("accept-encoding"), None);
+}
+
+// Cancelling, and reading from two tasks.
+
+/// A trusted runtime with `http` required, which `cancel` cancels.
+fn cancellable(cancel: &avarice::CancelHandle) -> Runtime {
+    let rt = Runtime::builder(Profile::Trusted)
+        .cancel_handle(cancel.clone())
+        .build()
+        .unwrap();
+    rt.block_on(rt.exec(r#"http = require("http")"#, "=prelude"))
+        .unwrap();
+    rt
+}
+
+/// Runs `source` in a runtime that is cancelled once the server has a request, and checks that
+/// it was the cancel that ended it.
+fn cancelled_once_requested(server: &Server, source: &str) {
+    let cancel = avarice::CancelHandle::new();
+    let rt = cancellable(&cancel);
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while server.requests().is_empty() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            cancel.cancel();
+        });
+        rt.block_on(rt.exec(source, "=test"))
+    });
+    match result.unwrap_err() {
+        avarice::Error::Lua(err) => assert!(avarice::was_cancelled(&err), "{err}"),
+        other => panic!("expected a Lua error, got {other:?}"),
+    }
+}
+
+#[test]
+fn cancelling_a_wait_for_a_response_drops_the_request() {
+    let (sender, closed) = std::sync::mpsc::channel();
+    let server = Server::new(move |mut c| {
+        if c.request().is_some() {
+            let _ = sender.send(c.closed_within(Duration::from_secs(5)));
+        }
+    });
+    cancelled_once_requested(&server, &format!(r#"http.get("{}")"#, server.url));
+    assert!(
+        closed.recv().unwrap(),
+        "the cancelled request's connection stayed open"
+    );
+}
+
+#[test]
+fn cancelling_a_wait_for_more_of_a_body_drops_the_connection() {
+    let (server, closed) = streaming(&["one\n"]);
+    cancelled_once_requested(
+        &server,
+        &format!(
+            r#"local res = http.get("{}")
+               res.body:line()
+               res.body:line()"#,
+            server.url
+        ),
+    );
+    assert!(
+        closed.recv().unwrap(),
+        "the cancelled body's connection stayed open"
+    );
+}
+
+#[cfg(feature = "stdlib-utils")]
+#[test]
+fn a_body_read_by_two_tasks_at_once_is_an_error_for_the_second() {
+    let (server, _) = streaming(&["one\n"]);
+    let rt = runtime();
+    let message = error_of(
+        &rt,
+        &format!(
+            r#"local utils = require("utils")
+               local res = http.get("{}")
+               assert(res.body:line() == "one")
+               utils.spawn_task(function() pcall(res.body.line, res.body) end)
+               utils.spawn_timeout(function() end, 50):await()
+               res.body:line()"#,
+            server.url
+        ),
+    );
+    assert!(message.contains("another task"), "{message}");
+}
+
+#[test]
+fn a_body_and_a_client_print_as_what_they_are() {
+    let server = Server::answering("200 OK", &[], b"");
+    let rt = runtime();
+    let shown: Vec<String> = eval(
+        &rt,
+        &format!(
+            r#"return {{
+                 tostring(http.get("{0}").body),
+                 tostring(http.client({{ base_url = "https://user:pw@example.com/v1?key=SECRET" }})),
+                 tostring(http.client()),
+               }}"#,
+            server.url
+        ),
+    );
+    assert_eq!(
+        shown,
+        ["Reader(body)", "Client(https://example.com/v1)", "Client()"]
+    );
+}
+
+// What the review found.
+
+#[test]
+fn every_shortcut_sends_its_method() {
+    let server = Server::answering("200 OK", &[], b"");
+    let rt = runtime();
+    eval::<()>(
+        &rt,
+        &format!(
+            r#"local client = http.client({{ base_url = "{0}" }})
+               for _, method in ipairs({{ "get", "post", "put", "patch", "delete", "head" }}) do
+                 http[method]("{0}/" .. method)
+                 client[method](client, "/" .. method)
+               end"#,
+            server.url
+        ),
+    );
+    let lines: Vec<String> = server.requests().iter().map(|r| r.line.clone()).collect();
+    let mut expected = Vec::new();
+    for method in ["get", "post", "put", "patch", "delete", "head"] {
+        let line = format!("{} /{method} HTTP/1.1", method.to_uppercase());
+        expected.push(line.clone());
+        expected.push(line);
+    }
+    assert_eq!(lines, expected);
+}
+
+#[test]
+fn check_raises_only_for_4xx_and_5xx() {
+    let server = Server::answering("600 Beyond", &[], b"");
+    let rt = runtime();
+    let status: u16 = eval(
+        &rt,
+        &format!(
+            r#"return http.get("{}", {{ check = true }}).status"#,
+            server.url
+        ),
+    );
+    assert_eq!(status, 600);
+}
+
+#[test]
+fn the_total_timeout_covers_every_attempt_and_the_waits_between() {
+    let server = counting(|_, c| {
+        std::thread::sleep(Duration::from_millis(150));
+        c.respond("503 Service Unavailable", &[], "");
+    });
+    let rt = runtime();
+    let started = std::time::Instant::now();
+    let (kind, phase, message) = timeout_of(
+        &rt,
+        &format!(
+            r#"http.get("{}", {{ timeout = 400, retry = {{ attempts = 10, base_delay = 10 }} }})"#,
+            server.url
+        ),
+    );
+    assert_eq!(
+        (kind.as_str(), phase.as_deref()),
+        ("timeout", Some("total")),
+        "{message}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1000),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn accept_cannot_be_removed_so_removing_it_is_refused() {
+    // reqwest sends `Accept: */*` with every request that has none, so `false` could not be kept.
+    let rt = runtime();
+    let message = error_of(
+        &rt,
+        r#"http.get("http://127.0.0.1:9/", { headers = { Accept = false } })"#,
+    );
+    assert!(message.contains("accept"), "{message}");
+}
+
+#[test]
+fn a_number_that_is_not_finite_is_refused_as_a_timeout_or_a_delay() {
+    let rt = runtime();
+    for option in [
+        "timeout = math.huge",
+        "idle_timeout = 0/0",
+        "retry = { max_delay = math.huge }",
+    ] {
+        let message = error_of(
+            &rt,
+            &format!(r#"http.get("http://127.0.0.1:9/", {{ {option} }})"#),
+        );
+        assert!(message.contains("milliseconds"), "{option}: {message}");
+    }
+}
+
+#[test]
+fn statuses_that_are_not_a_list_are_refused() {
+    let rt = runtime();
+    let message = error_of(
+        &rt,
+        r#"http.get("http://127.0.0.1:9/", { retry = { statuses = { 429, [5] = 503 } } })"#,
+    );
+    assert!(message.contains("statuses"), "{message}");
+}

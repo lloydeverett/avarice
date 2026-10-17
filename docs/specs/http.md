@@ -290,13 +290,19 @@ retrying is an opt-in option that never repeats a response the script has alread
   before sending: scalars by override, `headers` and `query` key by key, a header set to `false`
   removed at whichever level set it. Precedence is request, then Client, then avarice's defaults
   (`User-Agent: avarice/<version>`, and `Accept-Encoding` from reqwest's decompression).
+  reqwest re-adds `Accept-Encoding` to any request without one from a client that decompresses,
+  so a request that removes it goes through a second reqwest client in the same Client, one that
+  does not decompress, made the first time it is needed. reqwest also sends `Accept: */*` with any
+  request without an `Accept`, and that cannot be undone at all, so `accept = false` is refused
+  rather than ignored (ADR 0017); giving it a value replaces it.
 - **URL joining** prefixes `base_url` to any URL without a scheme, collapsing the slashes at the
   join to one. `query` is appended after joining, after any query already in the URL.
 - **Request table contract.** `url` (string, required), `method` (string, default `"GET"`, any
-  case), `headers` (table of string or `false`), `query` (table of string), `body` (string or
-  Buffer), `json` (any value), `form` (table of string), `check` (boolean), `retry` (`true` or a
-  table), `idle_timeout` and `timeout` (milliseconds or `false`). The shortcuts take `(url,
-  opts)`. A Client takes `base_url`, `headers`, `query`, `check`, `retry`, `connect_timeout`,
+  case), `headers` (table of string or `false`), `query` (table of string or `false`, which
+  removes a name the Client gives), `body` (string or Buffer), `json` (any value), `form` (table
+  of string), `check` (boolean), `retry` (`true`, a table, or `false` to override a Client's),
+  `idle_timeout` and `timeout` (finite milliseconds or `false`). The shortcuts take `(url, opts)`,
+  and refuse a `url` or `method` in `opts`, which their name and first argument give. A Client takes `base_url`, `headers`, `query`, `check`, `retry`, `connect_timeout`,
   `idle_timeout` and `timeout`. An unknown key is an error, as `process` treats one in a Command.
 - **Response contract.** Fields `status`, `headers` and `url`, and `body`, a Reader. Methods
   `bytes()`, `json()`, `events()` and `close()`, plus `__close` and a `__tostring` of the form
@@ -308,14 +314,18 @@ retrying is an opt-in option that never repeats a response the script has alread
   closes the response. The parser takes any value with a `line` method, which is the seam its unit
   tests use. It is public as `http.events(source)`, and `res:events()` is it over the body.
 - **Line endings for SSE.** The Reader's `line` splits on `\n` and strips a trailing `\r`. Since SSE
-  also allows a bare `\r`, the SSE parser splits a line on any `\r` left in it.
+  also allows a bare `\r`, the SSE parser splits a line on any `\r` left in it. A stream framed
+  with bare `\r` alone is therefore parsed right but not as it arrives: nothing comes until a `\n`
+  or the end. Servers that stream in practice use `\n`.
 - **Errors** are raised as tables with a `__tostring`, built the way `process` builds its own:
   `kind` one of `"connect"`, `"tls"`, `"timeout"`, `"redirect"`, `"status"`, `"body"`; `url`
   without query or userinfo; `message`; `phase` for `"timeout"`; `status`, `headers` and `body` (a
   Buffer of at most 64 KiB) for `"status"`. reqwest's error is classified into a kind by what it
   reports (connect, timeout, redirect, body or decode), and a TLS failure by its source chain.
   Mistakes in the call are ordinary Lua errors.
-- **Retrying** wraps sending, before the response reaches Lua. Defaults for `retry = true`: 3
+- **Retrying** wraps sending, before the response reaches Lua. The total timeout covers every
+  attempt and the waits between them: a wait that would outlast it raises the total timeout
+  instead. Defaults for `retry = true`: 3
   attempts in all, statuses 429, 502, 503 and 504, a base delay of 500 ms and a maximum of 30 000
   ms. A retried response's body is discarded and its connection dropped before waiting. `check`
   applies to the last response only.
@@ -325,8 +335,9 @@ retrying is an opt-in option that never repeats a response the script has alread
   own on one thread, where reqwest's connections live, so that a pooled connection is not a task
   (ADR 0025).
 - **Annotations.** The module's Lua half carries LuaLS annotations for the Client, the request
-  table, the response, the event and the error, as `process` does, and the Reader's annotations
-  move with it.
+  table, the response, the event and the error, as `process` does, and for the Buffer, as Astra's
+  `http.lua` did. The Reader's stay in `process.lua`, reworded to cover a response's body: two
+  declarations of one class would clash.
 - **README.** The `http` section is rewritten around a Client and a streamed completion.
 
 ## Testing Decisions
@@ -355,7 +366,10 @@ retrying is an opt-in option that never repeats a response the script has alread
   - `break`, `<close>` and `close()` dropping the connection, seen by the server, and reads after
     close raising;
   - a body cut short raising `"body"`;
-  - each timeout firing with its `phase`, the idle timeout per request, and `false` disabling one;
+  - the idle and total timeouts firing with their `phase`, the idle timeout per request, and
+    `false` disabling one. The connect timeout firing is not tested: a connection that never
+    completes needs an address that drops packets, which a test cannot count on, so only where it
+    is accepted is;
   - `check` off and on, the `"status"` error's fields, its 64 KiB cap and its message;
   - `"connect"` against a closed port, `"tls"` against a server that is not speaking TLS, and
     `"redirect"` on a loop;

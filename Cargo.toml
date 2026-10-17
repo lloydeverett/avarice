@@ -56,11 +56,14 @@ stdlib = [
 ]
 # `http` is original to avarice (ADR 0025). `net` is the tokio driver reqwest needs, and
 # `tokio-util` and `futures-util` turn reqwest's stream of chunks into something a Reader reads,
-# whose rest is a Buffer. Its `json` option encodes with `serde.json`'s encoder.
+# whose rest is a Buffer; `rustls` is to tell a TLS failure apart, and `httpdate` to read a
+# `Retry-After`. Its `json` option encodes with `serde.json`'s encoder.
 stdlib-http = [
   "dep:reqwest",
   "dep:tokio-util",
   "dep:futures-util",
+  "dep:rustls",
+  "dep:httpdate",
   "tokio/net",
   "_astra_serde",
   "_astra_buffers",
@@ -188,12 +191,20 @@ serde = { version = "1.0.229", optional = true }
 
 # `http`'s own dependencies, not Astra's (ADR 0025).
 reqwest = { version = "0.13.5", features = [
+  "brotli",
+  "gzip",
   "http2",
   "rustls",
   "stream",
+  "zstd",
 ], default-features = false, optional = true }
 tokio-util = { version = "0.7.19", features = ["io"], optional = true }
 futures-util = { version = "0.3.34", default-features = false, optional = true }
+# Only to tell a TLS failure from another failure to connect, by its error type. reqwest already
+# depends on it, at this version, with the features it needs.
+rustls = { version = "0.23.45", default-features = false, optional = true }
+# To read a `Retry-After` given as a date. hyper already depends on it.
+httpdate = { version = "1.0.3", optional = true }
 
 # `dirs`'s own dependency, not Astra's either: `dirs` is original to avarice (ADR 0014), and
 # `etcetera` is the crate that computes its paths.

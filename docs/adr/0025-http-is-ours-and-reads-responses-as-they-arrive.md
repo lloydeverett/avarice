@@ -40,7 +40,10 @@ amended, and why `http` looks like `process` rather than like the rest.
   `Content-Type`.
 - **Headers merge, and `false` removes one.** A request's headers win over its Client's, which win
   over avarice's own (`User-Agent: avarice/<version>`, `Accept-Encoding`). Names match whatever
-  their case. A header set to `false` is not sent, whoever would have set it.
+  their case. A header set to `false` is not sent, whoever would have set it. reqwest re-adds
+  `Accept-Encoding` to a request from a client that decompresses, so removing it sends the request
+  through a second reqwest client, in the same Client, that does not. reqwest's `Accept: */*` cannot
+  be removed by any means, so `accept = false` raises rather than being ignored.
 - **A URL without a scheme is appended to `base_url`**, with one `/` between them, rather than
   resolved against it as RFC 3986 would, which turns `https://host/v1` and `/chat/completions` into
   `https://host/chat/completions`.
@@ -61,7 +64,7 @@ amended, and why `http` looks like `process` rather than like the rest.
   cancelled, the request is dropped.
 - **Three timeouts, in milliseconds.** `connect_timeout` (Client only, default 30 000),
   `idle_timeout` (longest wait for the next byte, headers included, default 300 000) and `timeout`
-  (the whole request, body included, default none). `false` disables one. The idle default is
+  (the whole request, body included, every retry and wait between them too, default none). `false` disables one. The idle default is
   generous because reasoning models can be silent for minutes before their first token, and finite
   because nothing else ends a stalled wait.
 - **An error status is not an error unless `check` is set**, as with `process.run`. With it, a 4xx

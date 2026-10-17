@@ -956,8 +956,12 @@ async fn spawn(lua: &Lua, command: Value) -> mlua::Result<MultiValue> {
         stdin: started
             .stdin
             .map(|stdin| Writer(Arc::new(Mutex::new(Some(stdin))))),
-        stdout: started.stdout.map(|s| ChildReader::new(s, "stdout")),
-        stderr: started.stderr.map(|s| ChildReader::new(s, "stderr")),
+        stdout: started
+            .stdout
+            .map(|s| ChildReader::new(s, "stdout", "the Child's stdout")),
+        stderr: started
+            .stderr
+            .map(|s| ChildReader::new(s, "stderr", "the Child's stderr")),
     };
     child.into_lua_multi(lua)
 }
@@ -1058,11 +1062,9 @@ struct ChildReader {
 }
 
 impl ChildReader {
-    fn new(stream: ReadStream, name: &'static str) -> Self {
-        let what = match name {
-            "stdout" => "the Child's stdout",
-            _ => "the Child's stderr",
-        };
+    /// `name` is which stream it is, and `what` says so in a message: `stdout` and
+    /// `the Child's stdout`.
+    fn new(stream: ReadStream, name: &'static str, what: &'static str) -> Self {
         ChildReader {
             reader: Reader::new(stream, "process", what),
             name,

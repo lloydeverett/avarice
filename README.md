@@ -66,8 +66,32 @@ print(stdlib())   -- the stdlib modules this runtime has
 
 ### `http`
 
-Being rewritten ([ADR 0025](docs/adr/0025-http-is-ours-and-reads-responses-as-they-arrive.md),
-[spec](docs/specs/http.md)); for now `require("http")` gives an empty table.
+```lua
+local http = require("http")
+local serde = require("serde")
+
+local res = http.get("https://httpbin.org/get", { query = { q = "lua" } })
+print(res.status, res.headers["content-type"], res:json().args.q)
+
+local openai = http.client {   -- keeps its connections; settings for every request through it
+  base_url = "https://api.openai.com/v1",   -- appended to: "/chat/completions" keeps the /v1
+  headers = { authorization = "Bearer " .. key },   -- `false` removes one, User-Agent included
+  check = true,   -- 4xx and 5xx raise, with the body in the message
+  retry = true,   -- 429, 502, 503, 504 and failures to connect, honouring Retry-After
+}
+
+local res <close> = openai:post("/chat/completions", {   -- also body (bytes) and form
+  json = { model = "gpt-5", stream = true, messages = { { role = "user", content = "Hi" } } },
+  idle_timeout = 120000,   -- ms between bytes; also timeout (total), and connect_timeout on a Client
+})
+for ev in res:events() do   -- res.body is a Reader: read, line, lines, rest
+  if ev.data == "[DONE]" then break end   -- leaving the loop drops the connection
+  io.write(serde.json.decode(ev.data).choices[1].delta.content or "")
+end
+
+local ok, err = pcall(http.get, "https://example.invalid/")
+print(err.kind, err)   -- connect, tls, timeout (with err.phase), redirect, status or body
+```
 
 ### `fs`
 
@@ -448,5 +472,5 @@ See [`examples/greeting`](examples/greeting) for a module with a Rust half and a
 ## Licence
 
 Apache License 2.0; see [LICENSE](LICENSE). The stdlib files taken from Astra are under the same
-licence, and each has a header saying where it came from and what changed. `datetime`, `dirs`,
-`process`, `tidings` and `bridge` are original to avarice, and their files say so instead.
+licence, and each has a header saying where it came from and what changed. `http`, `datetime`,
+`dirs`, `process`, `tidings` and `bridge` are original to avarice, and their files say so instead.
