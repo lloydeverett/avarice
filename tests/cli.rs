@@ -777,3 +777,15 @@ fn env_get_gives_a_value_that_is_not_utf8_exactly() {
     assert!(output.status.success(), "{}", stderr_of(&output));
     assert_eq!(stdout_of(&output), "true\n");
 }
+
+#[cfg(feature = "bundled-openai")]
+#[test]
+fn trusted_runs_have_the_bundled_openai_module_and_sandboxed_ones_do_not() {
+    let script = r#"print((pcall(require, "openai")))"#;
+    let trusted = avarice(["-e", script]);
+    assert!(trusted.status.success(), "{}", stderr_of(&trusted));
+    assert_eq!(stdout_of(&trusted), "true\n");
+    let sandboxed = avarice(["--sandbox", "-e", script]);
+    assert!(sandboxed.status.success(), "{}", stderr_of(&sandboxed));
+    assert_eq!(stdout_of(&sandboxed), "false\n");
+}

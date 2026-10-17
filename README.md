@@ -15,6 +15,8 @@ command-line interpreter, `avarice`, built on the runtime.
 - **Limits.** A time limit stops Lua that is running, in any coroutine. Time a chunk spends waiting,
   on the network or on another program, counts against it, but the wait itself runs on: the limit
   stops the chunk when it next runs Lua. A cancel stops a chunk that is waiting as well.
+- **Bundled modules.** Plain Lua built on the stdlib, such as `openai`, a streaming client for
+  OpenAI-compatible inference servers, each behind its own Cargo feature.
 - **The `avarice` command.** Runs scripts, or starts a REPL with history and multi-line input.
 - **Cross-platform.** Aims to behave the same on Linux, macOS and Windows wherever possible.
 - **Host-controlled modules.** Lua's `package` library is never opened. `require` resolves only
@@ -333,6 +335,50 @@ local ansi = require("ansi")   -- core module: every profile and build
 print(ansi.bold .. ansi.fg.red .. "error" .. ansi.reset)
 print(ansi.fg.hex("#ff8800") .. ansi.bg.color256(236) .. "orange" .. ansi.reset)
 ```
+
+## Bundled modules
+
+Plain Lua that avarice ships, built on the stdlib, each behind a `bundled-<name>` feature (on by
+default). No profile registers one: an embedder adds it with `RuntimeBuilder::module`, and the
+`avarice` command adds them all when it runs trusted. See
+[ADR 0026](docs/adr/0026-bundled-modules-are-lua-an-embedder-adds.md).
+
+```rust
+let rt = Runtime::builder(Profile::Trusted).module(avarice::bundled::OpenAi).build()?;
+```
+
+### `openai`
+
+A client for OpenAI-compatible inference servers. It needs `http` and `serde` registered and `os`
+open.
+
+```lua
+local openai = require("openai")
+
+local ai = openai.client {   -- every field optional
+  base_url = "http://localhost:11434/v1",   -- else OPENAI_BASE_URL, else https://api.openai.com/v1
+  api_key = "sk-...",                        -- else OPENAI_API_KEY, else none; false for none
+  model = "llama3",                          -- else OPENAI_MODEL; a request's model wins
+  -- also headers, retry (default true), connect_timeout, idle_timeout and timeout, as http.client
+}
+
+for delta, chunk in ai:stream { messages = { { role = "user", content = "Hi" } } } do
+  io.write(delta.content or "")   -- delta is {} for a chunk with no choices, such as usage
+end                               -- ends at [DONE]; leaving early closes the connection
+
+local res = ai:chat { messages = { { role = "user", content = "Hi" } } }   -- whole, decoded
+local emb = ai:post("/embeddings", { model = "text-embedding-3-small", input = "Hi" })
+
+-- openai.chat and openai.stream use a Client made from the environment when first used
+openai.stream { messages = { { role = "user", content = "Hi" } } }
+```
+
+For a stream, set `idle_timeout`, which bounds a stall, rather than `timeout`, which bounds the
+whole request and so cuts off a long stream. `chat` and `stream` set `stream` themselves, and refuse
+a request that gives it.
+
+An error the server sends mid-stream raises `{ kind = "api", message, error }`; a 4xx or 5xx
+raises `http`'s `status` error.
 
 ## Embedding
 

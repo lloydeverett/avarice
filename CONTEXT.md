@@ -77,8 +77,8 @@ has is decided in Rust at construction; Lua code never causes one to load.
 
 ## Stdlib module
 
-A **host module** that avarice ships, rather than one an embedder wrote or a
-**contributed module**.
+A **host module** that avarice ships and a **profile** selects, rather than one
+an embedder wrote, a **contributed module** or a **bundled module**.
 `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `validation`, `dirs`,
 `process`, `tidings` and `bridge`.
 
@@ -108,9 +108,22 @@ carries no privilege an embedder's own module lacks.
 A contributed module cannot take a name a runtime already gives another module.
 
 In code, a contributed module is a `HostModule`. The trait is named for the
-broader term because it is the shape any host module could take, but only
-contributed modules implement it: stdlib and core modules are host modules that
+broader term because it is the shape any host module could take. Contributed and
+**bundled** modules implement it: stdlib and core modules are host modules that
 avarice registers without it.
+
+## Bundled module
+
+A **host module** that avarice ships as plain Lua, built on what the runtime it
+is added to registers, such as `openai`, which `require`s `http` and `serde` and
+reads the environment through `os.getenv`. No **profile** registers one: an
+**embedder** adds it, as it would a **contributed module**, and the `avarice`
+command adds every one when it runs trusted.
+
+Unlike a **stdlib module** it may need other modules, and raises from `require`
+when the runtime lacks one. It is not **pure** whatever it is written in: it
+reaches whatever the modules it uses reach. Each is **compiled in** by a feature
+of its own, `bundled-<name>`.
 
 ## Core module
 
@@ -132,7 +145,9 @@ Because it is only Lua, every limit a runtime puts on Lua applies to it — the
 memory cap, the time limit — which cannot be said of a module with Rust behind
 it.
 
-Purity is a fact about how a module is written, not about what it is for.
+Purity is a fact about how a module is written, not about what it is for. Being
+written in Lua is not enough: a **bundled module** is Lua too, but uses modules
+with Rust behind them, so it is not pure.
 
 ## Compiled in
 

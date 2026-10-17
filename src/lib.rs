@@ -53,12 +53,16 @@
 //! Each stdlib module is behind a Cargo feature of its own, `stdlib-http`, `stdlib-fs`,
 //! `stdlib-crypto`, `stdlib-serde`, `stdlib-datetime`, `stdlib-utils`, `stdlib-validation`,
 //! `stdlib-dirs`, `stdlib-process`, `stdlib-tidings` and `stdlib-bridge`, and `stdlib` turns all
-//! eleven on. `default` has `stdlib` and `cli`, so an embedder wanting a smaller build depends on
-//! avarice with `default-features = false` and names the modules it wants. A feature decides
-//! whether a module is *compiled in*, which is a matter of build size and time and not of
-//! confinement: a profile still decides what a runtime *registers*. [`StdModules::ALL`] is
-//! the set that is compiled in, and [`RuntimeBuilder::build`] refuses a selection that includes a
-//! module that is not.
+//! eleven on. `default` has `stdlib`, `bundled` and `cli`, so an embedder wanting a smaller build
+//! depends on avarice with `default-features = false` and names the modules it wants. A feature
+//! decides whether a module is *compiled in*, which is a matter of build size and time and not of
+//! confinement: a profile still decides what a runtime *registers*. [`StdModules::ALL`] is the set
+//! that is compiled in, and [`RuntimeBuilder::build`] refuses a selection that includes a module
+//! that is not.
+//!
+//! The bundled modules, in `avarice::bundled`, are behind features of their own,
+//! `bundled-<name>`, which `bundled` turns on and `default` has. No profile registers one; an
+//! embedder adds it with [`RuntimeBuilder::module`].
 //!
 //! # Modules
 //!
@@ -96,6 +100,8 @@
 //! can stop a runtime from another thread, whether it is running Lua or waiting on something.
 
 mod ansi;
+#[cfg(feature = "bundled-openai")]
+pub mod bundled;
 mod error;
 mod limits;
 mod lock;

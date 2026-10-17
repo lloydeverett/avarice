@@ -8,6 +8,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 modules=(http fs crypto serde datetime utils validation dirs process tidings bridge)
+# The bundled modules (ADR 0026), each built alone too: its feature has to turn on what it needs.
+bundled=(openai)
 failed=()
 
 run() {
@@ -29,10 +31,14 @@ run "no modules" --no-default-features
 for module in "${modules[@]}"; do
     run "only $module" --no-default-features --features "stdlib-$module"
 done
+for module in "${bundled[@]}"; do
+    run "only bundled $module" --no-default-features --features "bundled-$module"
+done
 
 echo
 if ((${#failed[@]})); then
     echo "FAILED: ${failed[*]}"
     exit 1
 fi
-echo "all ${#modules[@]} single-module builds, the empty build and the full build passed"
+singles=$((${#modules[@]} + ${#bundled[@]}))
+echo "all $singles single-module builds, the empty build and the full build passed"

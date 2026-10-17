@@ -142,6 +142,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
         builder = builder.time_limit(std::time::Duration::from_secs_f64(seconds));
     }
+    // A bundled module needs what trusted mode has, and no profile adds one, so the command adds
+    // it itself, and only when trusted (ADR 0026).
+    #[cfg(feature = "bundled-openai")]
+    if !cli.sandbox {
+        builder = builder.module(avarice::bundled::OpenAi);
+    }
     let rt = builder.store(store_for(cli, script)).build()?;
     if let Err(e) = interrupt::install(cancel) {
         eprintln!("avarice: Ctrl-C will not be caught: {e}");

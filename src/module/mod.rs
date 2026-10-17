@@ -189,6 +189,8 @@ impl<T: ModuleStore + ?Sized> ModuleStore for std::sync::Arc<T> {
 /// `require` and cached thereafter, as a stdlib module is, and carries no privilege an embedder's
 /// own module lacks.
 ///
+/// avarice's own bundled modules, such as `bundled::OpenAi`, implement it too (ADR 0026).
+///
 /// No profile registers a contributed module, so the embedder decides, runtime by runtime, which
 /// to add. [`build`](crate::RuntimeBuilder::build) refuses one whose name is not a valid
 /// [`ModuleName`] (an [`Error::ModuleName`](crate::Error::ModuleName)), or is already taken (an
