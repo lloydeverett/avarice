@@ -4,6 +4,9 @@ status: accepted
 
 # `dirs` resolves standard per-application directories, via `etcetera`
 
+> [ADR 0024](0024-stores-is-removed.md) removes `stores`. Where the text below says `stores` is
+> unchanged, or is the Astra-derived pure module, it wins.
+
 `dirs` is a new **stdlib module**: it resolves where an application's config, data, cache, state
 and runtime directories belong, on the host it is running on. It is original to avarice, the
 second stdlib module (after `ansi`, later moved to the core by

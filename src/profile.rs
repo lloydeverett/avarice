@@ -34,10 +34,9 @@ pub enum Profile {
 
     /// For Lua code the embedder vouches for.
     ///
-    /// Everything the sandbox has plus `io` and `os` and every stdlib module — `http`, `fs`,
-    /// `crypto`, `serde`, `datetime`, `utils`, `validation`, `dirs`, `process`, `tidings` and
-    /// `bridge` — with no memory or time limit and binary chunks and Lua finalizers allowed. Note
-    /// that `os.exit` will end the host process, that the stdlib modules reach the network and the
+    /// Everything the sandbox has plus `io` and `os` and every stdlib module that is compiled in
+    /// (see [`StdModules::ALL`]), with no memory or time limit and binary chunks and Lua finalizers
+    /// allowed. Note that `os.exit` will end the host process, that the stdlib modules reach the network and the
     /// filesystem, that a Lua finalizer runs with the limits off, even those set on a trusted
     /// runtime, and that `package` is still absent — Lua never loads its own modules here either.
     Trusted,

@@ -61,7 +61,7 @@ $ avarice --help
 
 ```lua
 print(stdlib())   -- the stdlib modules this runtime has
--- sandbox: none, only the core module `ansi`; the rest need the trusted profile
+-- sandbox: {}; every stdlib module needs the trusted profile (`ansi` is core, always there)
 ```
 
 ### `http`

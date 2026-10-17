@@ -209,7 +209,7 @@ fn a_stdlib_name_shadows_a_store_module_of_that_name() {
 
 #[cfg(feature = "stdlib-crypto")]
 #[test]
-fn a_module_that_is_not_registered_leaves_the_stores_module_reachable() {
+fn a_module_that_is_not_registered_leaves_the_module_store_s_module_reachable() {
     let dir = TempDir::new();
     dir.write("crypto.lua", "return { impostor = true }");
     let rt = Runtime::builder(Profile::Trusted)
