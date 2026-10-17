@@ -5,7 +5,11 @@
 //
 // Changes from the original:
 //   - Respelled `mlua::SerializeOptions` as `mlua::serde::SerializeOptions`: mlua 0.12, which this
-//     workspace is on, moved it; Astra is on 0.11. Nothing else changed.
+//     workspace is on, moved it; Astra is on 0.11.
+//   - Added `encode_json`, which takes the steps the `json_encode` that `gen_methods!` generates
+//     takes, so that `http`'s `json` option encodes exactly as `serde.json.encode` does (ADR 0025).
+//     Nothing Astra does is altered: this is an addition.
+//   - Everything else is unchanged.
 
 use mlua::{ExternalError, LuaSerdeExt};
 use pastey::paste;
@@ -59,6 +63,13 @@ pub fn sanetize_lua_input(lua: &mlua::Lua, input: mlua::Value) -> mlua::Result<m
     } else {
         Ok(input)
     }
+}
+
+/// Encodes `input` as JSON, as `serde.json.encode` does.
+#[cfg_attr(not(feature = "stdlib-http"), allow(dead_code))]
+pub fn encode_json(lua: &mlua::Lua, input: mlua::Value) -> mlua::Result<String> {
+    let value = lua.from_value::<serde_value::Value>(sanetize_lua_input(lua, input)?)?;
+    serde_json::to_string(&value).map_err(|e| e.into_lua_err())
 }
 
 macro_rules! gen_methods {

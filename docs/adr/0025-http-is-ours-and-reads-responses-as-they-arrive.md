@@ -79,6 +79,14 @@ amended, and why `http` looks like `process` rather than like the rest.
   streams, proxies beyond reqwest's environment defaults, and policy an embedder imposes on hosts or
   keys. Each can come later without changing what is here.
 
+- **Connections live on a thread of their own.** reqwest runs each connection as a task on the
+  runtime that opened it, and keeps it alive while it waits in the pool. On the runtime's own
+  **executor**, a pooled connection would count as a task, so `avarice` would wait up to reqwest's
+  ninety-second idle timeout before exiting, and a connection Lua had let go of would close only
+  when something next drove the executor. So a request is sent from a small current-thread runtime
+  on one thread, shared by every runtime in the process, and only reading the body happens on the
+  runtime's own. Dropping the request's future aborts it there.
+
 ## Considered options
 
 **Amending Astra's client**, as ADR 0006 does for the other modules, was rejected: every fix above

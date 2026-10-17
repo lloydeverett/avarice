@@ -306,7 +306,7 @@ retrying is an opt-in option that never repeats a response the script has alread
   ignored; comments ignored; empty data not dispatched; a trailing partial event discarded at the
   end. It returns a generic-`for` iterator with a closing value, as `lines()` does, so `break`
   closes the response. The parser takes any value with a `line` method, which is the seam its unit
-  tests use; it is reached from scripts only through `res:events()`.
+  tests use. It is public as `http.events(source)`, and `res:events()` is it over the body.
 - **Line endings for SSE.** The Reader's `line` splits on `\n` and strips a trailing `\r`. Since SSE
   also allows a bare `\r`, the SSE parser splits a line on any `\r` left in it.
 - **Errors** are raised as tables with a `__tostring`, built the way `process` builds its own:
@@ -321,7 +321,9 @@ retrying is an opt-in option that never repeats a response the script has alread
   applies to the last response only.
 - **Cancellation** needs no special path: a request is a future owned by the coroutine awaiting it,
   so aborting or cancelling that coroutine drops it, and dropping a response or its Reader drops the
-  connection. Nothing is spawned onto the executor for a request.
+  connection. Nothing is spawned onto the executor for a request: it is sent from a runtime of its
+  own on one thread, where reqwest's connections live, so that a pooled connection is not a task
+  (ADR 0025).
 - **Annotations.** The module's Lua half carries LuaLS annotations for the Client, the request
   table, the response, the event and the error, as `process` does, and the Reader's annotations
   move with it.

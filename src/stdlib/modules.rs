@@ -402,7 +402,10 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
     let _ = lua;
     match module {
         #[cfg(feature = "stdlib-http")]
-        StdModule::Http => Ok(include_str!("lua/http.lua").into()),
+        StdModule::Http => {
+            super::components::http::register_to_lua(lua)?;
+            Ok(include_str!("lua/http.lua").into())
+        }
         #[cfg(feature = "stdlib-fs")]
         StdModule::Fs => {
             super::components::file_system::register_to_lua(lua)?;

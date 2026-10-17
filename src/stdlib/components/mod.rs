@@ -70,18 +70,25 @@
 //     (ADR 0022). Nothing Astra does is altered: this is an addition.
 //   - Removed `pub mod http;`, `is_table_json` and what only they needed: Astra's HTTP client is
 //     replaced by a module original to avarice (ADR 0025). `stdlib-http` no longer turns on
-//     `_astra_serde` or `_astra_buffers`, so the `dead_code` allowances above that named
+//     `_astra_serde` or `_astra_buffers` for it, so the `dead_code` allowances above that named
 //     `stdlib-http` now name the modules left: on `astra_buffer_types!`'s struct unless
 //     `stdlib-process` is on (which uses both buffers, where `fs` uses only `AstraBufferMut`), on
 //     its `new` unless both `stdlib-process` and `stdlib-fs` are on (each makes only one of the
 //     two), and on `is_table_byte_array` unless `stdlib-fs` is on. The items above that say what was done
-//     for `http` describe the file before this change.
+//     for `http` describe the file before this change. Added `pub mod http;` back, behind
+//     `stdlib-http`, for the module that replaces it, which owes Astra nothing. Nothing Astra does
+//     is altered by that: it is an addition. Added `pub mod reader;`, behind `_reader`, for what
+//     `process` and `http` read a stream with, which owes Astra nothing either. The new `http`
+//     turns `_astra_serde` and `_astra_buffers` back on, for `serde.json`'s encoder and for
+//     Buffers; the comment above `astra_serde` says so again, and the allowances stay as they are,
+//     since it uses `AstraBuffer` and `astra_serde` keeps its own.
 //   - Everything else is unchanged.
 
 #[cfg(feature = "_astra_buffers")]
 use mlua::{ExternalError, FromLua, LuaSerdeExt};
 
-// `utils` is compiled for `validation` as well as for `utils`; see the header.
+// `astra_serde` is compiled for `http` as well as for `serde`, and `utils` for `validation` as well
+// as for `utils`; see the header.
 #[cfg(feature = "_astra_serde")]
 #[cfg_attr(not(feature = "stdlib-serde"), allow(dead_code))]
 pub mod astra_serde;
@@ -101,8 +108,14 @@ pub mod datetime;
 pub mod dirs;
 #[cfg(feature = "stdlib-fs")]
 pub mod file_system;
+// Original to avarice, not Astra's; see its own header and ADR 0025.
+#[cfg(feature = "stdlib-http")]
+pub mod http;
 #[cfg(feature = "stdlib-process")]
 pub mod process;
+// Original to avarice, not Astra's: what `process` and `http` read from. See its own header.
+#[cfg(feature = "_reader")]
+pub mod reader;
 // Original to avarice, not Astra's; see its own header and ADR 0021.
 #[cfg(feature = "stdlib-tidings")]
 pub mod tidings;

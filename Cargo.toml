@@ -54,8 +54,18 @@ stdlib = [
   "stdlib-tidings",
   "stdlib-bridge",
 ]
-# `http` is original to avarice (ADR 0025), and is being rewritten: for now it is empty.
-stdlib-http = []
+# `http` is original to avarice (ADR 0025). `net` is the tokio driver reqwest needs, and
+# `tokio-util` and `futures-util` turn reqwest's stream of chunks into something a Reader reads,
+# whose rest is a Buffer. Its `json` option encodes with `serde.json`'s encoder.
+stdlib-http = [
+  "dep:reqwest",
+  "dep:tokio-util",
+  "dep:futures-util",
+  "tokio/net",
+  "_astra_serde",
+  "_astra_buffers",
+  "_reader",
+]
 stdlib-fs = ["dep:glob", "tokio/fs", "tokio/io-util", "_astra_buffers"]
 stdlib-crypto = ["dep:sha2", "dep:sha3", "dep:base64"]
 stdlib-serde = ["_astra_serde"]
@@ -79,6 +89,7 @@ stdlib-process = [
   "tokio/net",
   "tokio/fs",
   "_astra_buffers",
+  "_reader",
 ]
 # `tidings` is original to avarice too (ADR 0021): stores of files on tidings' filesystem, SQLite
 # and memory backends. Its times are `datetime`'s Timestamps, so it compiles `datetime`'s types,
@@ -89,10 +100,10 @@ stdlib-tidings = ["dep:tidings", "_datetime_types", "tokio/macros"]
 stdlib-bridge = ["dep:serde"]
 
 # Not part of the API. Astra's files cannot be split (ADR 0006), so a module that needs a piece of
-# another's Rust takes the whole file, and these compile the file without adding the module:
-# `validation` builds `AstraRegex` from `utils.rs`, and does not register `utils`.
-# `_astra_buffers` is the buffer types and helpers that `src/stdlib/components/mod.rs` holds for
-# `fs` and `process`.
+# another's Rust takes the whole file, and these compile the file without adding the module: `http`
+# encodes JSON with `astra_serde.rs` and `validation` builds `AstraRegex` from `utils.rs`, and
+# neither registers `serde` or `utils`. `_astra_buffers` is the buffer types and helpers that
+# `src/stdlib/components/mod.rs` holds for `http`, `fs` and `process`.
 # `_datetime_types` is `datetime`'s Rust types, which `tidings` gives its times as (ADR 0021).
 _astra_serde = [
   "dep:serde-value",
@@ -108,6 +119,8 @@ _astra_serde = [
 _astra_utils = ["dep:uuid", "dep:regex"]
 _astra_buffers = ["dep:bytes", "dep:serde_json"]
 _datetime_types = ["dep:jiff"]
+# What a Reader reads from (`src/stdlib/components/reader.rs`), for `process` and `http`.
+_reader = ["tokio/io-util"]
 
 [dependencies]
 # `async` for `exec_async` and friends. `macros`, `send` and `serialize` are what the stdlib's
@@ -173,8 +186,17 @@ pastey = { version = "0.2.3", optional = true }
 # mlua's `serialize` already depends on it, so it adds nothing to the tree.
 serde = { version = "1.0.229", optional = true }
 
-# `dirs`'s own dependency. Unlike its neighbours above, this one is not Astra's: `dirs` is original
-# to avarice (ADR 0014), and `etcetera` is the crate that computes its paths.
+# `http`'s own dependencies, not Astra's (ADR 0025).
+reqwest = { version = "0.13.5", features = [
+  "http2",
+  "rustls",
+  "stream",
+], default-features = false, optional = true }
+tokio-util = { version = "0.7.19", features = ["io"], optional = true }
+futures-util = { version = "0.3.34", default-features = false, optional = true }
+
+# `dirs`'s own dependency, not Astra's either: `dirs` is original to avarice (ADR 0014), and
+# `etcetera` is the crate that computes its paths.
 etcetera = { version = "0.11", optional = true }
 
 # `datetime`'s own dependency, not Astra's either (ADR 0019). jiff's default features read the

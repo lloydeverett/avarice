@@ -25,14 +25,12 @@ use mlua::{
     IntoLuaMulti, Lua, LuaString, MetaMethod, MultiValue, Table, UserData, UserDataFields,
     UserDataMethods, Value,
 };
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio::process::ChildStdin;
 use tokio::sync::{Mutex, watch};
 
+use super::reader::{ReadStream, Reader, buffered, drain_into};
 use super::{AstraBuffer, AstraBufferMut};
-
-/// The most a reader's `read` gives at once.
-const CHUNK: usize = 8 * 1024;
 
 pub fn register_to_lua(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
@@ -455,8 +453,6 @@ impl From<std::io::Error> for StartFailure {
     }
 }
 
-type ReadStream = BufReader<Box<dyn AsyncRead + Send + Unpin>>;
-
 /// A Child that has started, with its streams not yet handed to anyone.
 struct Started {
     shared: Arc<Shared>,
@@ -790,10 +786,6 @@ fn merged_reader(
     }
 }
 
-fn buffered(stream: Box<dyn AsyncRead + Send + Unpin>) -> ReadStream {
-    BufReader::with_capacity(CHUNK, stream)
-}
-
 #[cfg(unix)]
 fn signal(status: &ExitStatus) -> Option<i32> {
     std::os::unix::process::ExitStatusExt::signal(status)
@@ -892,21 +884,11 @@ async fn drain(stream: Option<ReadStream>, into: &mut Vec<u8>) -> mlua::Result<(
     let Some(mut stream) = stream else {
         return Ok(());
     };
-    drain_into(&mut stream, into).await
+    drain_into(&mut stream, into).await.map_err(unreadable)
 }
 
-async fn drain_into(stream: &mut ReadStream, into: &mut Vec<u8>) -> mlua::Result<()> {
-    loop {
-        match stream.read_buf(into).await {
-            Ok(0) => return Ok(()),
-            Ok(_) => {}
-            Err(e) => {
-                return Err(error(format!(
-                    "process: could not read the Child's output: {e}"
-                )));
-            }
-        }
-    }
+fn unreadable(e: std::io::Error) -> mlua::Error {
+    error(format!("process: could not read the Child's output: {e}"))
 }
 
 fn raise(lua: &Lua, command: &Command, failure: Failure) -> mlua::Result<MultiValue> {
@@ -974,8 +956,8 @@ async fn spawn(lua: &Lua, command: Value) -> mlua::Result<MultiValue> {
         stdin: started
             .stdin
             .map(|stdin| Writer(Arc::new(Mutex::new(Some(stdin))))),
-        stdout: started.stdout.map(|s| Reader::new(s, "stdout")),
-        stderr: started.stderr.map(|s| Reader::new(s, "stderr")),
+        stdout: started.stdout.map(|s| ChildReader::new(s, "stdout")),
+        stderr: started.stderr.map(|s| ChildReader::new(s, "stderr")),
     };
     child.into_lua_multi(lua)
 }
@@ -983,8 +965,8 @@ async fn spawn(lua: &Lua, command: Value) -> mlua::Result<MultiValue> {
 struct Child {
     shared: Arc<Shared>,
     stdin: Option<Writer>,
-    stdout: Option<Reader>,
-    stderr: Option<Reader>,
+    stdout: Option<ChildReader>,
+    stderr: Option<ChildReader>,
 }
 
 impl Child {
@@ -1056,37 +1038,35 @@ impl UserData for Child {
     }
 }
 
-async fn drain_reader(reader: Option<&Reader>, into: &mut Vec<u8>) -> mlua::Result<()> {
+async fn drain_reader(reader: Option<&ChildReader>, into: &mut Vec<u8>) -> mlua::Result<()> {
     match reader {
-        Some(reader) => drain_into(&mut *reader.take()?, into).await,
+        Some(reader) => reader
+            .reader
+            .take()?
+            .drain_into(into)
+            .await
+            .map_err(unreadable),
         None => Ok(()),
     }
 }
 
-/// One of a Child's output streams, as Lua reads it.
+/// One of a Child's output streams, as Lua reads it: a Reader, and which stream it is.
 #[derive(Clone)]
-struct Reader {
-    stream: Arc<Mutex<ReadStream>>,
+struct ChildReader {
+    reader: Reader,
     name: &'static str,
 }
 
-impl Reader {
+impl ChildReader {
     fn new(stream: ReadStream, name: &'static str) -> Self {
-        Reader {
-            stream: Arc::new(Mutex::new(stream)),
+        let what = match name {
+            "stdout" => "the Child's stdout",
+            _ => "the Child's stderr",
+        };
+        ChildReader {
+            reader: Reader::new(stream, "process", what),
             name,
         }
-    }
-
-    /// The stream, for as long as one task reads it. A second task at once is an error, rather
-    /// than each getting some of the other's data.
-    fn take(&self) -> mlua::Result<tokio::sync::MutexGuard<'_, ReadStream>> {
-        self.stream.try_lock().map_err(|_| {
-            error(format!(
-                "process: the Child's {} is already being read by another task",
-                self.name
-            ))
-        })
     }
 
     fn failed(&self, e: std::io::Error) -> mlua::Error {
@@ -1097,41 +1077,23 @@ impl Reader {
     }
 
     async fn line(&self, lua: &Lua) -> mlua::Result<Option<LuaString>> {
-        let mut stream = self.take()?;
-        let mut line = Vec::new();
-        if stream
-            .read_until(b'\n', &mut line)
-            .await
-            .map_err(|e| self.failed(e))?
-            == 0
-        {
-            return Ok(None);
+        match self.reader.line().await?.map_err(|e| self.failed(e))? {
+            Some(line) => lua.create_string(line).map(Some),
+            None => Ok(None),
         }
-        if line.last() == Some(&b'\n') {
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-        }
-        lua.create_string(line).map(Some)
     }
 }
 
-impl UserData for Reader {
+impl UserData for ChildReader {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
             Ok(format!("Reader({})", this.name))
         });
         methods.add_async_method("read", |lua, this, ()| async move {
-            let mut stream = this.take()?;
-            let chunk = stream.fill_buf().await.map_err(|e| this.failed(e))?;
-            if chunk.is_empty() {
-                return Ok(None);
+            match this.reader.read().await?.map_err(|e| this.failed(e))? {
+                Some(chunk) => lua.create_string(chunk).map(Some),
+                None => Ok(None),
             }
-            let length = chunk.len().min(CHUNK);
-            let chunk = lua.create_string(&chunk[..length])?;
-            stream.consume(length);
-            Ok(Some(chunk))
         });
         methods.add_async_method("line", |lua, this, ()| async move { this.line(&lua).await });
         methods.add_method("lines", |lua, this, ()| {
@@ -1142,8 +1104,7 @@ impl UserData for Reader {
             })
         });
         methods.add_async_method("rest", |_, this, ()| async move {
-            let mut rest = Vec::new();
-            drain_into(&mut *this.take()?, &mut rest).await?;
+            let rest = this.reader.rest().await?.map_err(unreadable)?;
             Ok(AstraBuffer::new(rest.into()))
         });
     }
