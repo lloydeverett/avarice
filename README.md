@@ -3,8 +3,8 @@
 An embeddable Lua 5.4 runtime for Rust, built on [mlua](https://crates.io/crates/mlua), and a
 command-line interpreter, `avarice`, built on the runtime.
 
-- **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
-  `dirs`, `process`, `tidings` and `bridge`, each behind its own Cargo feature. Most are adapted
+- **Stdlib modules.** `http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `validation`, `dirs`,
+  `process`, `tidings` and `bridge`, each behind its own Cargo feature. Most are adapted
   from [Astra](https://github.com/ArkForgeLabs/Astra).
 - **Profiles.** A runtime starts from the sandbox profile or the trusted one, and any setting either
   one makes can be overridden. The sandbox has no `io`, no `os`, no binary chunks and no `__gc` in
@@ -61,7 +61,7 @@ $ avarice --help
 
 ```lua
 print(stdlib())   -- the stdlib modules this runtime has
--- sandbox: only `stores` and `ansi` (pure Lua); the rest need the trusted profile
+-- sandbox: none, only the core module `ansi`; the rest need the trusted profile
 ```
 
 ### `http`
@@ -149,19 +149,6 @@ task:await()
 utils.spawn_timeout(function() print("later") end, 500)
 local ticker = utils.spawn_interval(function() print("tick") end, 100)
 utils.spawn_timeout(function() ticker:abort() end, 1000)
-```
-
-### `stores`
-
-```lua
-local stores = require("stores")
-
-local count = stores.observable(0)
-count:subscribe(function(n) print("count is", n) end)
-count:publish(1)
-
-stores.pubsub.subscribe("greet", function(name, topic) print(topic, name) end)
-stores.pubsub.publish("greet", "world")
 ```
 
 ### `validation`

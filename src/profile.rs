@@ -23,9 +23,9 @@ pub enum Profile {
     /// `os`, `package`, `debug` — along with the filesystem functions that hide in the base
     /// library (`dofile`, `loadfile`). Caps memory at [`DEFAULT_SANDBOX_MEMORY_LIMIT`], and
     /// refuses binary chunks, `load`'s `"b"` mode included, and Lua finalizers, which no limit
-    /// could stop. Registers no stdlib module that has Rust behind it, and the one written only in
-    /// Lua (`stores`), which the memory cap and the time limit govern like any other Lua. The core
-    /// module `ansi` is registered here as it is everywhere.
+    /// could stop. Registers only the stdlib modules written entirely in Lua, which the memory cap
+    /// and the time limit govern like any other Lua, and every one today has Rust behind it, so it
+    /// registers none. The core module `ansi` is registered here as it is everywhere.
     ///
     /// No time limit is set by default: a sandbox that is merely slow is a judgement call only
     /// the embedder can make, so ask for one with
@@ -35,11 +35,11 @@ pub enum Profile {
     /// For Lua code the embedder vouches for.
     ///
     /// Everything the sandbox has plus `io` and `os` and every stdlib module — `http`, `fs`,
-    /// `crypto`, `serde`, `datetime`, `utils`, `stores` and `validation` — with no memory or time
-    /// limit and binary chunks and Lua finalizers allowed. Note that `os.exit` will end the host
-    /// process, that the stdlib modules reach the network and the filesystem, that a Lua
-    /// finalizer runs with the limits off, even those set on a trusted runtime, and that
-    /// `package` is still absent — Lua never loads its own modules here either.
+    /// `crypto`, `serde`, `datetime`, `utils`, `validation`, `dirs`, `process`, `tidings` and
+    /// `bridge` — with no memory or time limit and binary chunks and Lua finalizers allowed. Note
+    /// that `os.exit` will end the host process, that the stdlib modules reach the network and the
+    /// filesystem, that a Lua finalizer runs with the limits off, even those set on a trusted
+    /// runtime, and that `package` is still absent — Lua never loads its own modules here either.
     Trusted,
 }
 

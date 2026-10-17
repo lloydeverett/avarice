@@ -5,16 +5,16 @@
 //! globals under `astra_internal__*` names, and a Lua file, embedded with `include_str!`, that
 //! wraps them into the module table and returns it. Both are Astra's, so `load` does no more
 //! than Astra's own `register_components` and `require` do between them, once per module and
-//! only when the module is first required, with one exception: see [`defines_globals`]. One
-//! module, `stores`, has no Rust half at all: it is **pure**, and that is what sandbox mode
-//! registers (ADR 0007). `dirs` and `process` follow the same two-layer shape but are original to
-//! avarice, not Astra's (ADRs 0014 and 0016); they have Rust halves, so they are not pure.
+//! only when the module is first required, with one exception: see [`defines_globals`]. Every
+//! module has a Rust half, so none is **pure**, and sandbox mode registers none of them (ADRs 0007
+//! and 0024). `dirs` and `process` follow the same two-layer shape but are original to avarice,
+//! not Astra's (ADRs 0014 and 0016).
 //! `datetime` is original too (ADR 0019), and differs in one more way: its Rust half sets no
 //! globals, and is handed to its Lua file as a value instead. `tidings` (ADR 0021) and `bridge`
 //! (ADR 0022) are original, and built the way `datetime` is.
 //!
 //! Every module is behind a Cargo feature that compiles it in (ADR 0007). The types here have all
-//! twelve modules in every build, so what an embedder matches on does not vary with features; what
+//! eleven modules in every build, so what an embedder matches on does not vary with features; what
 //! varies is which of them are *compiled in*, and asking for one that is not is an error rather
 //! than a silent omission.
 
@@ -43,8 +43,6 @@ pub enum StdModule {
     Datetime,
     /// Tasks, `uuid` and `env.get`.
     Utils,
-    /// Observables and pubsub. **Pure**: Lua only, with no Rust behind it.
-    Stores,
     /// Schema validators, and regular expressions.
     Validation,
     /// Standard per-application directories (config, data, cache, state, runtime), via
@@ -82,7 +80,7 @@ struct Entry {
 /// One row per module, compiled in or not, in the order [`StdModules::modules`] yields them. A
 /// module's row is at the index of its discriminant, which `the_table_is_in_declaration_order`
 /// holds to.
-const TABLE: [Entry; 12] = [
+const TABLE: [Entry; 11] = [
     Entry {
         module: StdModule::Http,
         name: "http",
@@ -130,14 +128,6 @@ const TABLE: [Entry; 12] = [
         flag: StdModules::UTILS,
         compiled_in: cfg!(feature = "stdlib-utils"),
         pure: false,
-    },
-    Entry {
-        module: StdModule::Stores,
-        name: "stores",
-        feature: "stdlib-stores",
-        flag: StdModules::STORES,
-        compiled_in: cfg!(feature = "stdlib-stores"),
-        pure: true,
     },
     Entry {
         module: StdModule::Validation,
@@ -211,7 +201,7 @@ const COMPILED_IN: [StdModule; COMPILED_IN_COUNT] = {
 impl StdModule {
     /// The modules compiled into this build, in the order [`StdModules::modules`] yields them.
     ///
-    /// A build that turns a module's feature off has fewer than twelve, so this is a slice and not
+    /// A build that turns a module's feature off has fewer than eleven, so this is a slice and not
     /// a fixed array.
     pub const ALL: &'static [StdModule] = &COMPILED_IN;
 
@@ -257,8 +247,8 @@ bitflags! {
         const DATETIME = 1 << 4;
         /// [`StdModule::Utils`].
         const UTILS = 1 << 5;
-        /// [`StdModule::Stores`].
-        const STORES = 1 << 6;
+        // 1 << 6 was `stores`, which ADR 0024 removed. It is left unused so that no other
+        // module's bit moves.
         /// [`StdModule::Validation`].
         const VALIDATION = 1 << 7;
         /// [`StdModule::Dirs`].
@@ -445,9 +435,6 @@ fn register_and_source(lua: &Lua, module: StdModule) -> mlua::Result<Layer> {
             super::components::utils::register_to_lua(lua)?;
             Ok(include_str!("lua/utils.lua").into())
         }
-        // Astra's `stores` has no Rust half: it is Lua all the way down, and so it is pure.
-        #[cfg(feature = "stdlib-stores")]
-        StdModule::Stores => Ok(include_str!("lua/stores.lua").into()),
         // The regex primitive is set by Astra's `utils` Rust half, alongside the tasks, so
         // `validation` sets it too rather than lean on `utils` having been built first. Setting
         // it twice is harmless.
@@ -543,7 +530,6 @@ mod tests {
                 "serde",
                 "datetime",
                 "utils",
-                "stores",
                 "validation",
                 "dirs",
                 "process",
@@ -600,7 +586,6 @@ mod tests {
         assert_eq!(StdModules::SERDE.bits(), 1 << 3);
         assert_eq!(StdModules::DATETIME.bits(), 1 << 4);
         assert_eq!(StdModules::UTILS.bits(), 1 << 5);
-        assert_eq!(StdModules::STORES.bits(), 1 << 6);
         assert_eq!(StdModules::VALIDATION.bits(), 1 << 7);
         assert_eq!(StdModules::DIRS.bits(), 1 << 8);
         assert_eq!(StdModules::PROCESS.bits(), 1 << 9);
@@ -609,11 +594,11 @@ mod tests {
     }
 
     #[test]
-    fn the_pure_module_is_stores() {
-        // A tripwire, not a second list to keep in step: giving it a Rust half is a decision
+    fn no_module_is_pure() {
+        // A tripwire, not a second list to keep in step: a pure module is one a sandbox registers
         // (ADR 0007), so the test that says which are pure has to be changed with it.
         let pure: Vec<_> = TABLE.iter().filter(|e| e.pure).map(|e| e.name).collect();
-        assert_eq!(pure, ["stores"]);
+        assert!(pure.is_empty(), "{pure:?}");
     }
 
     #[test]
@@ -643,7 +628,7 @@ mod tests {
     fn set_algebra_adds_and_subtracts() {
         let without_http = StdModules::all() - StdModules::HTTP;
         assert!(!without_http.contains(StdModules::HTTP));
-        assert_eq!(without_http.modules().count(), 11);
+        assert_eq!(without_http.modules().count(), 10);
         assert_eq!(without_http | StdModules::HTTP, StdModules::all());
         assert_eq!(StdModules::all() & !StdModules::all(), StdModules::NONE);
     }

@@ -7,6 +7,8 @@ status: accepted
 > [ADR 0012](0012-the-stdlib-is-a-directory-not-a-crate.md) makes the stdlib a directory of
 > `avarice` and not a crate of its own, so the features below are declared once, on `avarice`,
 > and are not forwarded from a stdlib crate. Where the text says otherwise, it wins.
+> [ADR 0024](0024-stores-is-removed.md) removes `stores` and `stdlib-stores`. The sandbox rule
+> stands, but no stdlib module is pure now, so sandbox mode registers none.
 
 Each **stdlib module** is behind a Cargo feature, so an embedder that wants only `crypto` and
 `serde` does not build reqwest, a TLS stack and the rest for a `http` it will never register. A

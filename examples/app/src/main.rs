@@ -7,8 +7,8 @@ use avarice::{Error, FsStore, Profile, Runtime, StdModules, was_out_of_memory};
 use avarice_greeting::Greeting;
 
 fn main() -> avarice::Result<()> {
-    // Start from a profile, here the sandbox: no `io`, `os`, binary chunks or `__gc`, and only the
-    // pure stdlib modules. Everything after it overrides one of its defaults, or adds to them.
+    // Start from a profile, here the sandbox: no `io`, `os`, binary chunks or `__gc`, and no
+    // stdlib module. Everything after it overrides one of its defaults, or adds to them.
     let rt = Runtime::builder(Profile::Sandbox)
         // A stdlib module, compiled in by this crate's `stdlib-crypto` feature.
         .with_std_modules(StdModules::CRYPTO)

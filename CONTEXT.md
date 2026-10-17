@@ -79,8 +79,8 @@ has is decided in Rust at construction; Lua code never causes one to load.
 
 A **host module** that avarice ships, rather than one an embedder wrote or a
 **contributed module**.
-`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `stores`, `validation`,
-`dirs`, `process`, `tidings` and `bridge`.
+`http`, `fs`, `crypto`, `serde`, `datetime`, `utils`, `validation`, `dirs`,
+`process`, `tidings` and `bridge`.
 
 Stdlib modules are host modules like any other, and carry no privilege an
 embedder's own module lacks. What distinguishes them is only that a **profile**
@@ -124,7 +124,7 @@ embedder's own module lacks.
 ## Pure module
 
 A **host module** written entirely in Lua, with no Rust code behind it,
-wherever it lives: `stores` and `ansi`. It only computes over the
+wherever it lives. `ansi` is the only one. It only computes over the
 values it is given, so it reaches nothing outside the Lua state: no network, no
 filesystem, no environment.
 
@@ -150,10 +150,9 @@ A place a **program** keeps files that outlast it, reached through the `tidings`
 Staging, Precondition, Commit, Conflict, Change feed, Resync), are tidings' own,
 and mean what tidings' glossary says they mean.
 
-Not the `stores` module, which is observables and pubsub and keeps nothing, and
-not a **Module store**, which is where a program's source comes from.
+Not a **Module store**, which is where a program's source comes from.
 
-_Avoid_: store (unqualified), database, `stores`.
+_Avoid_: store (unqualified), database.
 
 ## Bridge table
 
@@ -174,9 +173,6 @@ _Avoid_: table (unqualified, which is Lua's own), ledger, observable.
 A value Lua makes with the `bridge` **stdlib module** that holds one Lua value at a time, replaced
 whole, and that the host can subscribe to as it can to a **Bridge table**. Each replacement is a
 change, from the old value to the new, even when the two are the same.
-
-Not an Observable of the `stores` module, which is Lua alone, and which the host cannot subscribe
-to.
 
 _Avoid_: cell (unqualified), atom, observable.
 

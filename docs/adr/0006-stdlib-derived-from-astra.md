@@ -17,6 +17,7 @@ status: accepted
 > the licence is its boundary, or points at its README, it wins.
 > [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) takes `datetime` out of this ADR's scope:
 > it is written from scratch on `jiff`, and the header rule does not apply to it.
+> [ADR 0024](0024-stores-is-removed.md) removes Astra's `stores`, so it is no longer taken.
 > Where the text below says otherwise, or mentions `jiff`, `NOTICE`, or files without a header, or
 > says validation is not taken, the amendments at the end win.
 

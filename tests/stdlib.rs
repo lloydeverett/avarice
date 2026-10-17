@@ -17,14 +17,13 @@ use avarice::{Profile, Runtime, StdModules};
 use common::TempDir;
 use common::{compiled_in, listed, requirable};
 
-const NAMES: [&str; 12] = [
+const NAMES: [&str; 11] = [
     "http",
     "fs",
     "crypto",
     "serde",
     "datetime",
     "utils",
-    "stores",
     "validation",
     "dirs",
     "process",
@@ -130,14 +129,14 @@ fn sandbox_plus_one_module_has_that_one_and_no_other() {
     assert_eq!(reachable(&rt), sandbox_plus(&["fs"]));
 }
 
-#[cfg(all(feature = "stdlib-crypto", feature = "stdlib-stores"))]
+#[cfg(all(feature = "stdlib-crypto", feature = "stdlib-serde"))]
 #[test]
 fn std_modules_replaces_the_set() {
     let rt = Runtime::builder(Profile::Trusted)
-        .std_modules(StdModules::CRYPTO | StdModules::STORES)
+        .std_modules(StdModules::CRYPTO | StdModules::SERDE)
         .build()
         .unwrap();
-    assert_eq!(reachable(&rt), ["crypto", "stores"]);
+    assert_eq!(reachable(&rt), ["crypto", "serde"]);
 }
 
 #[test]
@@ -171,12 +170,12 @@ fn a_stdlib_module_is_not_built_until_it_is_required() {
     assert!(after, "requiring crypto did not build it");
 }
 
-#[cfg(feature = "stdlib-stores")]
+#[cfg(feature = "stdlib-serde")]
 #[test]
 fn a_stdlib_module_is_built_once() {
     let rt = Runtime::new(Profile::Trusted).unwrap();
     let same: bool = rt
-        .block_on(rt.eval("return require('stores') == require('stores')", "=test"))
+        .block_on(rt.eval("return require('serde') == require('serde')", "=test"))
         .unwrap();
     assert!(same);
 }
@@ -222,76 +221,6 @@ fn a_module_that_is_not_registered_leaves_the_stores_module_reachable() {
         .block_on(rt.eval("return require('crypto').impostor == true", "=test"))
         .unwrap();
     assert!(impostor);
-}
-
-// -- stores ------------------------------------------------------------------------------------
-
-#[cfg(feature = "stdlib-stores")]
-#[test]
-fn pubsub_delivers_to_subscribers_of_a_topic() {
-    let rt = Runtime::new(Profile::Trusted).unwrap();
-    let got: String = rt
-        .block_on(rt.eval(
-            r#"
-            local stores = require("stores")
-            local got = {}
-            stores.pubsub.subscribe("greetings", function(data, topic)
-              got[#got + 1] = topic .. ":" .. data
-            end)
-            stores.pubsub.publish("greetings", "hello")
-            stores.pubsub.publish("elsewhere", "ignored")
-            return table.concat(got, ",")
-            "#,
-            "=test",
-        ))
-        .unwrap();
-    assert_eq!(got, "greetings:hello");
-}
-
-#[cfg(feature = "stdlib-stores")]
-#[test]
-fn pubsub_subscribe_takes_a_topic_and_a_callback() {
-    // Astra's documentation describes a three-argument form, with an observable in the middle.
-    // Its code implements two arguments, and so does ours.
-    let rt = Runtime::new(Profile::Trusted).unwrap();
-    let got: i64 = rt
-        .block_on(rt.eval(
-            r#"
-            local pubsub = require("stores").pubsub
-            local total = 0
-            local function add(n) total = total + n end
-            pubsub.subscribe("n", add)
-            pubsub.publish("n", 5)
-            pubsub.unsubscribe("n", add)
-            pubsub.publish("n", 100)
-            return total
-            "#,
-            "=test",
-        ))
-        .unwrap();
-    assert_eq!(got, 5);
-}
-
-#[cfg(feature = "stdlib-stores")]
-#[test]
-fn an_observable_notifies_its_observers() {
-    let rt = Runtime::new(Profile::Trusted).unwrap();
-    let got: String = rt
-        .block_on(rt.eval(
-            r#"
-            local observable = require("stores").observable(1)
-            local seen = {}
-            local function observe(v) seen[#seen + 1] = v end
-            observable:subscribe(observe)
-            observable:publish("a")
-            observable:unsubscribe(observe)
-            observable:publish("b")
-            return table.concat(seen, ",")
-            "#,
-            "=test",
-        ))
-        .unwrap();
-    assert_eq!(got, "a");
 }
 
 // -- crypto ------------------------------------------------------------------------------------

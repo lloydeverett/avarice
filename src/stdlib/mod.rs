@@ -38,6 +38,6 @@ mod tests {
     #[test]
     fn a_loader_is_send_and_sync() {
         fn check(_: impl Send + Sync + 'static) {}
-        check(loader(StdModule::Stores));
+        check(loader(StdModule::Http));
     }
 }

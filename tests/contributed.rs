@@ -155,16 +155,16 @@ fn a_contributed_module_cannot_take_a_standard_library_s_name() {
     assert!(msg.contains("'string'"), "{msg}");
 }
 
-#[cfg(feature = "stdlib-stores")]
+#[cfg(feature = "stdlib-crypto")]
 #[test]
 fn a_contributed_module_cannot_take_a_selected_stdlib_module_s_name() {
     let msg = refusal(
         Runtime::builder(Profile::Sandbox)
-            .with_std_modules(StdModules::STORES)
-            .module(Counted::new("stores"))
+            .with_std_modules(StdModules::CRYPTO)
+            .module(Counted::new("crypto"))
             .build(),
     );
-    assert!(msg.contains("'stores'"), "{msg}");
+    assert!(msg.contains("'crypto'"), "{msg}");
 }
 
 #[cfg(feature = "stdlib-fs")]
