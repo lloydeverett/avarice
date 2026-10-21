@@ -18,6 +18,9 @@ status: accepted
 > [ADR 0019](0019-datetime-is-ours-and-built-on-jiff.md) takes `datetime` out of this ADR's scope:
 > it is written from scratch on `jiff`, and the header rule does not apply to it.
 > [ADR 0024](0024-stores-is-removed.md) removes Astra's `stores`, so it is no longer taken.
+> [ADR 0027](0027-a-task-can-be-awaited-by-any-number-of-callers.md) lets any number of callers
+> `await` a task at once: a `TaskHandler` is no longer held while it is awaited, and no longer says
+> `awaiting`.
 > Where the text below says otherwise, or mentions `jiff`, `NOTICE`, or files without a header, or
 > says validation is not taken, the amendments at the end win.
 
@@ -226,4 +229,6 @@ The first is [ADR 0015](0015-lua-strings-carry-bytes.md): Astra's buffers, `fs`,
 `crypto` turned bytes into tables of numbers or replaced invalid UTF-8, and the stdlib now passes
 bytes through exactly. The second is
 [ADR 0017](0017-the-stdlib-raises-rather-than-leaving-input-out.md): `http` sent a request without
-a file to upload that it could not read, and now raises.
+a file to upload that it could not read, and now raises. The third is
+[ADR 0027](0027-a-task-can-be-awaited-by-any-number-of-callers.md): a second `await` on a task
+raised a borrow error, as did `abort` while one waited, and now any number can wait at once.

@@ -8,6 +8,9 @@
 --     `astra_internal__invalidate_cache`, `astra_internal__dotenv_load` and
 --     `astra_internal__setenv`, and their entries in the returned table (`clean_require`,
 --     `dotenv_load` and `env.set`). `src/components/utils.rs` no longer provides those primitives.
+--   - Changed the description of `TaskHandler`'s `await` field from "Waits for the task to finish"
+--     to say that it also returns once the task is aborted, and that any number of callers can wait
+--     at once, which `src/components/utils.rs` now allows (ADR 0027).
 --   - Everything else is unchanged.
 
 ---@meta
@@ -25,7 +28,7 @@ end
 ---Represents an async task
 ---@class TaskHandler
 ---@field abort fun(self: TaskHandler) Aborts the running task
----@field await fun(self: TaskHandler) Waits for the task to finish
+---@field await fun(self: TaskHandler) Waits for the task to finish or be aborted. Any number of callers can wait at once
 
 ---Starts a new async task
 ---@param callback fun() The callback to run the content of the async task

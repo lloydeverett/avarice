@@ -376,3 +376,79 @@ fn a_cancelled_evaluation_does_not_poison_the_session() {
     let kept: i64 = rt.block_on(rt.eval("return kept", "=read")).unwrap();
     assert_eq!(kept, 42);
 }
+
+#[test]
+fn two_tasks_can_await_the_same_task() {
+    // Each waiter must resume only once the task it awaits has finished, however many there are.
+    let rt = trusted();
+    rt.block_on(rt.exec(
+        r#"
+        local utils = require("utils")
+        done = false
+        local target = utils.spawn_timeout(function() done = true end, 50)
+        utils.spawn_task(function() target:await(); first = done end)
+        utils.spawn_task(function() target:await(); second = done end)
+        "#,
+        "=spawn",
+    ))
+    .unwrap();
+    rt.block_on(rt.wait_for_tasks()).unwrap();
+    let (first, second): (Option<bool>, Option<bool>) = rt
+        .block_on(rt.eval("return first, second", "=read"))
+        .unwrap();
+    assert_eq!(first, Some(true), "the first waiter resumed early");
+    assert_eq!(second, Some(true), "the second waiter resumed early");
+}
+
+#[test]
+fn aborting_a_task_that_is_being_awaited_wakes_its_waiters() {
+    // `await` used to hold the task for as long as it waited, so `abort` raised a borrow error and
+    // the waiter sat out the whole timer. The wait is bounded so that a waiter left waiting fails
+    // the test rather than hanging it.
+    let rt = trusted();
+    rt.block_on(rt.exec(
+        r#"
+        local utils = require("utils")
+        local target = utils.spawn_timeout(function() ran = true end, 60000)
+        woke = 0
+        for _ = 1, 2 do
+          utils.spawn_task(function() target:await(); woke = woke + 1 end)
+        end
+        utils.spawn_timeout(function() aborted = pcall(target.abort, target) end, 30)
+        "#,
+        "=spawn",
+    ))
+    .unwrap();
+    let waited = rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), rt.wait_for_tasks()).await
+    });
+    assert!(waited.is_ok(), "a waiter was left waiting");
+    waited.unwrap().unwrap();
+    let (aborted, woke, ran): (Option<bool>, i64, Option<bool>) = rt
+        .block_on(rt.eval("return aborted, woke, ran", "=read"))
+        .unwrap();
+    assert_eq!(
+        aborted,
+        Some(true),
+        "abort raised while the task was awaited"
+    );
+    assert_eq!(woke, 2, "not every waiter woke");
+    assert_eq!(ran, None, "the aborted task ran");
+}
+
+#[test]
+fn a_task_ended_by_abort_tasks_reads_as_aborted() {
+    // `abort_tasks` drops a task without letting it run to its end, as `abort` does, so it reads
+    // the same.
+    let rt = trusted();
+    rt.block_on(rt.exec(
+        r#"long = require("utils").spawn_timeout(function() end, 60000)"#,
+        "=spawn",
+    ))
+    .unwrap();
+    assert_eq!(rt.abort_tasks().unwrap(), 1);
+    let state: String = rt
+        .block_on(rt.eval("return tostring(long)", "=read"))
+        .unwrap();
+    assert_eq!(state, "TaskHandler(aborted)");
+}

@@ -19,9 +19,19 @@
 //   - Added a `__tostring` metamethod to `TaskHandler` and `AstraRegex`, and `MetaMethod` to the
 //     `mlua` import for it. Astra has none, so `tostring` and `print` give a userdata's type name
 //     and its address. Now `tostring` gives `TaskHandler(running)`, `TaskHandler(finished)` for a
-//     task that has run to its end and not been awaited, `TaskHandler(awaited or aborted)`,
-//     `TaskHandler(awaiting)` while an `await` holds the handle, and `AstraRegex(/<pattern>/)`.
-//     Nothing Astra does is altered: these are additions.
+//     task that has run to its end, `TaskHandler(aborted)` for one that ended without doing so
+//     (aborted, by `abort` or `abort_tasks`, or dead), and `AstraRegex(/<pattern>/)`. Nothing
+//     Astra does is altered: these are additions.
+//   - Made any number of callers able to `await` a task at once, and `abort` it while they do
+//     (ADR 0027). Astra's `await` took the task's `JoinHandle` and held the userdata mutably while
+//     waiting on it, so a second `await` while one waited raised a borrow error, as did `abort`.
+//     Now `create_async_function` gives the task a `tokio::sync::watch` channel it sends `true` on
+//     once it has run to its end, `TaskHandler` keeps the receiver as `finished`, and `await`, a
+//     function rather than a method, borrows the userdata only to clone it, then waits for `true`
+//     or for the channel to close, which it does when the task is aborted or dies. The
+//     `JoinHandle` stays in `TaskHandler` for `abort`, which still takes it. Astra's
+//     `// TODO: Handle the return` went with its `await`: the new one has no return to handle.
+//     This alters what Astra does.
 //   - Made `getenv` give a value that is not UTF-8 as its exact bytes (ADR 0015), where Astra's
 //     `std::env::var` failed on it and `getenv` gave `nil`, as if the variable were unset. It calls
 //     `std::env::var_os(&key)` in place of `std::env::var(key)`, and a new private function,
@@ -29,7 +39,8 @@
 //     bytes, and elsewhere, where the environment is UTF-16 and a value has no bytes of its own,
 //     from the value if it is valid Unicode, raising an error naming the variable if not. The name
 //     stays a `String`: a script writes it. This alters what Astra does.
-//   - Everything else, including `tokio::spawn` for tasks, is unchanged.
+//   - Everything else is unchanged, including `tokio::spawn` for tasks, though what it spawns is
+//     now the task wrapped to send on `finished` (see the `await` change above).
 
 use mlua::{AnyUserData, LuaSerdeExt, MetaMethod, UserData};
 
@@ -99,19 +110,21 @@ pub fn uuid_v4(lua: &mlua::Lua) -> mlua::Result<()> {
 
 pub struct TaskHandler<T: Send + 'static> {
     pub handler: Option<tokio::task::JoinHandle<T>>,
+    /// Becomes true once the task has run to its end. The sender goes with the task, so if the
+    /// task is aborted or dies, the channel closes without that.
+    finished: tokio::sync::watch::Receiver<bool>,
 }
 impl<T: Send + 'static> UserData for TaskHandler<T> {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        // A function, not a method, so that it can find the handle taken: `await` holds it
-        // mutably for as long as it waits, and a method would raise a borrow error there.
-        methods.add_meta_function(MetaMethod::ToString, |_, this: AnyUserData| {
-            let state = match this.borrow::<Self>() {
-                Ok(this) => match &this.handler {
-                    Some(handler) if handler.is_finished() => "finished",
-                    Some(_) => "running",
-                    None => "awaited or aborted",
-                },
-                Err(_) => "awaiting",
+        methods.add_meta_method(MetaMethod::ToString, |_, this, ()| {
+            let state = if *this.finished.borrow() {
+                "finished"
+            } else {
+                match &this.handler {
+                    Some(handler) if !handler.is_finished() => "running",
+                    // Over without finishing: aborted here, by `abort_tasks`, or it died.
+                    _ => "aborted",
+                }
             };
             Ok(format!("TaskHandler({state})"))
         });
@@ -123,12 +136,13 @@ impl<T: Send + 'static> UserData for TaskHandler<T> {
             Ok(())
         });
 
-        methods.add_async_method_mut("await", |_, mut this, ()| async move {
-            let handler = this.handler.take();
-            if let Some(handler) = handler {
-                // TODO: Handle the return
-                let _ = handler.await;
-            }
+        // A function, not a method, so that it holds the task only long enough to copy `finished`:
+        // any number can wait at once, and `abort` and `tostring` still work while they do.
+        methods.add_async_function("await", |_, this: AnyUserData| async move {
+            let mut finished = this.borrow::<Self>()?.finished.clone();
+            // An error means the sender is gone without saying so: the task was aborted or died.
+            // Either way it is over.
+            let _ = finished.wait_for(|finished| *finished).await;
             Ok(())
         });
     }
@@ -139,9 +153,16 @@ where
     F: Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    let handle = tokio::spawn(function);
+    let (finish, finished) = tokio::sync::watch::channel(false);
+    let handle = tokio::spawn(async move {
+        let output = function.await;
+        // Fails only if the handle has been collected, leaving nobody to tell: no error.
+        let _ = finish.send(true);
+        output
+    });
     TaskHandler {
         handler: Some(handle),
+        finished,
     }
 }
 

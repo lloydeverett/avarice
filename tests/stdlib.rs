@@ -620,15 +620,15 @@ fn a_task_handle_prints_where_the_task_has_got_to() {
     assert_eq!(
         printed,
         "TaskHandler(running)\nTaskHandler(finished)\n\
-         TaskHandler(awaited or aborted)\nTaskHandler(awaited or aborted)\n"
+         TaskHandler(finished)\nTaskHandler(aborted)\n"
     );
 }
 
 #[cfg(all(feature = "stdlib-fs", feature = "stdlib-utils"))]
 #[test]
 fn printing_a_task_handle_that_is_being_awaited_does_not_raise() {
-    // `await` holds the handle for as long as it waits, so anything else that reads it meanwhile
-    // finds it taken. Printing is how one finds out what is going on, and must not fail there.
+    // Printing is how one finds out what is going on, and must not fail while something waits.
+    // Waiting doesn't change what a task reads as: only its end does.
     let dir = TempDir::new();
     let printed = printed_in_fs(
         &dir,
@@ -637,7 +637,7 @@ fn printing_a_task_handle_that_is_being_awaited_does_not_raise() {
          utils.spawn_task(function() slow:await() end)
          utils.spawn_timeout(function() print(slow) end, 20):await()",
     );
-    assert_eq!(printed, "TaskHandler(awaiting)\n");
+    assert_eq!(printed, "TaskHandler(running)\n");
 }
 
 // -- dirs ----------------------------------------------------------------------------------
